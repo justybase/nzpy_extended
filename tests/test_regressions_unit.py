@@ -1,7 +1,9 @@
 import asyncio
 import inspect
+import socket
 import types
 from collections import deque
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -9,11 +11,13 @@ import nzpy_extended as nzpy
 import nzpy_extended.fastapi as nzpy_fastapi
 import nzpy_extended.sync as sync_nzpy
 from datetime import timezone as Timezone
+from nzpy_extended.buffered_stream import NzBufferedStream
 from nzpy_extended.core import Connection, Datetime
+from nzpy_extended.exceptions import InterfaceError
 from nzpy_extended.types import timestamptz_in
 from nzpy_extended.pool import SyncPool
 from nzpy_extended import core as core_mod
-from nzpy_extended.protocol import EXTAB_SOCK_DATA, EXTAB_SOCK_DONE
+from nzpy_extended.protocol import CONN_EXECUTING, EXTAB_SOCK_DATA, EXTAB_SOCK_DONE
 from nzpy_extended.utils import i_pack as i_pack_mod
 
 
@@ -351,3 +355,186 @@ def test_xferTable_uses_effective_block_size():
     src = inspect.getsource(conn._extab.xferTable)
     assert 'effectiveBlockSize = max(blockSize, 1)' in src, "xferTable must guard against blockSize <= 0"
     assert 'filehandle.read, effectiveBlockSize' in src, "xferTable must use effectiveBlockSize for reads"
+
+
+def _push_buffered(conn: Connection, data: bytes) -> None:
+    stream = NzBufferedStream(MagicMock(spec=socket.socket), max_size=4096, buffer_size=4096)
+    stream.buffer[: len(data)] = data
+    stream.tail = len(data)
+    conn._stream = stream
+
+    async def mock_read(n: int) -> bytes:
+        return await stream.read(n)
+
+    conn._read = mock_read
+
+
+@pytest.mark.asyncio
+async def test_drain_socket_consumes_orphaned_rowdesc_to_rfq():
+    """Orphaned SELECT CURRENT_SID-style T+D+C+Z must be drained before next execute."""
+    conn = Connection()
+    conn.log = core_mod.logging.getLogger("test")
+    conn._client_encoding = "utf8"
+    conn._dirty_socket = False
+    conn.status = CONN_EXECUTING
+    conn._usock = MagicMock(spec=socket.socket)
+    conn._usock.recv.side_effect = BlockingIOError()
+
+    row_desc_payload = b"CURRENT_SID\x00"
+    data_row_payload = b"\x00\x00\x00\x01"
+    cmd_complete_payload = b"SELECT\x00"
+
+    orphan = (
+        b"T\x00\x00\x00\x00"
+        + i_pack_mod(len(row_desc_payload))
+        + row_desc_payload
+        + b"D\x00\x00\x00\x00"
+        + i_pack_mod(len(data_row_payload))
+        + data_row_payload
+        + b"C\x00\x00\x00\x00"
+        + i_pack_mod(len(cmd_complete_payload))
+        + cmd_complete_payload
+        + b"Z\x00\x00\x00\x00"
+        + b"\x00\x00\x00\x00"
+    )
+    _push_buffered(conn, orphan)
+
+    assert conn._has_unread_non_null_bytes() is True
+    await conn._protocol._drain_socket()
+    assert conn._dirty_socket is False
+    assert conn._stream.buffered_available == 4
+    assert conn._has_unread_non_null_bytes() is False
+
+
+@pytest.mark.asyncio
+async def test_execute_drains_orphaned_data_even_when_not_dirty(monkeypatch):
+    """_execute must drain when unread non-null bytes exist, not only when dirty."""
+    conn = Connection()
+    conn.log = core_mod.logging.getLogger("test")
+    conn._client_encoding = "utf8"
+    conn._dirty_socket = False
+    conn.status = None
+    conn.commandNumber = -1
+    conn._usock = MagicMock(spec=socket.socket)
+    conn._usock.recv.side_effect = BlockingIOError()
+
+    row_desc_payload = b"CURRENT_SID\x00"
+    orphan = (
+        b"T\x00\x00\x00\x00"
+        + i_pack_mod(len(row_desc_payload))
+        + row_desc_payload
+        + b"Z\x00\x00\x00\x00"
+        + b"\x00\x00\x00\x00"
+    )
+    _push_buffered(conn, orphan)
+
+    drain_calls = {"n": 0}
+    real_drain = conn._protocol._drain_socket
+
+    async def tracking_drain():
+        drain_calls["n"] += 1
+        await real_drain()
+
+    monkeypatch.setattr(conn._protocol, "_drain_socket", tracking_drain)
+
+    writes: list[bytes] = []
+
+    async def mock_write(data):
+        writes.append(bytes(data))
+
+    async def mock_flush():
+        return None
+
+    conn._write = mock_write
+    conn._flush = mock_flush
+
+    async def empty_gen(cursor):
+        conn._dirty_socket = False
+        if False:
+            yield "READY_FOR_QUERY"
+
+    monkeypatch.setattr(conn._protocol, "_connNextResultSetGenerator", empty_gen)
+
+    cursor = conn.cursor()
+    await conn._execute(cursor, "CALL PROTO_SYNC_TEST();", None)
+    assert drain_calls["n"] == 1
+    assert any(b"CALL PROTO_SYNC_TEST()" in w for w in writes)
+    # Ensure CURRENT_SID was not treated as this command's row description
+    assert cursor.ps.get("row_desc") == []
+
+
+@pytest.mark.asyncio
+async def test_drain_socket_consumes_orphaned_notification_and_unknown0():
+    """Orphaned A/0 messages must consume length+payload or the stream desyncs."""
+    conn = Connection()
+    conn.log = core_mod.logging.getLogger("test")
+    conn._client_encoding = "utf8"
+    conn._dirty_socket = False
+    conn.status = CONN_EXECUTING
+    conn._usock = MagicMock(spec=socket.socket)
+    conn._usock.recv.side_effect = BlockingIOError()
+
+    notification = i_pack_mod(1234) + b"test_channel\x00payload\x00"
+    unknown0 = b"orphan0"
+    orphan = (
+        b"A\x00\x00\x00\x00"
+        + i_pack_mod(len(notification))
+        + notification
+        + b"0\x00\x00\x00\x00"
+        + i_pack_mod(len(unknown0))
+        + unknown0
+        + b"Z\x00\x00\x00\x00"
+        + b"\x00\x00\x00\x00"
+    )
+    _push_buffered(conn, orphan)
+
+    await conn._protocol._drain_socket()
+    assert conn._dirty_socket is False
+    assert conn._stream.buffered_available == 4
+    assert conn._has_unread_non_null_bytes() is False
+
+
+@pytest.mark.asyncio
+async def test_drain_socket_raises_on_incomplete_rfq():
+    conn = Connection()
+    conn.log = core_mod.logging.getLogger("test")
+    conn._client_encoding = "utf8"
+    conn._dirty_socket = True
+    conn._usock = MagicMock(spec=socket.socket)
+    conn._usock.recv.side_effect = BlockingIOError()
+
+    orphan = b"T\x00\x00\x00\x00"
+    _push_buffered(conn, orphan)
+
+    with pytest.raises(InterfaceError, match="protocol out of sync"):
+        await conn._protocol._drain_socket()
+
+
+def test_has_unread_non_null_ignores_padding_only():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        conn = Connection()
+        conn._usock = MagicMock(spec=socket.socket)
+        conn._usock.recv.side_effect = BlockingIOError()
+        _push_buffered(conn, b"\x00\x00\x00\x00")
+        assert conn._has_unread_non_null_bytes() is False
+    finally:
+        loop.close()
+        asyncio.set_event_loop(None)
+
+
+def test_buffered_stream_discard_leading_nulls():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        stream = NzBufferedStream(MagicMock(spec=socket.socket), max_size=32, buffer_size=32)
+        stream.buffer[:6] = b"\x00\x00\x00T\x00\x00"
+        stream.tail = 6
+        assert stream.has_buffered_non_null() is True
+        n = stream.discard_buffered_leading_nulls()
+        assert n == 3
+        assert bytes(stream.read_available_view()) == b"T\x00\x00"
+    finally:
+        loop.close()
+        asyncio.set_event_loop(None)

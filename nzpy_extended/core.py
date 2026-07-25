@@ -716,6 +716,29 @@ class Connection:
         finally:
             self._active_generator = None
 
+    def _peek_socket_bytes(self) -> bytes:
+        """Non-blocking peek of bytes sitting on the OS socket (not yet buffered)."""
+        usock = getattr(self, '_usock', None)
+        if usock is None:
+            return b''
+        try:
+            return usock.recv(65536, socket.MSG_PEEK)
+        except (BlockingIOError, InterruptedError):
+            return b''
+        except OSError:
+            return b''
+
+    def _has_unread_non_null_bytes(self) -> bool:
+        """True when buffered or socket data contains a non-null protocol byte."""
+        stream = getattr(self, '_stream', None)
+        if stream is not None and stream.has_buffered_non_null():
+            return True
+        peeked = self._peek_socket_bytes()
+        for b in peeked:
+            if b != 0:
+                return True
+        return False
+
     async def _execute(self, cursor: Cursor, query: str, vals: Any) -> str | None:
         active_gen = getattr(self, '_active_generator', None)
         if active_gen is not None:
@@ -732,7 +755,7 @@ class Connection:
                 stale_cursor.generator = None
                 self._active_cursor = None
 
-        if getattr(self, '_dirty_socket', False):
+        if getattr(self, '_dirty_socket', False) or self._has_unread_non_null_bytes():
             await self._protocol._drain_socket()
 
         self._dirty_socket = True

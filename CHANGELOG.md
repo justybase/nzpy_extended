@@ -2,6 +2,13 @@
 
 All notable changes to `nzpy_extended` are documented in this file.
 
+## 0.4.1
+
+### Fixed
+
+- Protocol desync after orphaned backend responses: `_drain_socket` now consumes length+payload for notification (`A`) and unknown (`0`) messages, skips null padding, and fails closed with `InterfaceError` if ReadyForQuery is not reached.
+- `_execute` drains when unread non-null socket/buffer bytes remain, not only when `_dirty_socket` is set (e.g. orphaned `SELECT CURRENT_SID` before the next statement).
+
 ## 0.4.0
 
 ### Breaking

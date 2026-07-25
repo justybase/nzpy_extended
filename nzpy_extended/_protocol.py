@@ -600,17 +600,55 @@ class ProtocolHandler:
                 continue
 
     async def _drain_socket(self) -> None:
+        """Consume orphaned backend messages up to ReadyForQuery.
+
+        Raises InterfaceError if ReadyForQuery is not reached within ~2s.
+        """
         conn = self._conn
         assert conn._stream is not None
         conn.log.debug("Draining dirty socket stream...")
+
+        deadline = asyncio.get_event_loop().time() + 2.0
+
+        async def _read_exact(n: int) -> bytes:
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                raise InterfaceError(
+                    "Connection protocol out of sync: orphaned response incomplete "
+                    "(no ReadyForQuery). Reconnect required."
+                )
+            try:
+                return await asyncio.wait_for(conn._read(n), timeout=remaining)
+            except asyncio.TimeoutError as exc:
+                raise InterfaceError(
+                    "Connection protocol out of sync: orphaned response incomplete "
+                    "(no ReadyForQuery). Reconnect required."
+                ) from exc
+
         try:
+            # Discard leading null padding already buffered (and any still on the socket
+            # that arrives as part of the first reads below).
+            conn._stream.discard_buffered_leading_nulls()
+
             cached_header = None
             while True:
+                if asyncio.get_event_loop().time() > deadline:
+                    raise InterfaceError(
+                        "Connection protocol out of sync: orphaned response incomplete "
+                        "(no ReadyForQuery). Reconnect required."
+                    )
+
                 if cached_header is not None:
                     header = cached_header
                     cached_header = None
                 else:
-                    header = await conn._read(5)
+                    # Skip null padding between messages / after previous RFQ.
+                    while True:
+                        b = await _read_exact(1)
+                        if b != b"\x00":
+                            break
+                    header = b + await _read_exact(4)
+
                 response = header[:1]
 
                 conn.log.debug("Drain read msg code: %s", response)
@@ -619,7 +657,7 @@ class ProtocolHandler:
                     conn.status = CONN_EXECUTING
                     conn._dirty_socket = False
                     conn.log.debug("Socket successfully drained to READY_FOR_QUERY.")
-                    break
+                    return
 
                 if response in (
                     COMMAND_COMPLETE,
@@ -629,39 +667,46 @@ class ProtocolHandler:
                     DATA_ROW,
                     b"X",
                 ):
-                    length = i_unpack(await conn._read(4))[0]
-                    await conn._read(length)
+                    length = i_unpack(await _read_exact(4))[0]
+                    if length > 0:
+                        await _read_exact(length)
                     continue
 
                 if response == b"Y":
                     inner_header = conn._stream.read_view_sync(8)
                     if inner_header is None:
-                        inner_header = await conn._read(8)
+                        inner_header = await _read_exact(8)
                     tup_len = i_unpack(inner_header, 4)[0]
                     data = conn._stream.read_view_sync(tup_len)
                     if data is None:
-                        await conn._read(tup_len)
+                        await _read_exact(tup_len)
                     while True:
                         header = conn._stream.read_view_sync(5)
                         if header is None:
-                            header = await conn._read(5)
+                            # Skip nulls then read type+4
+                            while True:
+                                b = await _read_exact(1)
+                                if b != b"\x00":
+                                    break
+                            header = b + await _read_exact(4)
                         if header[:1] != b"Y":
                             cached_header = header
                             break
                         inner_header = conn._stream.read_view_sync(8)
                         if inner_header is None:
-                            inner_header = await conn._read(8)
+                            inner_header = await _read_exact(8)
                         tup_len = i_unpack(inner_header, 4)[0]
                         data = conn._stream.read_view_sync(tup_len)
                         if data is None:
-                            await conn._read(tup_len)
+                            await _read_exact(tup_len)
                     continue
 
                 if response == b"u":
-                    await conn._read(10)
-                    await conn._read(16)
-                    length = i_unpack(await conn._read(4))[0]
-                    await conn._read(length)
+                    await _read_exact(10)
+                    await _read_exact(16)
+                    length = i_unpack(await _read_exact(4))[0]
+                    if length > 0:
+                        await _read_exact(length)
                     continue
 
                 if response == b"U":
@@ -676,35 +721,49 @@ class ProtocolHandler:
                     continue
 
                 if response == b"x":
-                    await conn._read(4)
+                    await _read_exact(4)
                     continue
 
                 if response == b"e":
-                    length = i_unpack(await conn._read(4))[0]
-                    await conn._read(length - 1)
-                    await conn._read(1)
+                    length = i_unpack(await _read_exact(4))[0]
+                    await _read_exact(length - 1)
+                    await _read_exact(1)
                     while True:
-                        char = await conn._read(1)
+                        char = await _read_exact(1)
                         if char == b"\x00":
                             break
-                    await conn._read(4)
+                    await _read_exact(4)
                     while True:
-                        numBytes = i_unpack(await conn._read(4))[0]
+                        numBytes = i_unpack(await _read_exact(4))[0]
                         if numBytes == 0:
                             break
-                        await conn._read(numBytes)
+                        await _read_exact(numBytes)
                     continue
 
                 if response in (NOTICE_RESPONSE, b"I"):
-                    length = i_unpack(await conn._read(4))[0]
-                    await conn._read(length)
+                    length = i_unpack(await _read_exact(4))[0]
+                    if length > 0:
+                        await _read_exact(length)
                     continue
 
-                length = i_unpack(await conn._read(4))[0]
-                await conn._read(length)
+                if response in (b"0", b"A"):
+                    # Same framing as _connNextResultSetGenerator: length + payload.
+                    length = i_unpack(await _read_exact(4))[0]
+                    if length > 0:
+                        await _read_exact(length)
+                    continue
 
+                length = i_unpack(await _read_exact(4))[0]
+                if length > 0:
+                    await _read_exact(length)
+
+        except InterfaceError:
+            raise
         except Exception as e:
-            conn.log.warning("Error during socket draining: %s", e)
+            raise InterfaceError(
+                f"Connection protocol out of sync while draining orphaned response: {e}. "
+                "Reconnect required."
+            ) from e
 
     # ------------------------------------------------------------------
     # Outbound helpers

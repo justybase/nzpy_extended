@@ -48,6 +48,29 @@ class NzBufferedStream:
             return view[self.head:self.tail]
         return None
 
+    @property
+    def buffered_available(self) -> int:
+        return self.tail - self.head
+
+    def has_buffered_non_null(self) -> bool:
+        """True if the in-memory buffer contains any non-zero byte."""
+        avail = self.tail - self.head
+        if avail <= 0 or self.view is None:
+            return False
+        view = self.view[self.head:self.tail]
+        for b in view:
+            if b != 0:
+                return True
+        return False
+
+    def discard_buffered_leading_nulls(self) -> int:
+        """Advance head past leading 0x00 bytes already in the buffer. Returns count discarded."""
+        n = 0
+        while self.head < self.tail and self.view is not None and self.view[self.head] == 0:
+            self.head += 1
+            n += 1
+        return n
+
     def advance_head(self, n: int) -> None:
         self.head += n
 
