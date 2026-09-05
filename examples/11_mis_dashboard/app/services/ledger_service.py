@@ -46,6 +46,10 @@ class LedgerService:
         self._repository = repository
         self._joined: tuple[tuple[Any, ...], list[list[Any]]] | None = None
 
+    def clear_cache(self) -> None:
+        """Drop the joined ledger snapshot after a table refresh."""
+        self._joined = None
+
     # -- data ----------------------------------------------------------------
 
     @staticmethod

@@ -60,7 +60,7 @@ never touch a database (`tests/test_report_service.py`).
 | Personal | **Daily brief** — your results + top network KPIs on one print-ready A4 page |
 | Access | **Role-based scope** — simulated sign-in (analyst / area manager / branch manager / advisor) enforced on the backend |
 | Detail | **Sales ledger** — the full sales list with server-side pagination, free-text search, filters and sorting |
-| Overview | KPI cards + charts across the whole network |
+| Overview | KPI cards, plan attainment, decision insights and charts across the whole network |
 
 Each report page offers:
 
@@ -74,6 +74,12 @@ Each report page offers:
   `xlspy`, including a hidden "Report info" sheet), and every chart as **PNG or
   PDF** (generated client-side straight from the rendered Chart.js canvas,
   including an "All charts (PDF)" pack in the toolbar)
+
+Report KPIs also expose a comparable previous period, optional target and
+status (`good`, `warning`, `critical`), while the Overview adds a short,
+deterministic action-oriented insight list. The period toolbar supports
+presets (last 3 months, last 12 months and year to date) and report context is
+kept in the URL.
 
 ### Sales ledger — very large analytics with pagination
 
@@ -147,11 +153,11 @@ series line chart and a day table. Plans come from `MIS_FACT_BRANCH_PLAN`
 The user-facing requirement: *do not hit Netezza on every click*. This app
 implements a two-level cache:
 
-1. **Table cache** (`cachetools.TTLCache`, TTL 15 min by default) — the full
-   MIS_* tables (sales list, balance snapshots, client movement, campaign
-   results + all dimensions) are loaded **completely into memory** at startup
-   and kept warm by a background refresh loop. All report computations run in
-   pure Python over these in-memory rows.
+1. **Table cache** (`cachetools.TTLCache`, TTL 15 min by default) — all 13
+   MIS_* tables (including plans, advisor performance and the demo user
+   directory) are loaded **completely into memory** at startup and kept warm
+   by a background refresh loop. All report computations run in pure Python
+   over these in-memory rows.
 2. **Report cache** (`TTLCache`, TTL 2 min) — computed payloads
    (KPIs + tables + charts) are cached per (report, period, dimension), so
    repeated clicks are instant.
@@ -261,7 +267,7 @@ produces identical numbers.
 | `GET /api/people/cumulative?scope=branch\|advisor&code=&month=` | cumulative vs plan vs previous month (role-scoped) |
 | `GET /api/people/advisors/{code}/export/{fmt}` / `.../cumulative/export/{fmt}` | panel / cumulative spreadsheets (role-scoped) |
 | `GET /api/session/me` / `POST /api/session/user` / `GET /api/session/users` | simulated sign-in: current user, switch, directory |
-| `POST /api/cache/refresh` | force full table reload |
+| `POST /api/cache/refresh` | force full table reload and clear derived caches |
 | `GET /api/status` | DB + pool + cache stats |
 
 Report ids: `overview, loans, investments, insurance, current_accounts,

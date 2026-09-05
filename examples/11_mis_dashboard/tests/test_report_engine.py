@@ -124,6 +124,18 @@ async def test_available_months(dataset, service: ReportService) -> None:
     assert await service.available_months() == expected
 
 
+async def test_overview_has_plan_comparison_and_decision_fields(
+        service: ReportService) -> None:
+    payload = await service.build("overview", "2025-09", "2026-08", None)
+    kpis = {k["key"]: k for k in payload["kpis"]}
+    assert kpis["network_plan"]["value"] > 0
+    assert kpis["sales"]["target"] == kpis["network_plan"]["value"]
+    assert payload["comparison"] == {"from": "2024-09", "to": "2025-08"}
+    assert payload["synthetic"]["columns"][-1]["key"] == "attainment"
+    sales_chart = next(c for c in payload["charts"] if c["id"] == "sales_plan")
+    assert [s["name"] for s in sales_chart["series"]] == ["Actual (EUR)", "Plan (EUR)"]
+
+
 # ---------------------------------------------------------------------------
 # Drill-down on every sales report
 # ---------------------------------------------------------------------------

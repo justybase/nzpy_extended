@@ -37,6 +37,12 @@
         <div id="page-subtitle" class="page-subtitle"></div>
       </div>
       <div class="toolbar">
+        <label id="preset-label">Period <select id="select-preset">
+          <option value="custom">Custom</option>
+          <option value="last3">Last 3 months</option>
+          <option value="last12">Last 12 months</option>
+          <option value="ytd">Year to date</option>
+        </select></label>
         <label id="from-label">From <select id="select-from"></select></label>
         <label id="to-label">To <select id="select-to"></select></label>
         <label id="dim-label" hidden>Breakdown <select id="select-dim"></select></label>
@@ -45,7 +51,8 @@
       </div>
     </header>
 
-    <div id="notice" class="notice" hidden></div>
+    <div id="notice" class="notice" role="alert" aria-live="polite" hidden></div>
+    <section id="insights" class="insight-grid" hidden></section>
 
     <section id="kpis" class="kpi-grid"></section>
     <section id="charts" class="chart-grid" hidden></section>
@@ -90,7 +97,7 @@
   </main>
 </div>
 
-<div id="toast" class="toast" hidden></div>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 <script src="/static/app.js"></script>
 </body>
 </html>

@@ -179,6 +179,12 @@ html, body {
   font-size: 13px;
 }
 
+.notice.stale {
+  background: #fff8e8;
+  border-color: #eed39a;
+  color: #76520b;
+}
+
 .toast {
   position: fixed;
   bottom: 20px;
@@ -213,6 +219,37 @@ html, body {
 .kpi .kpi-value { font-size: 21px; font-weight: 650; margin-top: 4px; font-variant-numeric: tabular-nums; }
 .kpi .kpi-value.pct { color: var(--accent); }
 .kpi .kpi-value.neg { color: var(--bad); }
+.kpi.status-good { border-top: 3px solid var(--good); }
+.kpi.status-warning { border-top: 3px solid var(--warn); }
+.kpi.status-critical { border-top: 3px solid var(--bad); }
+.kpi-delta { margin-top: 5px; font-size: 11.5px; color: var(--muted); }
+.kpi-delta.good { color: var(--good); }
+.kpi-delta.warning, .kpi-delta.negative { color: var(--bad); }
+.kpi-target { margin-top: 3px; font-size: 11px; color: var(--muted); }
+
+/* ---------------- decision insights ---------------- */
+.insight-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.insight {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 4px solid #9aa7bc;
+  border-radius: var(--radius);
+  padding: 11px 14px;
+  box-shadow: var(--shadow);
+}
+.insight.warning { border-left-color: var(--warn); }
+.insight.critical { border-left-color: var(--bad); }
+.insight.good { border-left-color: var(--good); }
+.insight-title { font-weight: 650; font-size: 13px; }
+.insight-detail { margin-top: 4px; font-size: 12px; color: var(--muted); line-height: 1.4; }
+.insight-action { margin-top: 6px; font-size: 11.5px; color: var(--accent); }
+.freshness { color: var(--muted); font-size: 11px; margin-left: 4px; }
 
 /* ---------------- charts ---------------- */
 .chart-grid {

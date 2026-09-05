@@ -50,6 +50,15 @@ class PeopleService:
         self._repository = repository
         self._cache: TTLCache = TTLCache(maxsize=maxsize, ttl=ttl)
 
+    def clear_cache(self) -> None:
+        """Drop derived people payloads after the table snapshot changes."""
+        self._cache.clear()
+
+    def _snapshot_token(self) -> tuple[tuple[str, str], ...]:
+        tables = self._repository.snapshot().get("tables", {})
+        return tuple(sorted((name, str(info.get("loaded_at", "")))
+                            for name, info in tables.items()))
+
     # -- role-based scope ----------------------------------------------------
 
     @staticmethod
@@ -145,7 +154,7 @@ class PeopleService:
                             user: SessionUser | None = None) -> dict[str, Any]:
         # authorize before serving (cached) payloads
         await self._authorize_advisor(code, user)
-        key = ("panel", code)
+        key = ("panel", self._snapshot_token(), code)
         cached = self._cache.get(key)
         if cached is not None:
             return cached
@@ -314,7 +323,7 @@ class PeopleService:
                          user: SessionUser | None = None) -> dict[str, Any]:
         # authorize before serving (cached) payloads
         await self._authorize_entity(scope, code, user)
-        key = ("cumulative", scope, code, month)
+        key = ("cumulative", self._snapshot_token(), scope, code, month)
         cached = self._cache.get(key)
         if cached is not None:
             return cached
