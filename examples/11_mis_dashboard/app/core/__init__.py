@@ -1,0 +1,1 @@
+"""Application configuration — environment-driven, no hard-coded settings."""

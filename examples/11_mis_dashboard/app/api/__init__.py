@@ -1,0 +1,1 @@
+"""API layer — FastAPI routers (thin), business logic lives in services."""
