@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sales Network MIS — Retail Dashboard</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <div class="brand">
+      <div class="brand-logo">MIS</div>
+      <div>
+        <div class="brand-title">Sales Network MIS</div>
+        <div class="brand-sub">Retail reporting</div>
+      </div>
+    </div>
+    <nav id="menu"></nav>
+    <div id="cache-box">
+      <div class="cache-title">Data cache</div>
+      <div id="cache-info" class="cache-info">Loading…</div>
+      <button id="cache-refresh" class="btn btn-small" type="button">Reload data</button>
+    </div>
+  </aside>
+
+  <main id="main">
+    <header id="topbar">
+      <div>
+        <h1 id="page-title">Overview</h1>
+        <div id="page-subtitle" class="page-subtitle"></div>
+      </div>
+      <div class="toolbar">
+        <label id="from-label">From <select id="select-from"></select></label>
+        <label id="to-label">To <select id="select-to"></select></label>
+        <label id="dim-label" hidden>Breakdown <select id="select-dim"></select></label>
+        <button class="btn" id="btn-charts-pdf" type="button" title="Export every chart on this page as a single PDF">All charts (PDF)</button>
+      </div>
+    </header>
+
+    <div id="notice" class="notice" hidden></div>
+
+    <section id="kpis" class="kpi-grid"></section>
+    <section id="charts" class="chart-grid" hidden></section>
+
+    <section class="card" id="card-synthetic">
+      <div class="card-head">
+        <div>
+          <h2>Synthetic summary</h2>
+          <div class="card-sub" id="synthetic-sub"></div>
+        </div>
+        <div class="card-actions" id="synthetic-actions"></div>
+      </div>
+      <div class="table-wrap" id="synthetic-table"></div>
+    </section>
+
+    <section class="card" id="card-analytic" hidden>
+      <div class="card-head">
+        <div>
+          <h2>Analytic breakdown</h2>
+          <div class="card-sub" id="analytic-sub"></div>
+        </div>
+        <div class="card-actions" id="analytic-actions"></div>
+      </div>
+      <div class="table-wrap" id="analytic-table"></div>
+    </section>
+
+    <section class="card drill-card" id="card-drill" hidden>
+      <div class="card-head">
+        <div>
+          <h2 id="drill-title">Drill-down</h2>
+          <div class="card-sub" id="drill-sub"></div>
+        </div>
+        <div class="card-actions">
+          <div class="card-actions" id="drill-actions"></div>
+          <button class="btn" id="drill-close" type="button">Close</button>
+        </div>
+      </div>
+      <div class="table-wrap" id="drill-table"></div>
+    </section>
+
+    <section id="custom-page" hidden></section>
+  </main>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
