@@ -23,6 +23,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -119,10 +120,16 @@ def main() -> int:
 
         # print emulation — sidebar must disappear, brief stays
         page.emulate_media(media="print")
+        page.evaluate("window.dispatchEvent(new Event('beforeprint'))")
+        page.wait_for_timeout(400)  # Chart.js finishes resizing to the print box.
         check("print: sidebar hidden",
               not visible(page, "#sidebar") or page.is_hidden("#sidebar"))
         check("print: brief visible", visible(page, ".brief"))
         page.screenshot(path=str(out_dir / "03_brief_print.png"))
+        pdf = page.pdf(prefer_css_page_size=True, print_background=True)
+        (out_dir / "03_brief.pdf").write_bytes(pdf)
+        check("print: brief fits one A4 page",
+              len(re.findall(rb"/Type\s*/Page\b", pdf)) == 1)
         page.emulate_media(media="screen")
 
         # --------------------------------------------------- role switcher
@@ -176,6 +183,37 @@ def main() -> int:
         page.wait_for_timeout(700)
         badge = page.text_content("#user-badge") or ""
         check("badge back to analyst", "Network analyst" in badge, badge)
+
+        # Narrow layouts: navigation, KPI values and pickers must fit.
+        print("Responsive layouts")
+        for width in (768, 390):
+            page.set_viewport_size({"width": width, "height": 844})
+            page.goto(args.base, wait_until="networkidle")
+            expect(page.locator("#kpis .kpi").first).to_be_visible()
+            check(f"{width}px: overview fits", no_horizontal_overflow(page))
+            check(f"{width}px: KPI values fit their cards", page.evaluate("""() =>
+                [...document.querySelectorAll('#kpis .kpi-value')].every(el =>
+                    el.scrollWidth <= el.clientWidth + 1)
+            """))
+            check(f"{width}px: menu starts collapsed", page.is_hidden("#menu"))
+            page.click("#menu-toggle")
+            check(f"{width}px: menu opens", page.is_visible("#menu"))
+            open_menu(page, "Advisor performance")
+            expect(page.locator(".profile-name")).to_be_visible()
+            check(f"{width}px: menu closes after navigation", page.is_hidden("#menu"))
+            check(f"{width}px: advisor page fits", no_horizontal_overflow(page))
+            page.click("#menu-toggle")
+            open_menu(page, "Daily brief")
+            expect(page.locator(".brief-kpis .kpi").first).to_be_visible()
+            check(f"{width}px: brief fits", no_horizontal_overflow(page))
+            check(f"{width}px: report controls stay hidden",
+                  page.is_hidden("#preset-label") and page.is_hidden("#btn-charts-pdf"))
+            page.screenshot(path=str(out_dir / f"07_brief_{width}.png"))
+            page.click("#menu-toggle")
+            open_menu(page, "Sales ledger")
+            expect(page.locator(".ledger-table tbody tr").first).to_be_visible()
+            check(f"{width}px: ledger fits", no_horizontal_overflow(page))
+            page.screenshot(path=str(out_dir / f"08_ledger_{width}.png"))
 
         browser.close()
 
