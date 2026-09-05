@@ -17,7 +17,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
-from app.api.deps import get_export_service, get_report_service
+from app.api.deps import (get_current_user, get_export_service,
+                          get_report_service)
+from app.core.roles import SessionUser
 from app.schemas.report import DrillResponse
 from app.services import reporting
 from app.services.export_service import ExportService
@@ -36,19 +38,21 @@ async def drill(
     fmt: str | None = Query(default=None, description="optional xlsx|xlsb download"),
     report_service: ReportService = Depends(get_report_service),
     export_service: ExportService = Depends(get_export_service),
+    user: SessionUser = Depends(get_current_user),
 ) -> Any:
     if target not in reporting.DRILL_TARGETS:
         raise HTTPException(400, f"target must be one of {sorted(reporting.DRILL_TARGETS)}")
     try:
         if fmt is not None:
-            result = await export_service.export_drill(report_id, target, key, fmt, from_, to)
+            result = await export_service.export_drill(report_id, target, key, fmt,
+                                                       from_, to, user)
             return FileResponse(
                 result.path,
                 media_type=result.media_type,
                 filename=result.filename,
                 background=BackgroundTask(os.remove, result.path),
             )
-        return await report_service.drill(report_id, target, key, from_, to)
+        return await report_service.drill(report_id, target, key, from_, to, user)
     except reporting.UnknownReport:
         raise HTTPException(404, f"Unknown report: {report_id}") from None
     except reporting.DrillNotAvailable as exc:

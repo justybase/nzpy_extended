@@ -9,7 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
-from app.api.deps import get_export_service
+from app.api.deps import get_current_user, get_export_service
+from app.core.roles import SessionUser
 from app.services import reporting
 from app.services.export_service import ExportService
 
@@ -25,9 +26,11 @@ async def export_report(
     to: str | None = Query(default=None),
     dim: str | None = Query(default=None),
     export_service: ExportService = Depends(get_export_service),
+    user: SessionUser = Depends(get_current_user),
 ) -> FileResponse:
     try:
-        result = await export_service.export_report(report_id, kind, fmt, from_, to, dim)
+        result = await export_service.export_report(report_id, kind, fmt, from_, to,
+                                                    dim, user)
     except reporting.UnknownReport:
         raise HTTPException(404, f"Unknown report: {report_id}") from None
     except reporting.DataNotReady as exc:

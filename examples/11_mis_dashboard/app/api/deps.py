@@ -10,11 +10,13 @@ from __future__ import annotations
 from fastapi import Request
 
 from app.core.config import Settings
+from app.core.roles import SessionUser
 from app.repositories.base import MISRepository
 from app.services.export_service import ExportService
 from app.services.ledger_service import LedgerService
 from app.services.people_service import PeopleService
 from app.services.report_service import ReportService
+from app.services.session_service import SessionService
 
 
 def get_settings(request: Request) -> Settings:
@@ -39,3 +41,11 @@ def get_ledger_service(request: Request) -> LedgerService:
 
 def get_people_service(request: Request) -> PeopleService:
     return request.app.state.people_service
+
+
+def get_session_service(request: Request) -> SessionService:
+    return request.app.state.session_service
+
+
+async def get_current_user(request: Request) -> SessionUser:
+    return await request.app.state.session_service.current()

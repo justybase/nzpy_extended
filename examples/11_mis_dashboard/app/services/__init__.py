@@ -4,5 +4,7 @@ from app.services.report_service import ReportService
 from app.services.export_service import ExportService
 from app.services.ledger_service import LedgerService
 from app.services.people_service import PeopleService
+from app.services.session_service import SessionService
 
-__all__ = ["ReportService", "ExportService", "LedgerService", "PeopleService"]
+__all__ = ["ReportService", "ExportService", "LedgerService", "PeopleService",
+           "SessionService"]

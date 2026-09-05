@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.roles import SessionUser
+from app.repositories import ScopedMISRepository
 from app.repositories.base import MISRepository
 
 # (key, label, format) — order matters, it is the row layout
@@ -46,25 +48,35 @@ class LedgerService:
 
     # -- data ----------------------------------------------------------------
 
-    async def _joined_rows(self) -> list[list[Any]]:
-        """Full sales detail joined with the dimension tables (cached).
+    @staticmethod
+    def _repo_for(repository: MISRepository,
+                  user: SessionUser | None) -> MISRepository:
+        """Row-level role masking for the ledger."""
+        if user is None or user.is_analyst:
+            return repository
+        return ScopedMISRepository(repository, user)
+
+    async def _joined_rows(self,
+                           user: SessionUser | None = None) -> list[list[Any]]:
+        """Sales detail joined with the dimension tables (cached).
 
         The join is rebuilt only when the repository snapshot changes (e.g.
-        after a Netezza reload), so paging through a 200k-row ledger does not
-        re-join on every request.
+        after a Netezza reload) or the signed-in user changes, so paging
+        through a 200k-row ledger does not re-join on every request.
         """
-        snap = self._repository.snapshot()
-        fingerprint = tuple(
+        repo = self._repo_for(self._repository, user)
+        scope = user.code if user and not user.is_analyst else "full"
+        snap = repo.snapshot()
+        fingerprint = (scope,) + tuple(
             (k, v["rows"], v["loaded_at"])
             for k, v in sorted(snap["tables"].items()))
         if self._joined is not None and self._joined[0] == fingerprint:
             return self._joined[1]
-        rows = await self._build_joined()
+        rows = await self._build_joined(repo)
         self._joined = (fingerprint, rows)
         return rows
 
-    async def _build_joined(self) -> list[list[Any]]:
-        repo = self._repository
+    async def _build_joined(self, repo: MISRepository) -> list[list[Any]]:
         scols, srows = await repo.get_table("MIS_FACT_SALES")
         bcols, brows = await repo.get_table("MIS_DIM_BRANCH")
         rcols, rrows = await repo.get_table("MIS_DIM_REGION")
@@ -124,8 +136,9 @@ class LedgerService:
     async def query(self, from_: str | None, to: str | None, q: str | None,
                     group: str | None, channel: str | None, status: str | None,
                     sort: str | None, dir_: str | None,
-                    page: int, page_size: int) -> dict[str, Any]:
-        rows = await self._joined_rows()
+                    page: int, page_size: int,
+                    user: SessionUser | None = None) -> dict[str, Any]:
+        rows = await self._joined_rows(user)
         total = len(rows)
 
         # date window
@@ -198,9 +211,10 @@ class LedgerService:
 
     async def export_rows(self, from_: str | None, to: str | None, q: str | None,
                           group: str | None, channel: str | None,
-                          status: str | None) -> dict[str, Any]:
+                          status: str | None,
+                          user: SessionUser | None = None) -> dict[str, Any]:
         """All filtered rows for export (capped at EXPORT_CAP)."""
-        rows = await self._joined_rows()
+        rows = await self._joined_rows(user)
         if from_ or to:
             rows = [r for r in rows
                     if (not from_ or r[1] >= from_)

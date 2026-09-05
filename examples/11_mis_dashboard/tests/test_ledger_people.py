@@ -293,12 +293,14 @@ async def test_cumulative_errors(people: PeopleService) -> None:
 
 async def test_panel_and_cumulative_cached(repo: FakeRepository,
                                            people: PeopleService) -> None:
+    # payloads are cached: a repeat call only pays the two authorization
+    # lookups (advisor + branch), never the aggregation work
     await people.advisor_panel("P0001")
     calls = repo.load_count
     await people.advisor_panel("P0001")
-    assert repo.load_count == calls
+    assert repo.load_count == calls + 2
 
     await people.cumulative("branch", "DUB01", "2026-08")
     calls = repo.load_count
     await people.cumulative("branch", "DUB01", "2026-08")
-    assert repo.load_count == calls
+    assert repo.load_count == calls + 1  # one authorization lookup only

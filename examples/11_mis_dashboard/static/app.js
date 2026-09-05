@@ -23,6 +23,7 @@ const MENU = [
   { sep: "My views" },
   { id: "my_branch", label: "My branch", type: "personal", scope: "branch" },
   { id: "my_results", label: "My results", type: "personal", scope: "advisor" },
+  { id: "daily_brief", label: "Daily brief", type: "brief" },
   { sep: "Detail" },
   { id: "ledger", label: "Sales ledger", type: "ledger" },
 ];
@@ -38,6 +39,8 @@ const state = { page: "overview", from: null, to: null, dim: null };
 const charts = [];      // active Chart.js instances
 const sortState = {};   // tableId -> {col, dir}
 let ALL_MONTHS = [];    // available months from /api/meta
+let currentUser = null; // simulated session ({code, name, role, role_label})
+const USER_ROLES = ["ANALYST", "AREA_MANAGER", "BRANCH_MANAGER", "ADVISOR"];
 
 // Row-level drill-through: which reports and which first columns are clickable
 const DRILLABLE_PAGES = new Set([
@@ -55,6 +58,7 @@ const ledgerState = {
 };
 // person / personal-view state
 const personState = { code: null, month: null };
+const briefState = { scope: "advisor", code: null, month: null };
 
 const $ = (id) => document.getElementById(id);
 
@@ -127,6 +131,7 @@ function selectPage(id) {
   if (item.type === "ledger") loadLedgerPage();
   else if (item.type === "advisors") loadAdvisorsPage();
   else if (item.type === "personal") loadPersonalPage(item.scope);
+  else if (item.type === "brief") loadBriefPage();
   else loadReportPage();
 }
 
@@ -147,17 +152,18 @@ async function fetchJSON(url, opts) {
 
 /* ------------------------------------------------------------ layout */
 
-function setLayout({ kpis = false, charts = false, synthetic = false,
+function setLayout({ kpis = false, charts: showCharts = false, synthetic = false,
                      analytic = false, custom = false, fromTo = true }) {
   $("kpis").hidden = !kpis;
-  $("charts").hidden = !charts;
+  $("charts").hidden = !showCharts;
   $("card-synthetic").hidden = !synthetic;
   $("card-analytic").hidden = !analytic;
   $("custom-page").hidden = !custom;
   $("from-label").hidden = !fromTo;
   $("to-label").hidden = !fromTo;
   if (!kpis) $("kpis").innerHTML = "";
-  if (!charts) { for (const c of charts) c.destroy(); charts.length = 0; }
+  // 'charts' is the global array — the parameter is renamed to avoid shadowing
+  if (!showCharts) { for (const c of charts) c.destroy(); charts.length = 0; }
 }
 
 /* ------------------------------------------------------------- reports */
@@ -178,9 +184,15 @@ async function loadReportPage() {
   }
 }
 
+function scopeNote() {
+  if (!currentUser || currentUser.role === "ANALYST") return "";
+  return ` · data scoped to your ${currentUser.role_label}`;
+}
+
 function renderReport(payload) {
   $("page-subtitle").textContent =
-    `${payload.subtitle} · ${monthLabel(payload.period.from)} – ${monthLabel(payload.period.to)}`;
+    `${payload.subtitle} · ${monthLabel(payload.period.from)} – ${monthLabel(payload.period.to)}`
+    + scopeNote();
   renderKpis($("kpis"), payload.kpis || []);
   renderCharts(payload.charts || []);
   renderDimSelect(payload.dims || [], payload.dim);
@@ -761,9 +773,13 @@ async function loadAdvisorsPage() {
     }
     sel.onchange = () => { personState.code = sel.value; loadAdvisorPanel(); };
     $("advisor-active").onchange = () => { fillAdvisorSelect(); };
-    personState.code = personState.code && advisors.some((a) => a.code === personState.code)
-      ? personState.code : (advisors[0] ? advisors[0].code : null);
+    personState.code = resetCodeIfOutOfScope(advisors, personState.code);
     sel.value = personState.code;
+    // role-based scope may lock the picker to a single advisor
+    sel.disabled = advisors.length <= 1;
+    if (advisors.length === 1) {
+      sel.title = `Your role (${currentUser.role_label}) restricts this picker`;
+    }
     fillAdvisorSelect();
     if (personState.code) await loadAdvisorPanel();
   } catch (err) {
@@ -928,9 +944,12 @@ async function loadPersonalPage(scope) {
       sel.appendChild(opt);
     }
     sel.onchange = () => { personState.code = sel.value; loadCumulative(scope); };
-    personState.code = personState.code && items.some((i) => i.code === personState.code)
-      ? personState.code : (items[0] ? items[0].code : null);
+    personState.code = resetCodeIfOutOfScope(items, personState.code);
     sel.value = personState.code;
+    sel.disabled = items.length <= 1;
+    if (items.length === 1) {
+      sel.title = `Your role (${currentUser.role_label}) restricts this picker`;
+    }
     if (personState.code) await loadCumulative(scope);
   } catch (err) {
     showNotice(`Could not load ${label}s: ${err.message}`);
@@ -968,6 +987,230 @@ function renderCumulative(payload) {
   }
   renderTable($("personal-table"), payload.columns, payload.rows,
               `${payload.scope}:${payload.month}`, null);
+}
+
+/* ------------------------------------------------------- session (roles) */
+
+function renderUserBadge() {
+  const badge = $("user-badge");
+  if (!currentUser) { badge.hidden = true; return; }
+  badge.hidden = false;
+  badge.textContent = `Signed in as ${currentUser.name} · ${currentUser.role_label}`;
+}
+
+async function initSession() {
+  const [me, users] = await Promise.all([
+    fetchJSON("/api/session/me"),
+    fetchJSON("/api/session/users"),
+  ]);
+  currentUser = me.user;
+  renderUserBadge();
+  const sel = $("user-select");
+  sel.innerHTML = "";
+  for (const role of USER_ROLES) {
+    const group = users.users.filter((u) => u.role === role);
+    if (!group.length) continue;
+    const og = document.createElement("optgroup");
+    og.label = group[0].role_label;
+    for (const u of group) {
+      const opt = document.createElement("option");
+      opt.value = u.code;
+      opt.textContent = u.name;
+      og.appendChild(opt);
+    }
+    sel.appendChild(og);
+  }
+  sel.value = currentUser.code;
+  sel.onchange = async () => {
+    try {
+      const res = await fetchJSON("/api/session/user", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: sel.value }),
+      });
+      currentUser = res.user;
+      renderUserBadge();
+      showToast(`Signed in as ${currentUser.name} (${currentUser.role_label}). Scope updated.`);
+      selectPage(state.page); // re-scope pickers on the current page
+    } catch (err) {
+      showToast(`Switch failed: ${err.message}`);
+      sel.value = currentUser.code;
+    }
+  };
+}
+
+function resetCodeIfOutOfScope(items, code) {
+  return items.some((i) => i.code === code) ? code : (items[0] ? items[0].code : null);
+}
+
+/* ------------------------------------------------ daily MIS brief (print) */
+
+async function loadBriefPage() {
+  setLayout({ custom: true, fromTo: false });
+  $("page-subtitle").textContent =
+    "One-page daily brief: your results plus the top network KPIs — ready to print";
+  const page = $("custom-page");
+  page.innerHTML = `
+    <div class="person-picker card no-print">
+      <label>Scope
+        <select id="brief-scope">
+          <option value="advisor">My results</option>
+          <option value="branch">My branch</option>
+        </select>
+      </label>
+      <label id="brief-entity-label">Advisor
+        <select id="brief-entity" class="person-select"></select>
+      </label>
+      <label>Month <select id="brief-month"></select></label>
+      <button class="btn primary" id="brief-print" type="button">Print / PDF</button>
+    </div>
+    <div class="brief" id="brief-root"></div>`;
+
+  $("brief-print").addEventListener("click", () => window.print());
+
+  const monthSel = $("brief-month");
+  monthSel.innerHTML = "";
+  for (const ym of ALL_MONTHS) {
+    const opt = document.createElement("option");
+    opt.value = ym;
+    opt.textContent = monthLabel(ym);
+    monthSel.appendChild(opt);
+  }
+  if (!briefState.month || !ALL_MONTHS.includes(briefState.month)) {
+    briefState.month = ALL_MONTHS[ALL_MONTHS.length - 1];
+  }
+  monthSel.value = briefState.month;
+  monthSel.onchange = () => { briefState.month = monthSel.value; loadBrief(); };
+
+  $("brief-scope").value = briefState.scope;
+  $("brief-scope").onchange = async () => {
+    briefState.scope = $("brief-scope").value;
+    briefState.code = null; // re-pick in the new scope
+    await fillBriefEntity();
+  };
+  await fillBriefEntity();
+}
+
+async function fillBriefEntity() {
+  const scope = briefState.scope;
+  const isAdvisor = scope === "advisor";
+  $("brief-entity-label").firstChild.textContent = isAdvisor ? "Advisor" : "Branch";
+  const sel = $("brief-entity");
+  sel.innerHTML = "<option>Loading…</option>";
+  try {
+    const data = await fetchJSON(isAdvisor ? "/api/people/advisors" : "/api/people/branches");
+    const items = isAdvisor ? (data.advisors || []) : (data.branches || []);
+    sel.innerHTML = "";
+    for (const it of items) {
+      const opt = document.createElement("option");
+      opt.value = it.code;
+      opt.textContent = isAdvisor
+        ? `${it.name} — ${it.role || ""} · ${it.branch_name || it.branch_code}`
+        : `${it.name} — ${it.city || ""}`;
+      sel.appendChild(opt);
+    }
+    briefState.code = resetCodeIfOutOfScope(items, briefState.code);
+    sel.value = briefState.code;
+    sel.disabled = items.length <= 1;
+    sel.onchange = () => { briefState.code = sel.value; loadBrief(); };
+    if (briefState.code) await loadBrief();
+  } catch (err) {
+    $("brief-root").innerHTML = `<div class="empty">Could not load: ${err.message}</div>`;
+  }
+}
+
+async function loadBrief() {
+  const root = $("brief-root");
+  root.innerHTML = `<div class="empty">Loading…</div>`;
+  try {
+    const [cum, overview] = await Promise.all([
+      fetchJSON(`/api/people/cumulative?scope=${briefState.scope}`
+        + `&code=${encodeURIComponent(briefState.code)}&month=${briefState.month}`),
+      fetchJSON("/api/report/overview"),
+    ]);
+    renderBrief(cum, overview);
+  } catch (err) {
+    root.innerHTML = `<div class="empty">Could not load the brief: ${err.message}</div>`;
+  }
+}
+
+function renderBrief(cum, overview) {
+  const info = cum.info;
+  const rows = cum.rows;
+  const last = rows.length ? rows[rows.length - 1] : null;
+  const kpis = {};
+  for (const k of cum.kpis) kpis[k.key] = k.value;
+  const ov = {};
+  for (const k of (overview.kpis || [])) ov[k.key] = k.value;
+
+  const days = rows.length;
+  const latestDay = last ? last[1] : days;
+  const dailyAvg = days ? round2(kpis.mtd / days) : null;
+  const daysLeft = days - latestDay;
+  const runRate = daysLeft > 0 && kpis.plan ? round2((kpis.plan - kpis.mtd) / daysLeft) : null;
+
+  const root = $("brief-root");
+  root.innerHTML = `
+    <header class="brief-head">
+      <div class="brief-brand">Sales Network MIS</div>
+      <div class="brief-title">Daily MIS Brief — ${escAttr(info.name)}</div>
+      <div class="brief-meta">
+        ${briefState.scope === "advisor" ? escAttr(info.role || "") + " · " : ""}
+        ${escAttr(info.branch_name || info.city || "")}
+        ${info.region_name ? ` · ${escAttr(info.region_name)}` : ""}
+        &nbsp;·&nbsp; ${escAttr(monthLabel(cum.month))}
+        &nbsp;·&nbsp; as of day ${latestDay} of ${days}
+      </div>
+    </header>
+
+    <div class="brief-net">
+      <span class="brief-net-title">Network (top KPIs)</span>
+      <span>Sales in period <b>${formatValue(ov.sales, "eur")}</b></span>
+      <span>Loan volume <b>${formatValue(ov.loan_volume, "eur")}</b></span>
+      <span>Clients acquired <b>${formatValue(ov.acquired, "int")}</b></span>
+      <span>Campaign ROI <b>${formatValue(ov.campaign_roi, "pct")}</b></span>
+    </div>
+
+    <div class="brief-kpis">
+      <div class="kpi"><div class="kpi-label">Month to date</div>
+        <div class="kpi-value">${formatValue(kpis.mtd, "eur")}</div></div>
+      <div class="kpi"><div class="kpi-label">Monthly plan</div>
+        <div class="kpi-value">${formatValue(kpis.plan, "eur")}</div></div>
+      <div class="kpi"><div class="kpi-label">Plan attainment</div>
+        <div class="kpi-value pct">${formatValue(kpis.attainment, "pct")}</div></div>
+      <div class="kpi"><div class="kpi-label">vs previous month</div>
+        <div class="kpi-value">${formatValue(kpis.vs_prev, "pct")}</div></div>
+      <div class="kpi"><div class="kpi-label">Daily average</div>
+        <div class="kpi-value">${formatValue(dailyAvg, "eur")}</div></div>
+      <div class="kpi"><div class="kpi-label">Run-rate to plan</div>
+        <div class="kpi-value">${formatValue(runRate, "eur")}</div></div>
+    </div>
+
+    <div class="brief-chart"><canvas id="brief-canvas"></canvas></div>
+
+    <div class="card brief-table-card">
+      <div class="card-head"><div><h2>Day-by-day cumulative</h2>
+        <div class="card-sub">Daily sales, cumulative, prorated plan and previous month at the same point</div></div></div>
+      <div class="table-wrap" id="brief-table"></div>
+    </div>
+
+    <footer class="brief-foot">
+      Generated ${new Date().toLocaleString("en-IE")} · data source: cached MIS_* tables (Netezza JUST_DATA) ·
+      confidential — for internal use only
+    </footer>`;
+
+  // the brief owns its chart: drop any charts from the previous page
+  for (const c of charts) c.destroy();
+  charts.length = 0;
+  const spec = cum.charts[0];
+  if (spec) {
+    makeChart($("brief-canvas"), spec);
+  }
+  renderTable($("brief-table"), cum.columns, rows, "brief", null);
+}
+
+function round2(v) {
+  return Math.round(v * 100) / 100;
 }
 
 /* ------------------------------------------------------------------ cache */
@@ -1040,6 +1283,11 @@ async function initMeta() {
     await initMeta();
   } catch (err) {
     showNotice(`Cannot reach the backend (${err.message}). Is the server running with seeded tables?`);
+  }
+  try {
+    await initSession();
+  } catch (err) {
+    showNotice(`Cannot load the session (${err.message}).`);
   }
   selectPage("overview");
 })();

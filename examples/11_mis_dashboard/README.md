@@ -30,14 +30,18 @@ app/
 │   ├── report_service.py      orchestration + report payload TTLCache
 │   ├── ledger_service.py      sales ledger: server-side pagination/filtering
 │   ├── people_service.py      advisor panels + cumulative personal views
+│   ├── session_service.py     simulated sign-in + role-based scope rules
 │   └── export_service.py      xlspy workbook generation
 ├── repositories/              data access
 │   ├── base.py                MISRepository interface (ABC)
-│   └── cached.py              full MIS_* tables in a TTLCache
+│   ├── cached.py              full MIS_* tables in a TTLCache
+│   └── scoped.py              row-level role masking (ScopedMISRepository)
 ├── schemas/                   Pydantic response models
-├── core/                      settings (env-driven) + logging
+├── core/                      settings, logging, role model (roles.py)
 └── db/                        Netezza connection pool factory
 ```
+
+Plus `tools/visual_check.py` — browser-based layout checks (Playwright).
 
 Services depend only on the `MISRepository` interface, so the storage backend
 can be swapped — the unit tests use a tiny in-memory `FakeRepository` and
@@ -53,6 +57,8 @@ never touch a database (`tests/test_report_service.py`).
 | Marketing | Campaign effectiveness (reach, response, conversion, ROI) |
 | Sales force | Advisor performance panels (person picker + vertical profile, scores, ratings) |
 | Personal | **My branch** (branch manager) and **My results** (advisor) — cumulative sales within the month vs plan and vs previous month |
+| Personal | **Daily brief** — your results + top network KPIs on one print-ready A4 page |
+| Access | **Role-based scope** — simulated sign-in (analyst / area manager / branch manager / advisor) enforced on the backend |
 | Detail | **Sales ledger** — the full sales list with server-side pagination, free-text search, filters and sorting |
 | Overview | KPI cards + charts across the whole network |
 
@@ -88,6 +94,43 @@ initials, role, branch/region/city, hire date, tenure, status), a rating badge
 and score trend charts, and a monthly ratings table (plan vs achieved,
 attendance %, rating, note) — downloadable as XLSX/XLSB. Data comes from the
 new `MIS_FACT_ADVISOR_PERF` table.
+
+### Daily brief — one printable A4 page
+
+`Daily brief` (menu → My views) combines **My results / My branch** (scope
+toggle) with the top **network KPIs** (sales in period, loan volume, clients
+acquired, campaign ROI) into a single page: header, KPI cards (MTD, plan,
+attainment, vs previous month, daily average, run-rate to plan), the
+cumulative chart and the day-by-day table, with a generated/footer strip.
+The **Print / PDF** button uses `@media print` CSS (A4 portrait, sidebar and
+controls hidden) — exactly what prints is what you see.
+
+### Role-based access (simulated sign-in)
+
+No real authentication in this example — the sidebar's **"Signed in as"**
+selector simulates a login from the `MIS_DIM_USER` table (297 users):
+
+| Role | Can see |
+|---|---|
+| Analyst (`NET01`) | the whole network (default) |
+| Area manager (`AM_*`, one per region) | branches and advisors of their region |
+| Branch manager (`BM_*`, one per branch) | their branch and its advisors |
+| Advisor (`ADV_*`, one per active advisor) | themselves and their own branch |
+
+The scope is **enforced in the service layer**, not just hidden in the UI:
+the picker endpoints return only the allowed entities, and `advisor_panel` /
+`cumulative` (and their exports) answer **403** for anything outside the
+user's scope. Pickers lock (single option) when a role has only one choice.
+
+**The MIS report pages are masked too.** A `ScopedMISRepository` wraps the
+cached tables and filters the fact rows (sales, balances, client movement,
+campaign results, plans, advisor performance) by the signed-in user's scope —
+so overview, all sales reports, the sales ledger, drill-downs and every
+XLSX/XLSB export show only that user's data (report payloads are cached per
+user). A branch manager's Loans report contains just their branch; an
+advisor's ledger only their own sales; drilling into a foreign branch returns
+no rows. The report subtitle notes "data scoped to your …" when masking is
+active.
 
 ### My branch / My results — cumulative within the month
 
@@ -166,6 +209,17 @@ Run the unit tests (no database needed — fake repository):
 python -m pytest tests/ -q
 ```
 
+Browser-based visual checks (Playwright + headless Chromium) — screenshots
+land in `tools/screenshots/`, any layout regression fails the run:
+
+```bash
+pip install playwright && python -m playwright install chromium
+python tools/visual_check.py           # needs the server running
+```
+
+It checks the overview page, the daily brief (including print emulation) and
+the role switcher (picker locking, badge, scoped report subtitle).
+
 ## Data model (JUST_DATA)
 
 Star schema, all names in English:
@@ -184,6 +238,7 @@ Star schema, all names in English:
 - `MIS_FACT_CAMPAIGN_RESULTS` — campaign contacts / responses / conversions / cost
 - `MIS_FACT_ADVISOR_PERF` — monthly advisor plans, KPI scores (0–100) and 1–5 ratings
 - `MIS_FACT_BRANCH_PLAN` — monthly branch plans (sum of its advisors' plans)
+- `MIS_DIM_USER` — 297 simulated users (analyst, area/branch managers, advisors) for role-based access
 
 Data is generated deterministically (fixed RNG seeds), so every `seed.py` run
 produces identical numbers.
@@ -198,12 +253,14 @@ produces identical numbers.
 | `GET /api/drill/{id}/{branches\|advisors\|sales}?key=CODE&from=&to=` | row-level drill-down |
 | `GET /api/drill/{id}/{target}?key=CODE&fmt=xlsx` | drill view as spreadsheet |
 | `GET /api/export/{id}/{synthetic\|analytic}/{xlsx\|xlsb}?from=&to=&dim=` | spreadsheet download |
-| `GET /api/ledger?from=&to=&q=&group=&channel=&status=&sort=&dir=&page=&page_size=` | paginated, filtered sales detail |
+| `GET /api/ledger?from=&to=&q=&group=&channel=&status=&sort=&dir=&page=&page_size=` | paginated, filtered sales detail (row-masked per role) |
 | `GET /api/ledger/export/{xlsx\|xlsb}?filters...` | filtered ledger as spreadsheet |
 | `GET /api/people/advisors` / `GET /api/people/branches` | picker lists |
-| `GET /api/people/advisors/{code}` | advisor profile + ratings panel |
-| `GET /api/people/cumulative?scope=branch\|advisor&code=&month=` | cumulative vs plan vs previous month |
-| `GET /api/people/advisors/{code}/export/{fmt}` / `.../cumulative/export/{fmt}` | panel / cumulative spreadsheets |
+| `GET /api/report/{id}?from=&to=&dim=` | report payload (cached, row-masked per signed-in role) |
+| `GET /api/people/advisors/{code}` | advisor profile + ratings panel (role-scoped, 403 outside scope) |
+| `GET /api/people/cumulative?scope=branch\|advisor&code=&month=` | cumulative vs plan vs previous month (role-scoped) |
+| `GET /api/people/advisors/{code}/export/{fmt}` / `.../cumulative/export/{fmt}` | panel / cumulative spreadsheets (role-scoped) |
+| `GET /api/session/me` / `POST /api/session/user` / `GET /api/session/users` | simulated sign-in: current user, switch, directory |
 | `POST /api/cache/refresh` | force full table reload |
 | `GET /api/status` | DB + pool + cache stats |
 
@@ -214,3 +271,24 @@ Exports: reports that declare no analytic table (e.g. `overview`) answer
 `/api/export/{id}/analytic/...` with **400**; the UI hides those buttons.
 Sheet names are sanitized for Excel/XML (e.g. `&` → `and`), because xlspy does
 not escape them in the workbook's filter definitions.
+
+## Scale test — ledger paging at ~1M rows
+
+The pagination design was validated against a **scale-500 seed** (~966k sales
+rows, ~984k rows cached in memory):
+
+| Operation | Time at 192k rows | Time at ~1M rows |
+|---|---|---|
+| First page (one-time join) | ~0.4 s | 1.5 s |
+| Any paged request (cached join) | ~45 ms | 0.16–0.27 s |
+| Deep page (page 9,999 of 19,330) | — | 0.21 s |
+| Filtered (group + channel + status) | — | 0.16 s |
+| Free-text search (`q=`) | — | 1.15 s (full scan) |
+| Sort by amount | — | 0.27 s |
+| Cumulative view (1M-row scan) | — | 0.19 s |
+| XLSX export (185k rows) | — | 1.06 s, 3.3 MB |
+
+Page loads stay in the ~0.2 s range at 1M rows because the backend joins the
+cached tables once and only transfers the requested 50-row slice — Netezza is
+never queried per request. Run it yourself: `python seed.py --rows 500`, start
+the app, then `python seed.py` to restore the demo dataset.

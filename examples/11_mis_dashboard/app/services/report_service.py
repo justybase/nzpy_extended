@@ -16,6 +16,8 @@ from typing import Any
 
 from cachetools import TTLCache
 
+from app.core.roles import SessionUser
+from app.repositories import ScopedMISRepository
 from app.repositories.base import MISRepository
 from app.services import reporting
 
@@ -27,23 +29,35 @@ class ReportService:
 
     # -- report payloads ----------------------------------------------------
 
+    def _repo_for(self, user: SessionUser | None) -> MISRepository:
+        """Row-level role masking: scoped repository for non-analyst users."""
+        if user is None or user.is_analyst:
+            return self._repository
+        return ScopedMISRepository(self._repository, user)
+
     async def build(self, report_id: str, from_: str | None, to: str | None,
-                    dim: str | None) -> dict[str, Any]:
-        key = ("report", report_id, from_, to, dim)
+                    dim: str | None,
+                    user: SessionUser | None = None) -> dict[str, Any]:
+        scope = user.code if user and not user.is_analyst else "full"
+        key = ("report", scope, report_id, from_, to, dim)
         cached = self._cache.get(key)
         if cached is not None:
             return cached
-        payload = await reporting.build(report_id, self._repository, from_, to, dim)
+        payload = await reporting.build(report_id, self._repo_for(user),
+                                        from_, to, dim)
         self._cache[key] = payload
         return payload
 
     async def drill(self, report_id: str, target: str, key: str,
-                    from_: str | None, to: str | None) -> dict[str, Any]:
-        cache_key = ("drill", report_id, target, key, from_, to)
+                    from_: str | None, to: str | None,
+                    user: SessionUser | None = None) -> dict[str, Any]:
+        scope = user.code if user and not user.is_analyst else "full"
+        cache_key = ("drill", scope, report_id, target, key, from_, to)
         cached = self._cache.get(cache_key)
         if cached is not None:
             return cached
-        payload = await reporting.drill(report_id, self._repository, from_, to, target, key)
+        payload = await reporting.drill(report_id, self._repo_for(user),
+                                        from_, to, target, key)
         self._cache[cache_key] = payload
         return payload
 
