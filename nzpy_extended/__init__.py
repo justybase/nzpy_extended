@@ -59,18 +59,25 @@ async def connect(
     buffer_size: int = DEFAULT_BUFFER_SIZE,
 ) -> Connection:
     conn = Connection()
-    await conn.connect(user, host, unix_sock, port, database, password, ssl,
-                      securityLevel, timeout, application_name,
-                      max_prepared_statements, datestyle, logLevel,
-                      tcp_keepalive, char_varchar_encoding,
-                      logOptions, client_encoding,
-                      pgOptions, ssl_verify=ssl_verify,
-                      connect_timeout=connect_timeout,
-                      buffer_size=buffer_size)
-    if on_connect is not None:
-        result = on_connect(conn)
-        if hasattr(result, '__await__'):
-            await result
+    try:
+        await conn.connect(user, host, unix_sock, port, database, password, ssl,
+                          securityLevel, timeout, application_name,
+                          max_prepared_statements, datestyle, logLevel,
+                          tcp_keepalive, char_varchar_encoding,
+                          logOptions, client_encoding,
+                          pgOptions, ssl_verify=ssl_verify,
+                          connect_timeout=connect_timeout,
+                          buffer_size=buffer_size)
+        if on_connect is not None:
+            result = on_connect(conn)
+            if hasattr(result, '__await__'):
+                await result
+    except BaseException:
+        try:
+            await conn.close()
+        except Exception:
+            pass
+        raise
     return conn
 
 
@@ -82,15 +89,10 @@ paramstyle: str = 'qmark'
 
 max_prepared_statements: int = 1000
 
-STRING: int = 1043
-
-NUMBER: int = 1700
-
-DATETIME: int = 1114
-
-ROWID: int = 26
+from .types import STRING as STRING, NUMBER as NUMBER, DATETIME as DATETIME, ROWID as ROWID
 
 __all__ = [
+    "apilevel", "threadsafety", "paramstyle", "STRING", "NUMBER", "DATETIME", "ROWID",
     "Warning", "DataError", "DatabaseError", "connect", "InterfaceError",
     "ProgrammingError", "Error", "OperationalError", "IntegrityError", "InternalError",
     "NotSupportedError", "ArrayContentNotHomogenousError",

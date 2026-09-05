@@ -1,50 +1,42 @@
 """
-test_odbc_parity_extended.py
+test_reference_parity_extended.py
 ============================
-Extended ODBC parity tests — fills gaps identified in TEST_COVERAGE_REVIEW.md.
+Extended differential parity tests — fills gaps identified in TEST_COVERAGE_REVIEW.md.
 
-Compared to Node.js driver's OdbcComparison.test.js (~720 queries), our
-existing test_odbc_comparison.py has 114 queries. This file adds:
+Compared to the JustyBase Node driver's reference query corpus (~720
+queries), our existing comparison module has 114 queries. This file adds:
 
   1. _V_ system catalog views (Node.js covers these extensively)
   2. NULL bitmap patterns — many NULL columns in one row
   3. Additional type edge cases from Node.js / SpreadSheetTasks patterns
   4. Interval / Time consistency (types we recently fixed)
 
-The test uses pyodbc as the ODBC reference, comparing cell-by-cell
-between nzpy_extended and pyodbc results.
+The tests use the independent JustyBase Node driver as the reference,
+comparing cell-by-cell with nzpy_extended results.
 
-Known deviations from ODBC parity (documented, not fixed):
+Known deviations from reference parity (documented, not fixed):
   - REAL precision: IEEE 754 float differences are acceptable
-  - INTERVAL text format: our Interval object str() differs from ODBC text
+  - INTERVAL text format: our Interval object str() differs from the
+    reference driver's text representation
     representation — this is intentional (proper Python types > string)
-  - NCHAR/NVARCHAR: ODBC on Linux may not return these correctly;
-    we skip those in pyodbc-unsafe contexts
+  - NCHAR/NVARCHAR padding follows the server's native type semantics.
 
 """
 
-import datetime
 import os
-import re
 
 import pytest
 
 import nzpy_extended as nzpy
+from reference_driver import ReferenceConnection, compare_reference_rows
 
 pytestmark = pytest.mark.full
 
 NZ_HOST     = os.environ.get("NZ_DEV_HOST",     "192.168.0.144")
 NZ_PORT     = int(os.environ.get("NZ_DEV_PORT",  "5480"))
-NZ_DB       = os.environ.get("NZ_DEV_DB",        "JUST_DATA")
+NZ_DB       = os.environ.get("NZ_DEV_DATABASE") or os.environ.get("NZ_DEV_DB", "JUST_DATA")
 NZ_USER     = os.environ.get("NZ_DEV_USER",      "admin")
 NZ_PASSWORD = os.environ.get("NZ_DEV_PASSWORD",  "password")
-
-HAVE_PYODBC = False
-try:
-    import pyodbc
-    HAVE_PYODBC = True
-except ImportError:
-    pass
 
 
 async def _conn():
@@ -52,59 +44,6 @@ async def _conn():
         user=NZ_USER, password=NZ_PASSWORD,
         host=NZ_HOST, port=NZ_PORT, database=NZ_DB,
     )
-
-
-def _odbc_conn():
-    """Return an ODBC connection using pyodbc (Windows) or ctypes helper (Linux)."""
-    if not HAVE_PYODBC:
-        from odbc_helper import connect as _oc
-        return _oc(dsn="NetezzaSQL", user=NZ_USER, password=NZ_PASSWORD)
-    conn_str = (
-        f"DRIVER={{NetezzaSQL}};SERVER={NZ_HOST};PORT={NZ_PORT};"
-        f"DATABASE={NZ_DB};UID={NZ_USER};PWD={NZ_PASSWORD};"
-    )
-    try:
-        return pyodbc.connect(conn_str)
-    except Exception:
-        from odbc_helper import connect as _oc
-        return _oc(dsn="NetezzaSQL", user=NZ_USER, password=NZ_PASSWORD)
-
-
-def _odbc_safe_fetchall(cursor):
-    """Catch pyodbc.DataError per-column when ODBC can't read a type."""
-    columns = cursor.description
-    rows_raw = cursor.fetchall()
-    result = []
-    for raw in rows_raw:
-        row = []
-        for i, _ in enumerate(columns):
-            try:
-                row.append(raw[i])
-            except (pyodbc.DataError, OverflowError):
-                row.append(None)
-        result.append(tuple(row))
-    return result
-
-
-def _norm(val):
-    """Normalize a value for comparison between nzpy and pyodbc."""
-    if val is None:
-        return None
-    if isinstance(val, bool):
-        return val
-    if isinstance(val, datetime.datetime):
-        return val.isoformat().replace('T', ' ')
-    if isinstance(val, datetime.date):
-        return val.isoformat()
-    if isinstance(val, bytes):
-        return val
-    if isinstance(val, (int, float)):
-        return val
-    if isinstance(val, str):
-        return val.strip()
-    if hasattr(val, 'microseconds') and hasattr(val, 'days') and hasattr(val, 'months'):
-        return repr(val)
-    return str(val)
 
 
 # ---------------------------------------------------------------------------
@@ -126,45 +65,31 @@ _V_VIEWS = [
 @pytest.mark.parametrize("sql", _V_VIEWS)
 @pytest.mark.asyncio
 @pytest.mark.timeout(60)
-async def test_system_view_matches_odbc(sql):
-    """Results from nzpy_extended must match pyodbc for system views."""
+async def test_system_view_matches_reference_driver(sql):
+    """Results from nzpy_extended must match the independent driver."""
     nz_conn = await _conn()
     try:
         nz_cur = nz_conn.cursor()
         await nz_cur.execute(sql)
         nzrows = await nz_cur.fetchmany(50)
 
-        odbc_conn = _odbc_conn()
+        reference_conn = ReferenceConnection()
         try:
-            odbc_cur = odbc_conn.cursor()
-            try:
-                odbc_cur.execute(sql)
-                odbcrows = _odbc_safe_fetchall(odbc_cur)[:len(nzrows)]
-            except (pyodbc.ProgrammingError, pyodbc.DataError):
-                pytest.skip("pyodbc cannot execute this view")
+            reference_cur = reference_conn.cursor()
+            reference_cur.execute(sql)
+            reference_rows = reference_cur.fetchall()[:len(nzrows)]
+            compare_reference_rows(
+                nzrows, reference_rows, sql, reference_cur.description
+            )
         finally:
-            odbc_conn.close()
-
-        assert len(nzrows) == len(odbcrows), (
-            f"Row count mismatch for {sql.split('FROM')[1].strip()}: "
-            f"nzpy={len(nzrows)} odbc={len(odbcrows)}"
-        )
-
-        for i, (nzr, odr) in enumerate(zip(nzrows, odbcrows)):
-            for j, (nzv, odv) in enumerate(zip(nzr, odr)):
-                nzv_norm = _norm(nzv)
-                odv_norm = _norm(odv)
-                assert nzv_norm == odv_norm, (
-                    f"Row {i}, col {j} mismatch: "
-                    f"nzpy={nzv_norm!r} odbc={odv_norm!r}"
-                )
+            reference_conn.close()
     finally:
         await nz_conn.close()
 
 
 # ---------------------------------------------------------------------------
 # NULL bitmap patterns — many NULL columns in one row
-# Based on Node.js OdbcComparison.test.js patterns
+# Based on the JustyBase Node driver's reference query patterns
 # ---------------------------------------------------------------------------
 
 NULL_PATTERN_QUERIES = [
@@ -202,9 +127,8 @@ async def test_null_patterns_nzpy(sql):
     """NULL patterns must not crash the driver. Verifies nzpy_extended
        handles NULL bitmaping correctly for mixed NULL/non-NULL rows.
 
-       We don't compare against ODBC here because pyodbc may not
-       support reading certain literal NULL::TYPE columns.
-       Instead just verify the driver returns expected data shapes.
+       This deliberately focuses on the null bitmap shape; the comparison
+       corpus below covers the same values against the reference driver.
     """
     nz_conn = await _conn()
     try:

@@ -13,7 +13,30 @@ from .utils import (
 )
 
 ZERO: Timedelta = Timedelta(0)
-BINARY = bytes
+class DBAPITypeObject:
+    """Category comparable to every provider OID belonging to it."""
+
+    def __init__(self, *oids: int) -> None:
+        self.oids = frozenset(oids)
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, DBAPITypeObject):
+            return self.oids == other.oids
+        return isinstance(other, int) and other in self.oids
+
+    def __ne__(self, other: object) -> bool:
+        return not self == other
+
+    def __instancecheck__(self, value: object) -> bool:
+        # Preserve the historical isinstance(value, BINARY) extension.
+        return self.oids == frozenset({17}) and isinstance(value, bytes)
+
+
+STRING = DBAPITypeObject(19, 25, 1042, 1043, 2522, 2530)
+NUMBER = DBAPITypeObject(20, 21, 23, 700, 701, 1700, 2500)
+DATETIME = DBAPITypeObject(1082, 1083, 1114, 1184, 1266)
+ROWID = DBAPITypeObject(26)
+BINARY = DBAPITypeObject(17)
 
 
 class LogOptions(enum.IntFlag):
@@ -141,8 +164,8 @@ def TimestampFromTicks(ticks: int) -> Datetime:
     return Timestamp(*localtime(ticks)[:6])
 
 
-def Binary(value: bytes) -> bytes:
-    return value
+def Binary(value: bytes | bytearray | memoryview) -> bytes:
+    return bytes(value)
 
 
 FC_TEXT: int = 0

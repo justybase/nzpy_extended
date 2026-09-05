@@ -41,6 +41,7 @@ test = [
     "pytest>=8",
     "pytest-asyncio",
     "pytest-timeout",
+    "pytest-cov",
 ]
 lint = [
     "mypy>=1.13",

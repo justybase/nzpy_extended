@@ -8,7 +8,15 @@ class Warning(Exception):
 
 
 class Error(Exception):
-    pass
+    @property
+    def sqlstate(self) -> str | None:
+        value = self.args[0] if self.args else None
+        return value.get("C") if isinstance(value, dict) else None
+
+    @property
+    def diag(self) -> dict[str, str]:
+        value = self.args[0] if self.args else None
+        return dict(value) if isinstance(value, dict) else {}
 
 
 # Typed payload stored on Connection.error before raising DB-API exceptions.

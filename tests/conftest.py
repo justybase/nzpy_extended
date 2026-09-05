@@ -7,13 +7,26 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 import nzpy_extended as nzpy
 
+# Canonical name wins, including in legacy test modules reading NZ_DEV_DB.
+if os.environ.get("NZ_DEV_DATABASE"):
+    os.environ["NZ_DEV_DB"] = os.environ["NZ_DEV_DATABASE"]
+
+
+def pytest_collection_modifyitems(items):
+    configured = all(os.environ.get(key) for key in
+                     ("NZ_DEV_HOST", "NZ_DEV_USER", "NZ_DEV_PASSWORD", "NZ_DEV_DB"))
+    if not configured:
+        for item in items:
+            if item.get_closest_marker("unit") is None:
+                item.add_marker(pytest.mark.skip(reason="Live tests require explicit NZ_DEV_* configuration"))
+
 
 # ---------------------------------------------------------------------------
 # Connection parameters — mirrors C# Config.cs exactly
 # ---------------------------------------------------------------------------
 NZ_HOST     = os.environ.get("NZ_DEV_HOST",     "192.168.0.144")
 NZ_PORT     = int(os.environ.get("NZ_DEV_PORT",  "5480"))
-NZ_DB       = os.environ.get("NZ_DEV_DB",        "JUST_DATA")
+NZ_DB       = os.environ.get("NZ_DEV_DATABASE") or os.environ.get("NZ_DEV_DB", "JUST_DATA")
 NZ_USER     = os.environ.get("NZ_DEV_USER",      "admin")
 NZ_PASSWORD = os.environ.get("NZ_DEV_PASSWORD",  "password")
 

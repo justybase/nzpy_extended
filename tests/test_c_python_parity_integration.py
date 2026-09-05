@@ -151,6 +151,11 @@ async def test_numeric_type(con_cext, cext_mode, sql, expected_str):
     ("SELECT '05:41:15'::TIME", datetime.time),
     ("SELECT '00:00:00'::TIME", datetime.time),
     ("SELECT '23:59:59'::TIME", datetime.time),
+    (
+        "SELECT '12:00:00-12'::TIMETZ "
+        "FROM JUST_DATA..DIMACCOUNT LIMIT 1",
+        str,
+    ),
     ("SELECT '2024-12-11 14:30:00'::TIMESTAMP", datetime.datetime),
     ("SELECT '2000-01-01 00:00:00'::TIMESTAMP", datetime.datetime),
 ])

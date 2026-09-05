@@ -2,6 +2,25 @@
 
 All notable changes to `nzpy_extended` are documented in this file.
 
+## Unreleased
+
+- Propagate commit failures from connection/transaction contexts; begin explicit
+  sync transactions and reset transaction state after commit/rollback.
+- Reject truncated protocol reads and invalid lengths instead of padding with zeros.
+- Pass the TLS server hostname, use buffered handshake I/O and support nonblocking
+  TLS transport reads/writes. Remove authentication responses and cancel secrets from logs.
+- Export the DB-API module interface from `sync`; provide OID category type objects,
+  binary conversion, diagnostic properties and DB-API errors for closed cursors.
+- Tighten ODBC comparisons: preserve whitespace, decimal precision and timestamp values.
+- Accept `NZ_DEV_DATABASE` with precedence over legacy `NZ_DEV_DB`; skip live tests
+  without explicit environment configuration.
+- Add offline failure regressions, local TLS tests and temporary-table live regressions.
+- Test C and pure-Python modes across supported Python/OS versions; measure branch
+  coverage, test installed artifacts outside the checkout and gate publishing on quality checks.
+
+Compatibility: autocommit=True and arraysize=100 remain unchanged. Type categories
+are no longer single OID integers; use equality with cursor.description type codes.
+
 ## 0.4.1
 
 ### Fixed

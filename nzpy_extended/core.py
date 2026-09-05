@@ -6,6 +6,7 @@ import logging
 import logging.handlers
 import platform
 import socket
+import ssl as ssl_module
 import asyncio
 from collections import defaultdict, deque
 from collections.abc import Callable, Iterable, AsyncIterable
@@ -128,28 +129,19 @@ class Connection:
         return self
 
     async def __aexit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
-        if exc_type:
-            try:
-                await self.rollback()
-            except Exception as exc:
-                self.log.debug(
-                    "Error rolling back in connection context exit: %s",
-                    exc,
-                    exc_info=True,
-                )
-        else:
-            try:
-                await self.commit()
-            except Exception as exc:
-                self.log.debug(
-                    "Error committing in connection context exit: %s",
-                    exc,
-                    exc_info=True,
-                )
         try:
-            await self.close()
-        except ConnectionClosedError:
-            pass
+            if exc_type is None:
+                await self.commit()
+            else:
+                try:
+                    await self.rollback()
+                except Exception:
+                    self.log.debug("Rollback failed during context exit", exc_info=True)
+        finally:
+            try:
+                await self.close()
+            except Exception:
+                self.log.debug("Close failed during context exit", exc_info=True)
 
     def __del__(self) -> None:
         try:
@@ -184,6 +176,7 @@ class Connection:
         return error
 
     def __init__(self) -> None:
+        self._closed = False
         self.sock = None
         self._usock = None
         self._stream = None
@@ -309,8 +302,10 @@ class Connection:
                 self._usock.setsockopt(
                     socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         except socket.error as e:
-            self._usock.close()
-            raise InterfaceError("communication error", e)
+            if self._usock is not None:
+                self._usock.close()
+                self._usock = None
+            raise InterfaceError("communication error", e) from e
 
         self._usock.setblocking(True)
         if not isinstance(ssl, dict):
@@ -318,21 +313,38 @@ class Connection:
         else:
             hs_ssl = dict(ssl)  # pyright: ignore[reportUnknownArgumentType]
         hs_ssl.setdefault('ssl_verify', ssl_verify)
+        hs_ssl.setdefault('server_hostname', host)
         hs = handshake.SyncHandshake(self._usock, hs_ssl, self.log)
         if application_name:
             hs.guardium_applName = application_name
-        self._usock = await asyncio.to_thread(
-            hs.startup, database, securityLevel,
-            user, password, pgOptions)
-        if self._usock is False:
-            msg:str = hs.last_error or "Error in handshake"
-            raise ProgrammingError(msg)
+        try:
+            result = await asyncio.to_thread(
+                hs.startup, database, securityLevel, user, password, pgOptions)
+            if result is False:
+                raise ProgrammingError(hs.last_error or "Error in handshake")
+            self._usock = result
+        except BaseException:
+            failed_socket = getattr(hs, '_usock', self._usock)
+            try:
+                failed_socket.shutdown(socket.SHUT_RDWR)
+            except Exception:
+                pass
+            try:
+                failed_socket.close()
+                failed_file = getattr(hs, '_sock', None)
+                if failed_file is not None:
+                    failed_file.close()
+            except Exception:
+                self.log.debug("Error cleaning up failed handshake", exc_info=True)
+            self._usock = None
+            raise
         self._backend_pid = hs.backend_pid
         self._backend_key = hs.backend_key
         self._usock.setblocking(False)
 
         self._stream = NzBufferedStream(self._usock, max_size=self._buffer_size,
-                                        buffer_size=self._buffer_size)
+                                        buffer_size=self._buffer_size,
+                                        on_fatal=self.close)
 
         stream = self._stream
         assert stream is not None
@@ -459,6 +471,8 @@ class Connection:
     # (handle_* methods moved to _protocol.py)
 
     def cursor(self) -> Cursor:
+        if self._closed:
+            raise ConnectionClosedError()
         return Cursor(self)
 
     async def execute(self, operation: str, args: Any | None = None, timeout: float | None = None) -> Cursor:
@@ -467,14 +481,21 @@ class Connection:
         return c
 
     async def commit(self) -> None:
+        if self._closed:
+            raise ConnectionClosedError()
         await self._execute(self._cursor, "commit", None)
+        self.in_transaction = False
 
     async def rollback(self) -> None:
+        if self._closed:
+            raise ConnectionClosedError()
         if not self.in_transaction:
             return
         await self._execute(self._cursor, "rollback", None)
+        self.in_transaction = False
 
     async def close(self) -> None:
+        self._closed = True
         if getattr(self, '_usock', None) is None:
             return
 
@@ -721,8 +742,10 @@ class Connection:
         usock = getattr(self, '_usock', None)
         if usock is None:
             return b''
+        if isinstance(usock, ssl_module.SSLSocket):
+            return self._stream.peek_tls() if self._stream is not None else b''
         try:
-            return usock.recv(65536, socket.MSG_PEEK)
+            return bytes(usock.recv(65536, socket.MSG_PEEK))
         except (BlockingIOError, InterruptedError):
             return b''
         except OSError:

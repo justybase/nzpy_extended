@@ -121,7 +121,7 @@ class ProtocolHandler:
         cls: Type[Error]
         if response_code == "28000":
             cls = InterfaceError
-        elif response_code == "23505":
+        elif response_code.startswith("23"):
             cls = IntegrityError
         elif response_code.startswith("08"):
             cls = OperationalError
@@ -673,7 +673,7 @@ class ProtocolHandler:
                     continue
 
                 if response == b"Y":
-                    inner_header = conn._stream.read_view_sync(8)
+                    inner_header: bytes | memoryview | None = conn._stream.read_view_sync(8)
                     if inner_header is None:
                         inner_header = await _read_exact(8)
                     tup_len = i_unpack(inner_header, 4)[0]
@@ -681,14 +681,16 @@ class ProtocolHandler:
                     if data is None:
                         await _read_exact(tup_len)
                     while True:
-                        header = conn._stream.read_view_sync(5)
-                        if header is None:
+                        next_header = conn._stream.read_view_sync(5)
+                        if next_header is None:
                             # Skip nulls then read type+4
                             while True:
                                 b = await _read_exact(1)
                                 if b != b"\x00":
                                     break
                             header = b + await _read_exact(4)
+                        else:
+                            header = bytes(next_header)
                         if header[:1] != b"Y":
                             cached_header = header
                             break

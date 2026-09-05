@@ -33,6 +33,14 @@ class Cursor:
     async def __aenter__(self) -> Cursor:
         return self
 
+    def _ensure_open(self) -> None:
+        if self._c is None:
+            raise InterfaceError("Cursor is closed")
+        if self._c._closed:
+            raise ConnectionClosedError()
+        if self._c._stream is not None and self._c._stream.view is None:
+            raise ConnectionClosedError()
+
     async def __aexit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
         await self.close()
 
@@ -117,6 +125,7 @@ class Cursor:
         return         self._c._meta.resolve_column_metadata(col, index, tupdesc)
 
     async def execute(self, operation: str, args: Any | None = None, stream: Any = None, timeout: float | None = None) -> Cursor:
+        self._ensure_open()
         try:
             self.stream = stream
             self._timeout = timeout
@@ -185,6 +194,7 @@ class Cursor:
             raise ProgrammingError("attempting to use unexecuted cursor")
 
     async def fetchmany(self, num: int | None = None) -> list[Any]:
+        self._ensure_open()
         try:
             rows: list[Any] = []
             for _ in range(self.arraysize if num is None else num):
@@ -197,6 +207,7 @@ class Cursor:
             raise ProgrammingError("attempting to use unexecuted cursor")
 
     async def fetchall(self) -> list[Any]:
+        self._ensure_open()
         try:
             generator = getattr(self, 'generator', None)
             if generator is None:
@@ -265,6 +276,7 @@ class Cursor:
         pass
 
     async def __anext__(self) -> Any:
+        self._ensure_open()
         if getattr(self, '_timeout', None) is not None and self._timeout and self._timeout > 0:
             try:
                 row = await asyncio.wait_for(self._anext_internal(), timeout=self._timeout)

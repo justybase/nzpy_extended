@@ -1,6 +1,8 @@
 # PEP 249 Compliance
 
-DB-API 2.0 (PEP 249) compliance status for both `nzpy_extended` (async) and `nzpy_extended.sync` (sync).
+DB-API 2.0 (PEP 249) compatibility of `nzpy_extended.sync`. The root module
+provides an asynchronous extension of this interface, not a synchronous DB-API
+entry point. Historical autocommit and arraysize defaults remain deviations.
 
 ## Module Interface
 
@@ -89,11 +91,11 @@ All mandatory type constructors and singletons are implemented.
 | `TimeFromTicks(ticks)` | ✅ | Wraps `Time(*time.localtime(ticks)[3:6])` |
 | `TimestampFromTicks(ticks)` | ✅ | Wraps `Timestamp(*time.localtime(ticks)[:6])` |
 | `Binary(string)` | ✅ | Wraps `bytes(string)` |
-| `STRING` type | ✅ | `int` (`1043` = `VARCHAR` OID) |
-| `BINARY` type | ✅ | `bytes` class |
-| `NUMBER` type | ✅ | `int` (`1700` = `NUMERIC` OID) |
-| `DATETIME` type | ✅ | `int` (`1114` = `TIMESTAMP` OID) |
-| `ROWID` type | ✅ | `int` (`26` = `OID` OID) |
+| `STRING` type | ✅ | Category matching text, CHAR and VARCHAR OIDs |
+| `BINARY` type | ✅ | Category matching binary OID; legacy `isinstance` supported |
+| `NUMBER` type | ✅ | Category matching integer, floating point and NUMERIC OIDs |
+| `DATETIME` type | ✅ | Category matching date, time and timestamp OIDs |
+| `ROWID` type | ✅ | Category matching OID 26 |
 
 ## Optional Extensions
 
@@ -117,9 +119,9 @@ All mandatory type constructors and singletons are implemented.
 | Item | PEP 249 requirement | nzpy_extended | Reason |
 |---|---|---|---|
 | `arraysize` default | `1` | `100` | Performance: reduces network round-trips for cursor iteration |
-| `autocommit` default | Must be initially **off** (`False`) | `True` | Netezza sessions default to autocommit. Matches pyodbc Netezza behavior. Set `conn.autocommit = False` for explicit transactions |
+| `autocommit` default | Must be initially **off** (`False`) | `True` | Retained for compatibility. Set `conn.autocommit = False` or use the sync `conn.transaction()` context |
 | `rollback()` | Optional (raise `NotSupportedError` if unsupported) | Implemented | Netezza supports transactions |
 | `callproc()` | Optional (raise `NotSupportedError` if unsupported) | Implemented | Netezza supports stored procedures via nzplsql |
 | `nextset()` | Optional (raise `NotSupportedError` if unsupported) | Implemented | Netezza supports multiple result sets |
 | `Binary()` | Must construct a binary object | Returns `bytes(string)` | Simpler than a custom wrapper class |
-| `BINARY` type | Must be a Type Object | `bytes` class | Type comparisons work with `isinstance(val, bytes)` |
+| `BINARY` type | Must be a Type Object | Category object | Compare with `description[i][1]`; `isinstance(value, BINARY)` also works |

@@ -14,6 +14,30 @@ Python **3.12+** and a C compiler are required to build the optional C extension
 
 ## Running tests
 
+The current offline CI command discovers every test marked `unit`:
+
+```shell
+pytest tests -m unit --strict-config --cov=nzpy_extended --cov-branch
+NZPY_EXTENDED_NO_CEXT=1 pytest tests -m unit --strict-config
+```
+
+Install `.[test]` first; this includes the timeout and coverage plugins. The C
+job asserts that the compiled extension is available before testing. CI runs both
+implementations on Python 3.12–3.14 and Linux, macOS and Windows.
+
+Live tests require explicit credentials and a database in the environment.
+`NZ_DEV_DATABASE` takes precedence over the legacy `NZ_DEV_DB` alias. Without
+configuration live tests are skipped; do not rely on source-code defaults.
+The focused `tests/test_driver_contract_integration.py` regressions only create
+unique temporary tables. Older full-suite tests can modify permanent test objects
+and must run in a dedicated disposable test database.
+
+Reference-driver parity requires exact integer, Decimal, text and deterministic
+temporal values. Floating-point comparisons alone have an explicit tolerance.
+Represent known reference-driver limitations as narrowly scoped skips, never
+global truncation/rounding allowances. Local TLS tests generate temporary
+certificates using the `openssl` executable and skip if it is unavailable.
+
 ### CI profile (no database)
 
 These tests run on every GitHub Actions push/PR. **No live Netezza instance is available in CI.**
@@ -63,7 +87,7 @@ Profiles:
 | Full | `pytest tests/ -m full -v` |
 | Unit only | `pytest tests/ -m unit -v` |
 | Benchmark | `pytest tests/ -m benchmark -v` |
-| ODBC marathon | `pytest tests/test_odbc_comparison_node.py -m odbc_node -v` |
+| JustyBase marathon | `pytest tests/test_odbc_comparison_node.py -m reference_node -v` |
 
 Run the complete suite locally:
 
@@ -79,7 +103,7 @@ Defined in `pytest.ini`:
 - `smoke` — quick integration checks
 - `full` — comprehensive integration
 - `benchmark` — performance tests
-- `odbc_node` — large ODBC parity corpus (~727 queries)
+- `reference_node` — large parity corpus against the independent JustyBase Node driver (~727 queries)
 
 ## Pull requests
 

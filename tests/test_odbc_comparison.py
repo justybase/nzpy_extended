@@ -4,30 +4,15 @@ import pytest
 
 import nzpy_extended as nzpy
 
-from _helpers import compare_rows
-
-try:
-    import pyodbc
-    _HAVE_PYODBC = True
-except ImportError:
-    _HAVE_PYODBC = False
+from reference_driver import ReferenceConnection, compare_reference_rows
 
 pytestmark = pytest.mark.full
 
 NZ_HOST     = os.environ.get("NZ_DEV_HOST",     "192.168.0.144")
 NZ_PORT     = int(os.environ.get("NZ_DEV_PORT",  "5480"))
-NZ_DB       = os.environ.get("NZ_DEV_DB",        "JUST_DATA")
+NZ_DB       = os.environ.get("NZ_DEV_DATABASE") or os.environ.get("NZ_DEV_DB", "JUST_DATA")
 NZ_USER     = os.environ.get("NZ_DEV_USER",      "admin")
 NZ_PASSWORD = os.environ.get("NZ_DEV_PASSWORD",  "password")
-
-ODBC_CONN_STR = (
-    f"Driver={{NetezzaSQL}};"
-    f"servername={NZ_HOST};"
-    f"port={NZ_PORT};"
-    f"database={NZ_DB};"
-    f"username={NZ_USER};"
-    f"password={NZ_PASSWORD}"
-)
 
 QUERIES = [
     "SELECT 10::bigint, null::bigint, true::Boolean, false::Boolean, null::Boolean, "
@@ -144,36 +129,6 @@ QUERIES = [
 ]
 
 
-def _odbc_safe_fetchall(odbc_cur):
-    rows = []
-    while True:
-        try:
-            row = odbc_cur.fetchone()
-        except pyodbc.DataError:
-            continue
-        if row is None:
-            break
-        safe = []
-        for i in range(len(row)):
-            try:
-                safe.append(row[i])
-            except pyodbc.DataError:
-                safe.append(None)
-        rows.append(safe)
-    return rows
-
-
-def _odbc_conn():
-    if not _HAVE_PYODBC:
-        from odbc_helper import connect as _oc
-        return _oc(dsn="NetezzaSQL", user=NZ_USER, password=NZ_PASSWORD)
-    try:
-        return pyodbc.connect(ODBC_CONN_STR, timeout=15)
-    except Exception:
-        from odbc_helper import connect as _oc
-        return _oc(dsn="NetezzaSQL", user=NZ_USER, password=NZ_PASSWORD)
-
-
 async def _nzpy_conn():
     try:
         return await nzpy.connect(
@@ -184,32 +139,39 @@ async def _nzpy_conn():
         pytest.skip(f"nzpy connection failed: {e}")
 
 
-_SHARED_ODBC = None
+_SHARED_REFERENCE = None
 
 
-def _get_shared_odbc():
-    global _SHARED_ODBC
-    if _SHARED_ODBC is None:
-        _SHARED_ODBC = _odbc_conn()
-    return _SHARED_ODBC
+def _get_shared_reference():
+    global _SHARED_REFERENCE
+    if _SHARED_REFERENCE is None:
+        _SHARED_REFERENCE = ReferenceConnection()
+    return _SHARED_REFERENCE
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _close_reference_driver():
+    yield
+    if _SHARED_REFERENCE is not None:
+        _SHARED_REFERENCE.close()
 
 
 @pytest.mark.parametrize("sql", QUERIES)
 @pytest.mark.asyncio
-async def test_query_matches_odbc(sql):
-    odbc_con = _get_shared_odbc()
+async def test_query_matches_reference_driver(sql):
+    reference_con = _get_shared_reference()
     nzpy_con = await _nzpy_conn()
     nz_cur = nzpy_con.cursor()
-    odbc_cur = odbc_con.cursor()
+    reference_cur = reference_con.cursor()
     try:
         await nz_cur.execute(sql)
         nz_rows = await nz_cur.fetchall()
 
-        odbc_cur.execute(sql)
-        odbc_rows = _odbc_safe_fetchall(odbc_cur)
+        reference_cur.execute(sql)
+        reference_rows = reference_cur.fetchall()
 
-        compare_rows(nz_rows, odbc_rows, sql)
+        compare_reference_rows(nz_rows, reference_rows, sql, reference_cur.description)
     finally:
         await nz_cur.close()
-        odbc_cur.close()
+        reference_cur.close()
         await nzpy_con.close()

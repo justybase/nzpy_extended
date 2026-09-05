@@ -3,7 +3,7 @@ test_type_recognition.py
 ========================
 Schema metadata / type recognition tests — modelled after Node.js
 driver's GetSchemaTableTests.test.js, QueryConsistency.test.js, and
-OdbcComparison.test.js.
+the JustyBase reference driver's comparison corpus.
 
 The Python driver's cursor.description returns (name, type_oid) tuples.
 We verify that type OIDs match expected Netezza type codes and that

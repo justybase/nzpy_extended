@@ -96,6 +96,15 @@ Close the connection and underlying socket. Idempotent.
 
 ### Context manager
 
+Commit failures propagate to the caller, and the connection is closed even if
+commit fails. When application code raises, rollback is attempted without
+replacing the original exception.
+
+`with conn.transaction():` explicitly begins a transaction, commits on success
+and rolls back on an exception. It restores the previous autocommit setting and
+does not close the connection. Entering with an already active transaction raises
+`NotSupportedError`; nested transactions/savepoints are not emulated.
+
 ```python
 with nzpy.connect(...) as conn:
     ...
