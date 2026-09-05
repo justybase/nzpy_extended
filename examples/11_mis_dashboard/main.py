@@ -41,6 +41,7 @@ from app.services.export_service import ExportService
 from app.services.ledger_service import LedgerService
 from app.services.people_service import PeopleService
 from app.services.report_service import ReportService
+from app.services.session_service import SessionService
 
 logger = logging.getLogger("mis.main")
 
@@ -70,6 +71,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.ledger_service = LedgerService(repository)
         app.state.people_service = PeopleService(
             repository, ttl=settings.cache_ttl_reports)
+        app.state.session_service = SessionService(repository)
 
         refresh_task: asyncio.Task[None] | None = None
         try:

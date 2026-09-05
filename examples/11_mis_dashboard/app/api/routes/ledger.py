@@ -10,7 +10,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
-from app.api.deps import get_export_service, get_ledger_service
+from app.api.deps import (get_current_user, get_export_service,
+                          get_ledger_service)
+from app.core.roles import SessionUser
 from app.schemas.ledger import LedgerResponse
 from app.services.export_service import ExportService, MEDIA_TYPES
 from app.services.ledger_service import EXPORT_CAP, LedgerService
@@ -34,6 +36,7 @@ async def ledger(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     ledger_service: LedgerService = Depends(get_ledger_service),
+    user: SessionUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     if dir and dir.lower() not in ("asc", "desc"):
         raise HTTPException(400, "dir must be 'asc' or 'desc'")
@@ -47,7 +50,7 @@ async def ledger(
             raise HTTPException(400, f"Unknown {name}: {value}")
 
     return await ledger_service.query(from_, to, q, group, channel, status,
-                                      sort, dir, page, page_size)
+                                      sort, dir, page, page_size, user)
 
 
 @router.get("/export/{fmt}")
@@ -61,11 +64,12 @@ async def ledger_export(
     status: str | None = Query(default=None),
     ledger_service: LedgerService = Depends(get_ledger_service),
     export_service: ExportService = Depends(get_export_service),
+    user: SessionUser = Depends(get_current_user),
 ) -> FileResponse:
     if fmt not in MEDIA_TYPES:
         raise HTTPException(400, f"fmt must be one of {sorted(MEDIA_TYPES)}")
     result = await ledger_service.export_rows(from_, to, q, group, channel,
-                                              status)
+                                              status, user)
     if not result["rows"]:
         raise HTTPException(404, "No rows match the current filters")
     period = f"{from_ or 'start'}_{to or 'end'}"

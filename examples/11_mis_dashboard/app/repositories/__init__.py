@@ -7,5 +7,6 @@ without touching business logic.
 
 from app.repositories.base import MISRepository
 from app.repositories.cached import CachedMISRepository
+from app.repositories.scoped import ScopedMISRepository
 
-__all__ = ["MISRepository", "CachedMISRepository"]
+__all__ = ["MISRepository", "CachedMISRepository", "ScopedMISRepository"]

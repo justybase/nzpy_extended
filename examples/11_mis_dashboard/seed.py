@@ -15,6 +15,7 @@ Tables created / recreated:
     MIS_FACT_CAMPAIGN_RESULTS   - campaign effectiveness per branch
     MIS_FACT_BRANCH_PLAN        - monthly sales plans per branch (sum of advisor plans)
     MIS_FACT_ADVISOR_PERF       - monthly advisor plans, KPI scores and ratings
+    MIS_DIM_USER                - simulated users (analyst, area/branch managers, advisors)
 
 Usage:
     python seed.py             # full dataset (~180k sales rows)
@@ -72,6 +73,7 @@ TABLES = [
     "MIS_FACT_CAMPAIGN_RESULTS",
     "MIS_FACT_BRANCH_PLAN",
     "MIS_FACT_ADVISOR_PERF",
+    "MIS_DIM_USER",
 ]
 
 TABLE_DDL = {
@@ -196,6 +198,16 @@ TABLE_DDL = {
             rating           SMALLINT,
             note             NVARCHAR(60)
         ) DISTRIBUTE ON (advisor_id)""",
+    "MIS_DIM_USER": """
+        CREATE TABLE MIS_DIM_USER (
+            user_id      INTEGER NOT NULL,
+            user_code    NVARCHAR(20) NOT NULL,
+            display_name NVARCHAR(80),
+            role         NVARCHAR(20) NOT NULL,
+            advisor_id   INTEGER,
+            branch_id    INTEGER,
+            region_id    INTEGER
+        ) DISTRIBUTE ON (user_id)""",
 }
 
 LOAD_COLUMNS = {
@@ -244,6 +256,10 @@ LOAD_COLUMNS = {
                               ("conversion_score", "INTEGER"), ("quality_score", "INTEGER"),
                               ("activity_score", "INTEGER"), ("rating", "SMALLINT"),
                               ("note", "NVARCHAR(60)")],
+    "MIS_DIM_USER": [("user_id", "INTEGER"), ("user_code", "NVARCHAR(20)"),
+                     ("display_name", "NVARCHAR(80)"), ("role", "NVARCHAR(20)"),
+                     ("advisor_id", "INTEGER"), ("branch_id", "INTEGER"),
+                     ("region_id", "INTEGER")],
 }
 
 # ---------------------------------------------------------------------------
@@ -640,6 +656,30 @@ def gen_branch_plans(perf_rows: list[list[Any]],
         yield [branch_id, month, round(plan, 2)]
 
 
+def gen_users(advisors: list[list[Any]]) -> Iterator[list[Any]]:
+    """
+    Simulated users: one analyst, one area manager per region, one branch
+    manager per branch, and every active advisor (login as themselves).
+    """
+    user_id = 1
+    yield [user_id, "NET01", "Network Analyst", "ANALYST", None, None, None]
+    user_id += 1
+    for region_id, (code, _name, area, _city) in enumerate(REGIONS, start=1):
+        yield [user_id, f"AM_{code}", f"{area} Manager", "AREA_MANAGER",
+               None, None, region_id]
+        user_id += 1
+    for branch_id, (region_id, code, city, district, _w) in enumerate(BRANCHES, start=1):
+        yield [user_id, f"BM_{code}", f"Branch {city} {district} Manager",
+               "BRANCH_MANAGER", None, branch_id, region_id]
+        user_id += 1
+    for adv in advisors:
+        if adv[7] != "ACTIVE":
+            continue
+        yield [user_id, f"ADV_{adv[1]}", f"{adv[2]} {adv[3]}", "ADVISOR",
+               adv[0], adv[4], None]
+        user_id += 1
+
+
 def gen_campaigns(rng: random.Random) -> tuple[Iterator[list[Any]], list[dict[str, Any]]]:
     all_months = months(START, END)
     campaigns: list[dict[str, Any]] = []
@@ -813,6 +853,7 @@ def build_dataset(scale: int = 1) -> dict[str, tuple[list[str], list[list[Any]]]
         cols("MIS_FACT_BALANCES"), list(gen_balances(random.Random(11))))
     tables["MIS_FACT_CUSTOMER_MOVEMENT"] = (
         cols("MIS_FACT_CUSTOMER_MOVEMENT"), list(gen_movement(random.Random(23))))
+    tables["MIS_DIM_USER"] = (cols("MIS_DIM_USER"), list(gen_users(advisor_rows)))
     return tables
 
 

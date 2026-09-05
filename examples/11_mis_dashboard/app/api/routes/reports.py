@@ -8,7 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 import nzpy_extended as nzpy
 
-from app.api.deps import get_report_service
+from app.api.deps import get_current_user, get_report_service
+from app.core.roles import SessionUser
 from app.schemas.report import ReportResponse
 from app.services import reporting
 from app.services.report_service import ReportService
@@ -23,9 +24,10 @@ async def get_report(
     to: str | None = Query(default=None),
     dim: str | None = Query(default=None),
     report_service: ReportService = Depends(get_report_service),
+    user: SessionUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     try:
-        return await report_service.build(report_id, from_, to, dim)
+        return await report_service.build(report_id, from_, to, dim, user)
     except reporting.UnknownReport:
         raise HTTPException(404, f"Unknown report: {report_id}") from None
     except reporting.DataNotReady as exc:

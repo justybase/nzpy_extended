@@ -18,6 +18,7 @@ from typing import Any
 
 from cachetools import TTLCache
 
+from app.core.roles import SessionUser
 from app.repositories.base import MISRepository
 
 MONTH_LABELS = ["January", "February", "March", "April", "May", "June", "July",
@@ -39,15 +40,48 @@ class UnknownEntity(Exception):
     pass
 
 
+class Forbidden(Exception):
+    """The current user may not see this entity (role-based scope)."""
+
+
 class PeopleService:
     def __init__(self, repository: MISRepository, ttl: int = 120,
                  maxsize: int = 256) -> None:
         self._repository = repository
         self._cache: TTLCache = TTLCache(maxsize=maxsize, ttl=ttl)
 
+    # -- role-based scope ----------------------------------------------------
+
+    @staticmethod
+    def _branch_ctx(branch_row: list[Any], bcols: list[str]) -> dict[str, int]:
+        return {"branch_id": branch_row[bcols.index("branch_id")],
+                "region_id": branch_row[bcols.index("region_id")]}
+
+    def _authorize(self, user: SessionUser | None, scope: str,
+                   ctx: dict[str, int]) -> None:
+        """Raise Forbidden unless `user` may see the entity described by ctx."""
+        if user is None or user.is_analyst:
+            return
+        if scope == "branch":
+            if user.role == "AREA_MANAGER":
+                if user.region_id != ctx["region_id"]:
+                    raise Forbidden("This branch is outside your area")
+            elif user.branch_id != ctx["branch_id"]:
+                raise Forbidden("You can only view your own branch")
+        else:  # advisor scope
+            if user.role == "AREA_MANAGER":
+                if user.region_id != ctx["region_id"]:
+                    raise Forbidden("This advisor works outside your area")
+            elif user.role == "BRANCH_MANAGER":
+                if user.branch_id != ctx["branch_id"]:
+                    raise Forbidden("You can only view advisors of your branch")
+            elif user.advisor_id != ctx["advisor_id"]:
+                raise Forbidden("You can only view your own results")
+
     # -- picker list ---------------------------------------------------------
 
-    async def advisor_list(self) -> list[dict[str, Any]]:
+    async def advisor_list(self,
+                           user: SessionUser | None = None) -> list[dict[str, Any]]:
         acols, arows = await self._repository.get_table("MIS_DIM_ADVISOR")
         bcols, brows = await self._repository.get_table("MIS_DIM_BRANCH")
         rcols, rrows = await self._repository.get_table("MIS_DIM_REGION")
@@ -57,6 +91,17 @@ class PeopleService:
         for r in arows:
             b = branch_by_id.get(r[acols.index("branch_id")])
             reg = region_by_id.get(b[bcols.index("region_id")]) if b else None
+            branch_id = r[acols.index("branch_id")]
+            region_id = b[bcols.index("region_id")] if b else None
+            if user is not None and not user.is_analyst:
+                if user.role == "ADVISOR":
+                    if user.advisor_id != r[acols.index("advisor_id")]:
+                        continue
+                elif user.role == "BRANCH_MANAGER":
+                    if user.branch_id != branch_id:
+                        continue
+                elif user.role == "AREA_MANAGER" and user.region_id != region_id:
+                    continue
             out.append({
                 "code": r[acols.index("advisor_code")],
                 "first_name": r[acols.index("first_name")],
@@ -72,13 +117,20 @@ class PeopleService:
         out.sort(key=lambda a: (a["branch_code"], a["last_name"]))
         return out
 
-    async def branch_list(self) -> list[dict[str, Any]]:
+    async def branch_list(self,
+                          user: SessionUser | None = None) -> list[dict[str, Any]]:
         bcols, brows = await self._repository.get_table("MIS_DIM_BRANCH")
         rcols, rrows = await self._repository.get_table("MIS_DIM_REGION")
         region_by_id = {r[rcols.index("region_id")]: r for r in rrows}
         out: list[dict[str, Any]] = []
         for r in brows:
             reg = region_by_id.get(r[bcols.index("region_id")])
+            if user is not None and not user.is_analyst:
+                if user.role == "AREA_MANAGER":
+                    if user.region_id != r[bcols.index("region_id")]:
+                        continue
+                elif user.branch_id != r[bcols.index("branch_id")]:
+                    continue
             out.append({
                 "code": r[bcols.index("branch_code")],
                 "name": r[bcols.index("branch_name")],
@@ -89,7 +141,10 @@ class PeopleService:
 
     # -- advisor panel -------------------------------------------------------
 
-    async def advisor_panel(self, code: str) -> dict[str, Any]:
+    async def advisor_panel(self, code: str,
+                            user: SessionUser | None = None) -> dict[str, Any]:
+        # authorize before serving (cached) payloads
+        await self._authorize_advisor(code, user)
         key = ("panel", code)
         cached = self._cache.get(key)
         if cached is not None:
@@ -97,6 +152,23 @@ class PeopleService:
         payload = await self._build_panel(code)
         self._cache[key] = payload
         return payload
+
+    async def _authorize_advisor(self, code: str,
+                                 user: SessionUser | None) -> None:
+        repo = self._repository
+        acols, arows = await repo.get_table("MIS_DIM_ADVISOR")
+        bcols, brows = await repo.get_table("MIS_DIM_BRANCH")
+        advisor = next((r for r in arows
+                        if r[acols.index("advisor_code")] == code), None)
+        if advisor is None:
+            raise UnknownEntity(f"Unknown advisor: {code}")
+        branch = next((r for r in brows
+                       if r[bcols.index("branch_id")]
+                       == advisor[acols.index("branch_id")]), None)
+        ctx = {"advisor_id": advisor[acols.index("advisor_id")]}
+        if branch:
+            ctx.update(self._branch_ctx(branch, bcols))
+        self._authorize(user, "advisor", ctx)
 
     async def _build_panel(self, code: str) -> dict[str, Any]:
         repo = self._repository
@@ -238,7 +310,10 @@ class PeopleService:
 
     # -- cumulative (my branch / my results) ---------------------------------
 
-    async def cumulative(self, scope: str, code: str, month: str) -> dict[str, Any]:
+    async def cumulative(self, scope: str, code: str, month: str,
+                         user: SessionUser | None = None) -> dict[str, Any]:
+        # authorize before serving (cached) payloads
+        await self._authorize_entity(scope, code, user)
         key = ("cumulative", scope, code, month)
         cached = self._cache.get(key)
         if cached is not None:
@@ -246,6 +321,21 @@ class PeopleService:
         payload = await self._build_cumulative(scope, code, month)
         self._cache[key] = payload
         return payload
+
+    async def _authorize_entity(self, scope: str, code: str,
+                                user: SessionUser | None) -> None:
+        if scope not in ("branch", "advisor"):
+            raise ValueError("scope must be 'branch' or 'advisor'")
+        repo = self._repository
+        if scope == "branch":
+            bcols, brows = await repo.get_table("MIS_DIM_BRANCH")
+            entity = next((r for r in brows
+                           if r[bcols.index("branch_code")] == code), None)
+            if entity is None:
+                raise UnknownEntity(f"Unknown branch: {code}")
+            self._authorize(user, "branch", self._branch_ctx(entity, bcols))
+        else:
+            await self._authorize_advisor(code, user)
 
     async def _build_cumulative(self, scope: str, code: str,
                                 month: str) -> dict[str, Any]:

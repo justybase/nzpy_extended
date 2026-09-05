@@ -16,6 +16,7 @@ from typing import Any
 
 from xlspy import XlsbWriter, XlsxWriter
 
+from app.core.roles import SessionUser
 from app.services.report_service import ReportService
 
 MEDIA_TYPES = {
@@ -38,9 +39,10 @@ class ExportService:
     # -- report tables ------------------------------------------------------
 
     async def _report_table(self, report_id: str, kind: str, from_: str | None,
-                            to: str | None, dim: str | None) -> dict[str, Any]:
+                            to: str | None, dim: str | None,
+                            user: SessionUser | None = None) -> dict[str, Any]:
         """Payload table prepared for Excel (internal 'ym' key column dropped)."""
-        payload = await self._report_service.build(report_id, from_, to, dim)
+        payload = await self._report_service.build(report_id, from_, to, dim, user)
         table_def = payload.get(kind)
         # 'None' or empty columns mark a table that is not part of this report
         # (e.g. overview has no analytic); a real table keeps its columns even
@@ -66,13 +68,14 @@ class ExportService:
 
     async def export_report(self, report_id: str, kind: str, fmt: str,
                             from_: str | None, to: str | None,
-                            dim: str | None) -> ExportResult:
+                            dim: str | None,
+                            user: SessionUser | None = None) -> ExportResult:
         if kind not in ("synthetic", "analytic"):
             raise ValueError("kind must be 'synthetic' or 'analytic'")
         if fmt not in MEDIA_TYPES:
             raise ValueError("fmt must be 'xlsx' or 'xlsb'")
 
-        export = await self._report_table(report_id, kind, from_, to, dim)
+        export = await self._report_table(report_id, kind, from_, to, dim, user)
         period = export["period"]
         sheet_name = self._safe_sheet_name(f"{export['kind']} - {export['title']}")
         if export["dim"] and kind == "analytic":
@@ -100,10 +103,12 @@ class ExportService:
     # -- drill tables -------------------------------------------------------
 
     async def export_drill(self, report_id: str, target: str, key: str, fmt: str,
-                           from_: str | None, to: str | None) -> ExportResult:
+                           from_: str | None, to: str | None,
+                           user: SessionUser | None = None) -> ExportResult:
         if fmt not in MEDIA_TYPES:
             raise ValueError("fmt must be 'xlsx' or 'xlsb'")
-        payload = await self._report_service.drill(report_id, target, key, from_, to)
+        payload = await self._report_service.drill(report_id, target, key,
+                                                   from_, to, user)
         period = payload["period"]
         sheet_name = self._safe_sheet_name(f"Drill - {payload['title']}")[:31]
         meta_lines: list[list[Any]] = [
