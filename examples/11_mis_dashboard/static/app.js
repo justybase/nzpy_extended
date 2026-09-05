@@ -37,6 +37,12 @@ const MONTHS = ["January", "February", "March", "April", "May", "June",
 
 const state = { page: "overview", from: null, to: null, dim: null };
 const charts = [];      // active Chart.js instances
+window.addEventListener("beforeprint", () => {
+  for (const chart of charts) chart.resize();
+});
+window.addEventListener("afterprint", () => {
+  for (const chart of charts) chart.resize();
+});
 const sortState = {};   // tableId -> {col, dir}
 let pageRequestId = 0;  // prevents an older response replacing a newer view
 let ALL_MONTHS = [];    // available months from /api/meta
