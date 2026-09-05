@@ -28,9 +28,9 @@ const MENU = [
   { id: "ledger", label: "Sales ledger", type: "ledger" },
 ];
 
-const PALETTE = ["#1f4e9c", "#2ca02c", "#ff7f0e", "#d62728", "#9467bd",
-                 "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
-                 "#1f77b4", "#98df8a", "#ffbb78", "#c49c94", "#f7b6d2"];
+const PALETTE = ["#167d8d", "#6775c5", "#d9a44a", "#c86c73", "#6d9b85",
+                 "#956daa", "#4f8eb8", "#a08667", "#9da851", "#52a9a0",
+                 "#53668a", "#b58fac", "#c48851", "#808995", "#a4baa0"];
 
 const MONTHS = ["January", "February", "March", "April", "May", "June",
                 "July", "August", "September", "October", "November", "December"];
@@ -62,6 +62,22 @@ const personState = { code: null, month: null };
 const briefState = { scope: "advisor", code: null, month: null };
 
 const $ = (id) => document.getElementById(id);
+
+$("menu-toggle").addEventListener("click", () => {
+  const open = $("sidebar").classList.toggle("menu-open");
+  $("menu-toggle").setAttribute("aria-expanded", String(open));
+});
+
+// Keep precise amounts in tables and expose them on the compact KPI value.
+function formatKpiValue(value, fmt) {
+  if (typeof value === "number" && Math.abs(value) >= 1000000 && ["eur", "int"].includes(fmt)) {
+    return new Intl.NumberFormat("en-IE", {
+      notation: "compact", maximumFractionDigits: 2,
+      ...(fmt === "eur" ? { style: "currency", currency: "EUR" } : {}),
+    }).format(value);
+  }
+  return formatValue(value, fmt);
+}
 
 const fmtEur = new Intl.NumberFormat("en-IE", { style: "currency", currency: "EUR",
   minimumFractionDigits: 0, maximumFractionDigits: 2 });
@@ -112,6 +128,7 @@ function renderMenu(activeId) {
     }
     const btn = document.createElement("button");
     btn.className = "menu-item" + (item.id === activeId ? " active" : "");
+    if (item.id === activeId) btn.setAttribute("aria-current", "page");
     btn.innerHTML = `<span class="menu-label">${item.label}</span>`;
     btn.addEventListener("click", () => selectPage(item.id));
     menu.appendChild(btn);
@@ -141,6 +158,8 @@ function restoreUrlState() {
 }
 
 function selectPage(id) {
+  $("sidebar").classList.remove("menu-open");
+  $("menu-toggle").setAttribute("aria-expanded", "false");
   state.page = id;
   syncUrl();
   renderMenu(id);
@@ -279,7 +298,9 @@ function renderKpis(grid, kpis) {
     label.textContent = kpi.label;
     const valueEl = document.createElement("div");
     valueEl.className = `kpi-value ${kpi.fmt === "pct" ? "pct" : ""} ${neg ? "neg" : ""}`;
-    valueEl.textContent = value;
+    valueEl.textContent = formatKpiValue(kpi.value, kpi.fmt);
+    valueEl.title = value;
+    valueEl.setAttribute("aria-label", value);
     card.appendChild(label);
     card.appendChild(valueEl);
     if (kpi.delta !== null && kpi.delta !== undefined) {
@@ -447,18 +468,23 @@ function makeChart(canvas, spec) {
     datasets = [{
       data: seriesList[0] ? seriesList[0].data : [],
       backgroundColor: labels.map((_, i) => PALETTE[i % PALETTE.length]),
-      borderWidth: 1,
+      borderWidth: 3,
+      borderColor: "#ffffff",
+      hoverOffset: 5,
     }];
   } else {
     datasets = seriesList.map((s, i) => ({
       label: s.name,
       data: s.data,
       borderColor: colors[i],
-      backgroundColor: type === "line" ? colors[i] + "22" : colors[i] + "88",
+      backgroundColor: type === "line" ? colors[i] + "16" : colors[i] + "dd",
+      borderRadius: type === "bar" ? 4 : 0,
+      maxBarThickness: 36,
       borderWidth: type === "line" ? 2 : 1,
       fill: false,
       tension: 0.3,
-      pointRadius: type === "line" ? 2.5 : 0,
+      pointRadius: type === "line" ? 2 : 0,
+      pointHoverRadius: 5,
     }));
   }
 
@@ -468,12 +494,15 @@ function makeChart(canvas, spec) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      cutout: type === "doughnut" ? "72%" : undefined,
+      animation: { duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 350 },
       indexAxis: isHBar ? "y" : "x",
       plugins: {
         legend: {
           display: datasets.length > 1 || type === "doughnut",
           position: "bottom",
-          labels: { boxWidth: 12, font: { size: 10 } },
+          labels: { boxWidth: 8, boxHeight: 8, usePointStyle: true, padding: 16,
+                    color: "#64748b", font: { size: 11 } },
         },
       },
       scales: type === "doughnut" ? {} : (isHBar ? {
@@ -488,9 +517,11 @@ function makeChart(canvas, spec) {
           grid: { display: false },
         },
       } : {
-        x: { ticks: { maxRotation: 45, font: { size: 10 } }, grid: { display: false } },
+        x: { ticks: { maxRotation: 35, font: { size: 10 } }, grid: { display: false }, border: { display: false } },
         y: {
           beginAtZero: true,
+          border: { display: false },
+          grid: { color: "#edf1f4" },
           ticks: { font: { size: 10 }, callback: compactChartNumber },
         },
       }),
@@ -1316,7 +1347,7 @@ function renderBrief(cum, overview) {
   if (spec) {
     $("brief-canvas").setAttribute("role", "img");
     $("brief-canvas").setAttribute("aria-label", spec.title || "Cumulative sales chart");
-    makeChart($("brief-canvas"), spec);
+    charts.push(makeChart($("brief-canvas"), spec));
   }
   renderTable($("brief-table"), cum.columns, rows, "brief", null);
 }

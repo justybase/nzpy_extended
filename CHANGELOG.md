@@ -4,6 +4,8 @@ All notable changes to `nzpy_extended` are documented in this file.
 
 ## Unreleased
 
+## 0.5.0 - 2026-09-05
+
 - Propagate commit failures from connection/transaction contexts; begin explicit
   sync transactions and reset transaction state after commit/rollback.
 - Reject truncated protocol reads and invalid lengths instead of padding with zeros.
