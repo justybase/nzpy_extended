@@ -86,11 +86,22 @@ def main() -> int:
         page.goto(args.base, wait_until="networkidle")
         check("overview loads", wait_for(page, "#kpis .kpi"))
         check("overview no horizontal overflow", no_horizontal_overflow(page))
+        check("period selectors have labels",
+              page.locator("#select-from option").first.text_content()
+              and page.locator("#select-to option").first.text_content(),
+              "month labels are missing")
+        check("overview has decision insight area",
+              wait_for(page, "#insights") and page.locator("#insights .insight").count() >= 1)
+        check("overview has plan KPI",
+              page.locator("#kpis .kpi-label").all_text_contents()
+              and any("plan" in text.lower() for text in page.locator("#kpis .kpi-label").all_text_contents()))
         page.screenshot(path=str(out_dir / "01_overview.png"))
 
         # ------------------------------------------------------------ brief
         print("Daily brief page")
         open_menu(page, "Daily brief")
+        check("brief hides report-only toolbar",
+              page.is_hidden("#dim-label") and page.is_hidden("#btn-charts-pdf"))
         check("brief renders", wait_for(page, ".brief .brief-kpis .kpi"))
         check("brief has 6 KPI cards",
               page.locator(".brief .brief-kpis .kpi").count() == 6,
@@ -149,6 +160,7 @@ def main() -> int:
         # report page is masked + subtitle carries the scope note
         open_menu(page, "Loans")
         page.wait_for_timeout(700)
+        check("report URL keeps context", "page=loans" in page.url)
         subtitle = page.text_content("#page-subtitle") or ""
         check("report subtitle notes the scope",
               "scoped to your Branch manager" in subtitle, subtitle)

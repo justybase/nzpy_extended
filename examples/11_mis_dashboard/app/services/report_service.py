@@ -12,6 +12,7 @@ Responsibilities:
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from cachetools import TTLCache
@@ -35,16 +36,34 @@ class ReportService:
             return self._repository
         return ScopedMISRepository(self._repository, user)
 
+    def _snapshot_id(self) -> str:
+        snapshot = self._repository.snapshot()
+        tables = snapshot.get("tables", {})
+        loaded = sorted(str(info.get("loaded_at", "")) for info in tables.values())
+        signature = "|".join(loaded)
+        return hashlib.sha1(signature.encode(), usedforsecurity=False).hexdigest()[:12]
+
+    def _freshness(self) -> dict[str, Any]:
+        snapshot = self._repository.snapshot()
+        tables = snapshot.get("tables", {})
+        loaded = sorted(str(info.get("loaded_at", "")) for info in tables.values())
+        return {
+            "loaded_at": max(loaded, default=None),
+            "stale": bool(snapshot.get("last_error")),
+            "snapshot_id": self._snapshot_id(),
+        }
+
     async def build(self, report_id: str, from_: str | None, to: str | None,
                     dim: str | None,
                     user: SessionUser | None = None) -> dict[str, Any]:
         scope = user.code if user and not user.is_analyst else "full"
-        key = ("report", scope, report_id, from_, to, dim)
+        key = ("report", self._snapshot_id(), scope, report_id, from_, to, dim)
         cached = self._cache.get(key)
         if cached is not None:
             return cached
         payload = await reporting.build(report_id, self._repo_for(user),
                                         from_, to, dim)
+        payload["freshness"] = self._freshness()
         self._cache[key] = payload
         return payload
 
@@ -52,7 +71,7 @@ class ReportService:
                     from_: str | None, to: str | None,
                     user: SessionUser | None = None) -> dict[str, Any]:
         scope = user.code if user and not user.is_analyst else "full"
-        cache_key = ("drill", scope, report_id, target, key, from_, to)
+        cache_key = ("drill", self._snapshot_id(), scope, report_id, target, key, from_, to)
         cached = self._cache.get(cache_key)
         if cached is not None:
             return cached

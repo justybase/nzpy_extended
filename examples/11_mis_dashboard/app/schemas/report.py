@@ -36,6 +36,21 @@ class KpiValue(BaseModel):
     label: str
     value: Any = None
     fmt: str = "str"
+    delta: Any = None
+    delta_fmt: str | None = None
+    delta_label: str | None = None
+    delta_pct: float | None = None
+    target: Any = None
+    target_fmt: str | None = None
+    status: str = "neutral"
+
+
+class Insight(BaseModel):
+    severity: str = "neutral"
+    title: str
+    detail: str
+    entity: str | None = None
+    action: str | None = None
 
 
 class DimSpec(BaseModel):
@@ -53,7 +68,10 @@ class ReportResponse(BaseModel):
     title: str
     subtitle: str
     period: PeriodInfo
+    comparison: PeriodInfo | None = None
     kpis: list[KpiValue] = Field(default_factory=list)
+    insights: list[Insight] = Field(default_factory=list)
+    freshness: dict[str, Any] = Field(default_factory=dict)
     synthetic: TableData
     dims: list[DimSpec] = Field(default_factory=list)
     dim: str | None = None

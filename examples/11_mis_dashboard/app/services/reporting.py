@@ -38,6 +38,27 @@ def prev_month(ym: str) -> str:
     return f"{year:04d}-{month - 1:02d}"
 
 
+def shift_month(ym: str, offset: int) -> str:
+    """Return ``ym`` shifted by a signed number of calendar months."""
+    year, month = int(ym[:4]), int(ym[5:7])
+    absolute = year * 12 + month - 1 + offset
+    return f"{absolute // 12:04d}-{absolute % 12 + 1:02d}"
+
+
+def month_sequence(from_ym: str, to_ym: str) -> list[str]:
+    """Return every month in an inclusive range, including empty months."""
+    count = (int(to_ym[:4]) * 12 + int(to_ym[5:7])) - (
+        int(from_ym[:4]) * 12 + int(from_ym[5:7]))
+    return [shift_month(from_ym, i) for i in range(max(0, count) + 1)]
+
+
+def comparable_period(from_ym: str, to_ym: str) -> tuple[str, str]:
+    """Return the immediately preceding period with the same month count."""
+    count = len(month_sequence(from_ym, to_ym))
+    previous_to = prev_month(from_ym)
+    return shift_month(previous_to, -(count - 1)), previous_to
+
+
 def col(key: str, label: str, fmt: str = "str") -> dict[str, str]:
     return {"key": key, "label": label, "fmt": fmt}
 
@@ -180,14 +201,19 @@ def filtered_sales(cols: list[str], rows: list[list[Any]], maps: dict[str, Any],
 
 
 def month_rows(agg_rows: list[dict[str, Any]], measure_names: list[str],
-               mom_measure: str | None = None) -> list[list[Any]]:
+               mom_measure: str | None = None,
+               months: list[str] | None = None) -> list[list[Any]]:
     """Convert aggregated rows into display rows sorted by month."""
+    by_month = {r["__key"][0]: r for r in agg_rows}
+    selected_months = months or sorted(by_month)
     out: list[list[Any]] = []
-    for ar in sorted(agg_rows, key=lambda r: r["__key"][0]):
-        ym = ar["__key"][0]
+    for ym in selected_months:
+        ar = by_month.get(ym, {})
         row: list[Any] = [ym, month_label(ym)]
         for m in measure_names:
-            row.append(ar.get(m))
+            # Counts and sums have a meaningful zero for an empty month;
+            # averages remain null because no denominator exists.
+            row.append(ar.get(m, None if m.startswith("avg") else 0))
         out.append(row)
     if mom_measure:
         prev: Any = None
@@ -258,7 +284,8 @@ def make_sales_monthly(group: str | None = None, mom_measure: str = "amount") ->
         agg = aggregate(filtered_sales(cols, rows, maps, from_ym, to_ym, group),
                         [cols.index("sale_date")], _sales_measures(cols))
         measures = ["cnt", "amount", "avg_ticket", "commission"]
-        data = month_rows(agg, measures, mom_measure)
+        data = month_rows(agg, measures, mom_measure,
+                          month_sequence(from_ym, to_ym))
         columns = [col("ym", "Month", "str"),
                    col("month", "Month", "str"),
                    col("cnt", "Count", "int"),
@@ -340,7 +367,8 @@ def make_balances_monthly(groups: list[str]) -> Callable:
                           and maps["products"][r[pi]]["product_group"] in groups)
         agg = aggregate(rows, [mi], [("accounts", "sum", ci), ("balance", "sum", ai)],
                         pred, key_fn=lambda r: (r[mi][:7],))
-        data = month_rows(agg, ["accounts", "balance"], "balance")
+        data = month_rows(agg, ["accounts", "balance"], "balance",
+                          month_sequence(from_ym, to_ym))
         columns = [col("ym", "Month", "str"), col("month", "Month", "str"),
                    col("accounts", "Accounts", "int"),
                    col("balance", "Balance (EUR)", "eur"),
@@ -435,9 +463,13 @@ def make_movement_monthly() -> Callable:
                         [("start", "sum", si), ("new", "sum", ni), ("lost", "sum", li),
                          ("end", "sum", ei)], pred, key_fn=lambda r: (r[mi][:7],))
         data: list[list[Any]] = []
-        for ar in sorted(agg, key=lambda r: r["__key"][0]):
-            ym = ar["__key"][0]
-            start, new, lost, end = ar["start"], ar["new"], ar["lost"], ar["end"]
+        by_month = {ar["__key"][0]: ar for ar in agg}
+        for ym in month_sequence(from_ym, to_ym):
+            ar = by_month.get(ym, {})
+            start = ar.get("start", 0)
+            new = ar.get("new", 0)
+            lost = ar.get("lost", 0)
+            end = ar.get("end", 0)
             data.append([ym, month_label(ym), start, new, lost, end,
                          round(new / start * 100, 2) if start else None,
                          round(lost / start * 100, 2) if start else None,
@@ -526,14 +558,15 @@ def make_penetration_monthly() -> Callable:
                          ("c2", "sum", c2), ("c3", "sum", c3), ("c4", "sum", c4)],
                         pred, key_fn=lambda r: (r[mi][:7],))
         data: list[list[Any]] = []
-        for ar in sorted(agg, key=lambda r: r["__key"][0]):
-            ym = ar["__key"][0]
-            end = ar["end"]
+        by_month = {ar["__key"][0]: ar for ar in agg}
+        for ym in month_sequence(from_ym, to_ym):
+            ar = by_month.get(ym, {})
+            end = ar.get("end", 0)
             data.append([ym, month_label(ym), end,
-                         round(ar["rel"] / end, 2) if end else None,
-                         round(ar["c2"] / end * 100, 2) if end else None,
-                         round(ar["c3"] / end * 100, 2) if end else None,
-                         round(ar["c4"] / end * 100, 2) if end else None])
+                         round(ar.get("rel", 0) / end, 2) if end else None,
+                         round(ar.get("c2", 0) / end * 100, 2) if end else None,
+                         round(ar.get("c3", 0) / end * 100, 2) if end else None,
+                         round(ar.get("c4", 0) / end * 100, 2) if end else None])
         columns = [col("ym", "Month", "str"), col("month", "Month", "str"),
                    col("end", "Clients", "int"),
                    col("products_per_client", "Products per client", "dec"),
@@ -639,8 +672,9 @@ def make_campaigns_monthly() -> Callable:
             d[4] += ar["sales"]
             d[5] += ar["cost"]
         data: list[list[Any]] = []
-        for ym in sorted(by_month):
-            campaigns, contacts, responses, conversions, sales, cost = by_month[ym]
+        for ym in month_sequence(from_ym, to_ym):
+            campaigns, contacts, responses, conversions, sales, cost = by_month.get(
+                ym, [0, 0, 0, 0, 0.0, 0.0])
             data.append([ym, month_label(ym), campaigns, contacts, responses, conversions,
                          round(responses / contacts * 100, 2) if contacts else None,
                          round(conversions / responses * 100, 2) if responses else None,
@@ -781,14 +815,40 @@ def make_campaigns_analytic() -> Callable:
 # Chart builders
 # ---------------------------------------------------------------------------
 
+async def chart_sales_vs_plan(cache: Any, maps: dict[str, Any], from_ym: str,
+                              to_ym: str) -> dict[str, Any]:
+    """Overview trend with a network plan series when plans are available."""
+    cols, rows = await cache.get_table("MIS_FACT_SALES")
+    sales = aggregate(filtered_sales(cols, rows, maps, from_ym, to_ym),
+                      [cols.index("sale_date")],
+                      [("amount", "sum", cols.index("amount"))])
+    by_sales = {r["__key"][0]: r.get("amount", 0) for r in sales}
+    by_plan: dict[str, float] = {}
+    try:
+        pcols, prows = await cache.get_table("MIS_FACT_BRANCH_PLAN")
+        mi, ai = pcols.index("plan_month"), pcols.index("plan_amount")
+        for row in prows:
+            ym = row[mi][:7]
+            if from_ym <= ym <= to_ym:
+                by_plan[ym] = by_plan.get(ym, 0.0) + row[ai]
+    except KeyError:
+        pass
+    months = month_sequence(from_ym, to_ym)
+    series_list = [series("Actual (EUR)", [round(by_sales.get(m, 0), 2) for m in months])]
+    if by_plan:
+        series_list.append(series("Plan (EUR)", [round(by_plan.get(m, 0), 2) for m in months]))
+    return chart("sales_plan", "line", "Sales vs plan", [month_label(m) for m in months], series_list)
+
 def chart_sales_trend(group: str | None = None) -> Callable:
     async def build(cache: Any, maps: dict[str, Any], from_ym: str, to_ym: str) -> dict[str, Any]:
         cols, rows = await cache.get_table("MIS_FACT_SALES")
         agg = aggregate(filtered_sales(cols, rows, maps, from_ym, to_ym, group),
                         [cols.index("sale_date")],
                         [("amount", "sum", cols.index("amount"))])
-        labels = [month_label(r["__key"][0]) for r in sorted(agg, key=lambda r: r["__key"][0])]
-        values = [round(r["amount"], 2) for r in sorted(agg, key=lambda r: r["__key"][0])]
+        by_month = {r["__key"][0]: r.get("amount", 0) for r in agg}
+        months = month_sequence(from_ym, to_ym)
+        labels = [month_label(ym) for ym in months]
+        values = [round(by_month.get(ym, 0), 2) for ym in months]
         return chart("trend", "line", "Sales by month", labels, [series("Amount (EUR)", values)])
     return build
 
@@ -883,7 +943,7 @@ def chart_balances_trend(groups: list[str]) -> Callable:
                           and maps["products"][r[pi]]["product_group"] in groups)
         agg = aggregate(rows, [mi, pi], [("balance", "sum", ai)], pred,
                         key_fn=lambda r: (r[mi][:7], r[pi]))
-        labels = sorted({r["__key"][0] for r in agg})
+        labels = month_sequence(from_ym, to_ym)
         labels_txt = [month_label(l) for l in labels]
         series_list = []
         for g in groups:
@@ -903,11 +963,14 @@ def chart_acquisition_churn() -> Callable:
         pred = lambda r: from_ym <= r[mi][:7] <= to_ym
         agg = aggregate(rows, [mi], [("new", "sum", ni), ("lost", "sum", li)],
                         pred, key_fn=lambda r: (r[mi][:7],))
-        agg.sort(key=lambda r: r["__key"][0])
-        labels = [month_label(r["__key"][0]) for r in agg]
+        by_month = {r["__key"][0]: r for r in agg}
+        months = month_sequence(from_ym, to_ym)
+        labels = [month_label(ym) for ym in months]
         return chart("acquisition_churn", "bar", "Client acquisition vs churn",
-                     labels, [series("Acquired", [r["new"] for r in agg]),
-                              series("Churned", [r["lost"] for r in agg])])
+                     labels, [series("Acquired", [by_month.get(ym, {}).get("new", 0)
+                                                   for ym in months]),
+                              series("Churned", [by_month.get(ym, {}).get("lost", 0)
+                                                 for ym in months])])
     return build
 
 
@@ -918,9 +981,12 @@ def chart_penetration_trend() -> Callable:
         pred = lambda r: from_ym <= r[mi][:7] <= to_ym
         agg = aggregate(rows, [mi], [("end", "sum", ei), ("rel", "sum", ri)],
                         pred, key_fn=lambda r: (r[mi][:7],))
-        agg.sort(key=lambda r: r["__key"][0])
-        labels = [month_label(r["__key"][0]) for r in agg]
-        values = [round(r["rel"] / r["end"], 2) if r["end"] else None for r in agg]
+        by_month = {r["__key"][0]: r for r in agg}
+        months = month_sequence(from_ym, to_ym)
+        labels = [month_label(ym) for ym in months]
+        values = [round(by_month.get(ym, {}).get("rel", 0)
+                        / by_month.get(ym, {}).get("end", 0), 2)
+                  if by_month.get(ym, {}).get("end") else None for ym in months]
         return chart("penetration", "line", "Products per client by month",
                      labels, [series("Products per client", values)])
     return build
@@ -1011,11 +1077,15 @@ def chart_campaign_funnel() -> Callable:
             d[0] += ar["contacts"]
             d[1] += ar["responses"]
             d[2] += ar["conversions"]
-        labels = [month_label(ym) for ym in sorted(by_month)]
+        months = month_sequence(from_ym, to_ym)
+        labels = [month_label(ym) for ym in months]
         return chart("funnel", "line", "Campaign funnel by month",
-                     labels, [series("Contacts", [by_month[ym][0] for ym in sorted(by_month)]),
-                              series("Responses", [by_month[ym][1] for ym in sorted(by_month)]),
-                              series("Conversions", [by_month[ym][2] for ym in sorted(by_month)])])
+                     labels, [series("Contacts", [by_month.get(ym, [0, 0, 0])[0]
+                                                   for ym in months]),
+                              series("Responses", [by_month.get(ym, [0, 0, 0])[1]
+                                                   for ym in months]),
+                              series("Conversions", [by_month.get(ym, [0, 0, 0])[2]
+                                                     for ym in months])])
     return build
 
 
@@ -1130,6 +1200,34 @@ def kpi_sales_period(group: str | None = None, key: str = "value", label: str = 
         total = 0.0
         for r in filtered_sales(cols, rows, maps, from_ym, to_ym, group):
             total += r[cols.index("amount")]
+        return [{"key": key, "label": label, "value": round(total, 2), "fmt": fmt}]
+    return build
+
+
+def kpi_sales_average(group: str | None = None, key: str = "value",
+                      label: str = "Average value", fmt: str = "eur") -> Callable:
+    """Average booked sale amount, with the denominator matching the filter."""
+    async def build(cache: Any, maps: dict[str, Any], from_ym: str,
+                    to_ym: str) -> list[dict[str, Any]]:
+        cols, rows = await cache.get_table("MIS_FACT_SALES")
+        amount_i = cols.index("amount")
+        values = [r[amount_i] for r in filtered_sales(cols, rows, maps, from_ym,
+                                                       to_ym, group)
+                  if r[amount_i] is not None]
+        value = round(sum(values) / len(values), 2) if values else None
+        return [{"key": key, "label": label, "value": value, "fmt": fmt}]
+    return build
+
+
+def kpi_sales_commission(group: str | None = None, key: str = "value",
+                         label: str = "Commission", fmt: str = "eur") -> Callable:
+    """Sum the commission column rather than accidentally summing amount."""
+    async def build(cache: Any, maps: dict[str, Any], from_ym: str,
+                    to_ym: str) -> list[dict[str, Any]]:
+        cols, rows = await cache.get_table("MIS_FACT_SALES")
+        commission_i = cols.index("commission")
+        total = sum((r[commission_i] or 0.0)
+                    for r in filtered_sales(cols, rows, maps, from_ym, to_ym, group))
         return [{"key": key, "label": label, "value": round(total, 2), "fmt": fmt}]
     return build
 
@@ -1298,6 +1396,19 @@ def kpi_campaigns_conversion_rate(key: str = "value", label: str = "Conversion r
     return build
 
 
+async def network_plan(cache: Any, from_ym: str, to_ym: str) -> float | None:
+    """Sum branch plans when the optional plan table is available."""
+    try:
+        cols, rows = await cache.get_table("MIS_FACT_BRANCH_PLAN")
+    except KeyError:
+        # Small unit-test repositories may intentionally omit optional plan
+        # tables; production configuration always includes them.
+        return None
+    mi, ai = cols.index("plan_month"), cols.index("plan_amount")
+    values = [r[ai] for r in rows if from_ym <= r[mi][:7] <= to_ym]
+    return round(sum(values), 2) if values else None
+
+
 # ---------------------------------------------------------------------------
 # Report registry
 # ---------------------------------------------------------------------------
@@ -1327,21 +1438,50 @@ async def overview_synthetic(cache: Any, maps: dict[str, Any], from_ym: str,
                     [cols.index("branch_id")],
                     [("cnt", "count", None), ("amount", "sum", cols.index("amount"))])
     agg.sort(key=lambda ar: ar.get("amount") or 0, reverse=True)
+    plan_by_branch: dict[int, float] = {}
+    try:
+        pcols, prows = await cache.get_table("MIS_FACT_BRANCH_PLAN")
+        pbi, pmi, pai = (pcols.index("branch_id"), pcols.index("plan_month"),
+                          pcols.index("plan_amount"))
+        for row in prows:
+            if from_ym <= row[pmi][:7] <= to_ym:
+                plan_by_branch[row[pbi]] = plan_by_branch.get(row[pbi], 0.0) + row[pai]
+    except KeyError:
+        pass
     data = []
     for ar in agg[:10]:
         b = maps["branches"][ar["__key"][0]]
         r = maps["regions"][b["region_id"]]
+        amount = round(ar["amount"], 2)
+        plan = plan_by_branch.get(ar["__key"][0])
         data.append([b["branch_code"], b["branch_name"], r["region_name"],
-                     ar["cnt"], round(ar["amount"], 2)])
+                     ar["cnt"], amount,
+                     round(plan, 2) if plan is not None else None,
+                     round(amount - plan, 2) if plan is not None else None,
+                     round(amount / plan * 100, 2) if plan else None])
     columns = [col("branch_code", "Code"), col("branch_name", "Branch"),
                col("region_name", "Region"), col("cnt", "Sales", "int"),
-               col("amount", "Sales value (EUR)", "eur")]
+               col("amount", "Sales value (EUR)", "eur"),
+               col("plan", "Plan (EUR)", "eur"),
+               col("variance", "Variance (EUR)", "eur"),
+               col("attainment", "Attainment %", "pct")]
     return table(columns, data)
 
 
 async def overview_analytic(cache: Any, maps: dict[str, Any], from_ym: str, to_ym: str,
                             dim: str | None) -> dict[str, Any]:
     return table([], [])
+
+
+def _target_status(value: Any, target: Any) -> str:
+    if value is None or target in (None, 0):
+        return "neutral"
+    ratio = float(value) / float(target) * 100
+    if ratio < 80:
+        return "critical"
+    if ratio < 100:
+        return "warning"
+    return "good"
 
 
 async def overview_kpis(cache: Any, maps: dict[str, Any], from_ym: str, to_ym: str) -> list[dict[str, Any]]:
@@ -1354,12 +1494,27 @@ async def overview_kpis(cache: Any, maps: dict[str, Any], from_ym: str, to_ym: s
                kpi_penetration("penetration", "Products per client"),
                kpi_campaigns_roi("campaign_roi", "Campaign ROI")):
         out.extend(await fn(cache, maps, from_ym, to_ym))
+    plan = await network_plan(cache, from_ym, to_ym)
+    if plan is not None:
+        sales = next((k for k in out if k["key"] == "sales"), None)
+        if sales is not None:
+            sales["target"] = plan
+            sales["target_fmt"] = "eur"
+            sales["status"] = _target_status(sales["value"], plan)
+            out.insert(1, {"key": "network_plan", "label": "Network plan",
+                           "value": plan, "fmt": "eur"})
+            out.insert(2, {"key": "network_attainment", "label": "Plan attainment",
+                           "value": round(sales["value"] / plan * 100, 2)
+                           if plan else None,
+                           "fmt": "pct", "target": 100, "target_fmt": "pct",
+                           "status": _target_status(sales["value"] / plan * 100
+                                                     if plan else None, 100)})
     return out
 
 
 async def overview_charts(cache: Any, maps: dict[str, Any], from_ym: str, to_ym: str) -> list[dict[str, Any]]:
     return [
-        await chart_sales_trend()(cache, maps, from_ym, to_ym),
+        await chart_sales_vs_plan(cache, maps, from_ym, to_ym),
         await chart_group_share()(cache, maps, from_ym, to_ym),
         await chart_acquisition_churn()(cache, maps, from_ym, to_ym),
         await chart_balances_trend(["Current accounts (ROR)", "Savings accounts",
@@ -1381,8 +1536,8 @@ def loans_kpis(cache: Any, maps: dict[str, Any], from_ym: str, to_ym: str) -> An
         out: list[dict[str, Any]] = []
         for fn in (kpi_sales_period(LOANS_GROUP, "volume", "Loan volume"),
                    kpi_sales_count(LOANS_GROUP, "loans", "Loans"),
-                   kpi_sales_period(LOANS_GROUP, "avg_ticket", "Avg ticket", "eur"),
-                   kpi_sales_period(LOANS_GROUP, "commission", "Commission", "eur")):
+                   kpi_sales_average(LOANS_GROUP, "avg_ticket", "Avg ticket", "eur"),
+                   kpi_sales_commission(LOANS_GROUP, "commission", "Commission", "eur")):
             out.extend(await fn(cache, maps, from_ym, to_ym))
         return out
     return build()
@@ -1511,8 +1666,8 @@ balances_ror_kpis = _kpi_list([
 insurance_kpis = _kpi_list([
     kpi_sales_count(INSURANCE_GROUP, "policies", "Policies"),
     kpi_sales_period(INSURANCE_GROUP, "premium", "Annual premium"),
-    kpi_sales_period(INSURANCE_GROUP, "avg_premium", "Avg premium", "eur"),
-    kpi_sales_period(INSURANCE_GROUP, "commission", "Commission"),
+    kpi_sales_average(INSURANCE_GROUP, "avg_premium", "Avg premium", "eur"),
+    kpi_sales_commission(INSURANCE_GROUP, "commission", "Commission"),
 ])
 ror_kpis = _kpi_list([
     kpi_sales_count(ROR_GROUP, "openings", "Account openings"),
@@ -1531,7 +1686,7 @@ deposits_kpis = _kpi_list([
     kpi_sales_count(DEPOSITS_GROUP, "deposits", "New deposits"),
     kpi_sales_period(DEPOSITS_GROUP, "new_value", "New deposit value"),
     kpi_balances([DEPOSITS_GROUP], "balance", "Deposit balance"),
-    kpi_sales_period(DEPOSITS_GROUP, "avg_deposit", "Avg deposit", "eur"),
+    kpi_sales_average(DEPOSITS_GROUP, "avg_deposit", "Avg deposit", "eur"),
 ])
 clients_kpis = _kpi_list([
     kpi_movement("customers_end", "base", "Client base"),
@@ -1582,11 +1737,12 @@ def make_sales_balances_monthly(group: str, sales_labels: dict[str, str],
             d[1] += r[ci]
 
         data: list[list[Any]] = []
-        for ar in sorted(agg, key=lambda r: r["__key"][0]):
-            ym = ar["__key"][0]
+        by_month = {ar["__key"][0]: ar for ar in agg}
+        for ym in month_sequence(from_ym, to_ym):
+            ar = by_month.get(ym, {})
             balance, accounts = bal_by_ym.get(ym, [0.0, 0])
-            data.append([ym, month_label(ym), ar.get("cnt"), ar.get("amount"),
-                         ar.get("avg_ticket"), ar.get("commission"),
+            data.append([ym, month_label(ym), ar.get("cnt", 0), ar.get("amount", 0),
+                         ar.get("avg_ticket"), ar.get("commission", 0),
                          int(accounts), round(balance, 2),
                          round(balance / accounts, 2) if accounts else None])
         for meas in mom_measures:
@@ -1747,6 +1903,102 @@ REGISTRY: dict[str, dict[str, Any]] = {
 # Public entry point
 # ---------------------------------------------------------------------------
 
+def _enrich_kpis(current: list[dict[str, Any]],
+                 previous: list[dict[str, Any]]) -> None:
+    """Attach comparable-period deltas without changing existing values."""
+    previous_by_key = {item.get("key"): item for item in previous}
+    for item in current:
+        old = previous_by_key.get(item.get("key"))
+        value, old_value = item.get("value"), old.get("value") if old else None
+        if not isinstance(value, (int, float)) or not isinstance(old_value, (int, float)):
+            continue
+        item["delta"] = round(value - old_value, 2)
+        item["delta_fmt"] = item.get("fmt", "str")
+        item["delta_label"] = "vs previous period"
+        item["delta_pct"] = (round((value - old_value) / old_value * 100, 2)
+                              if old_value else None)
+        if item.get("status", "neutral") == "neutral":
+            if item["delta_pct"] is not None and item["delta_pct"] <= -10:
+                item["status"] = "warning"
+            elif item["delta_pct"] is not None and item["delta_pct"] >= 10:
+                item["status"] = "good"
+
+
+def _insight_number(value: Any, fmt: str) -> str:
+    if value is None:
+        return "—"
+    if fmt == "pct":
+        return f"{float(value):.2f}%"
+    if fmt == "int":
+        return f"{int(value):,}"
+    if fmt == "eur":
+        return f"€{float(value):,.2f}"
+    return str(value)
+
+
+def _build_insights(report_id: str, kpis: list[dict[str, Any]],
+                    synthetic: dict[str, Any],
+                    analytic: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Create a small deterministic action list for the report header."""
+    insights: list[dict[str, Any]] = []
+
+    for item in kpis:
+        status = item.get("status", "neutral")
+        if status not in ("critical", "warning"):
+            continue
+        target = item.get("target")
+        if target is not None:
+            detail = (f"{item['label']} is {_insight_number(item.get('value'), item.get('fmt', 'str'))} "
+                      f"against {_insight_number(target, item.get('target_fmt') or item.get('fmt', 'str'))} target.")
+            insights.append({
+                "severity": status,
+                "title": f"{item['label']} is below target",
+                "detail": detail,
+                "entity": report_id,
+                "action": "Review the lowest-performing entities and current period run-rate.",
+            })
+        elif item.get("delta_pct") is not None:
+            insights.append({
+                "severity": status,
+                "title": f"{item['label']} is declining",
+                "detail": f"{item['label']} is down {abs(item['delta_pct']):.2f}% vs the previous period.",
+                "entity": report_id,
+                "action": "Open the analytic breakdown to identify the driver.",
+            })
+
+    table_def = analytic if analytic and analytic.get("rows") else synthetic
+    columns = (table_def or {}).get("columns", [])
+    rows = (table_def or {}).get("rows", [])
+    amount_idx = next((i for i, c in enumerate(columns)
+                       if c.get("key") in ("amount", "sales_value", "balance")), None)
+    if rows and amount_idx is not None:
+        label_idx = 1 if len(columns) > 1 else 0
+        row = rows[0]
+        label = row[label_idx] or row[0]
+        value = row[amount_idx]
+        insights.append({
+            "severity": "neutral",
+            "title": "Largest contributor",
+            "detail": f"{label} contributes {_insight_number(value, columns[amount_idx].get('fmt', 'eur'))}.",
+            "entity": str(row[0]) if row else None,
+            "action": "Use the row drill-down to inspect the underlying activity.",
+        })
+
+    if report_id == "campaigns" and analytic:
+        roi_idx = next((i for i, c in enumerate(analytic.get("columns", []))
+                        if c.get("key") == "roi_pct"), None)
+        negative = [r for r in analytic.get("rows", [])
+                    if roi_idx is not None and r[roi_idx] is not None and r[roi_idx] < 0]
+        if negative and len(insights) < 3:
+            insights.append({
+                "severity": "warning",
+                "title": "Campaigns with negative ROI",
+                "detail": f"{len(negative)} campaign rows have negative return on investment.",
+                "entity": "campaigns",
+                "action": "Review campaign cost and conversion before increasing reach.",
+            })
+    return insights[:3]
+
 async def build(report_id: str, cache: Any, from_ym: str | None, to_ym: str | None,
                 dim: str | None) -> dict[str, Any]:
     """Assemble the full payload for one report page."""
@@ -1766,19 +2018,30 @@ async def build(report_id: str, cache: Any, from_ym: str | None, to_ym: str | No
 
     maps = await build_maps(cache)
     kpis = await spec["kpis"](cache, maps, from_ym, to_ym)
+    comparison: tuple[str, str] | None = None
+    previous_kpis: list[dict[str, Any]] = []
+    previous_from, previous_to = comparable_period(from_ym, to_ym)
+    if previous_from >= months[0] and previous_to <= months[-1]:
+        comparison = (previous_from, previous_to)
+        previous_kpis = await spec["kpis"](cache, maps, previous_from, previous_to)
+        _enrich_kpis(kpis, previous_kpis)
     synthetic = await spec["synthetic"](cache, maps, from_ym, to_ym)
     dim_ids = [d["id"] for d in spec["dims"]]
     if dim not in dim_ids:
         dim = dim_ids[0] if dim_ids else None
     analytic = await spec["analytic"](cache, maps, from_ym, to_ym, dim)
     charts = await spec["charts"](cache, maps, from_ym, to_ym)
+    insights = _build_insights(report_id, kpis, synthetic, analytic)
 
     return {
         "id": report_id,
         "title": spec["title"],
         "subtitle": spec["subtitle"],
         "period": {"from": from_ym, "to": to_ym},
+        "comparison": ({"from": comparison[0], "to": comparison[1]}
+                       if comparison else None),
         "kpis": kpis,
+        "insights": insights,
         "synthetic": synthetic,
         "dims": spec["dims"],
         "dim": dim,
@@ -1870,10 +2133,10 @@ async def drill_advisors(cache: Any, maps: dict[str, Any], from_ym: str, to_ym: 
 
 async def drill_sales(cache: Any, maps: dict[str, Any], from_ym: str, to_ym: str,
                       group: str, advisor_code: str, limit: int = 200) -> dict[str, Any]:
-    """Individual sale rows of one advisor (newest first, capped).
+    """Booked sale rows of one advisor (newest first, capped).
 
-    All statuses are shown; the full sale date is kept (the shared sales
-    filter normalizes it to YYYY-MM, so the rows are filtered inline here).
+    Parent summaries use booked sales, while the ledger remains the place to
+    inspect cancelled rows explicitly.
     """
     aid = _advisor_id_by_code(maps, advisor_code)
     if aid is None:
@@ -1887,6 +2150,8 @@ async def drill_sales(cache: Any, maps: dict[str, Any], from_ym: str, to_ym: str
     data: list[list[Any]] = []
     for r in rows:
         if r[ai] != aid:
+            continue
+        if r[si] != "BOOKED":
             continue
         ym = r[di][:7]
         if ym < from_ym or ym > to_ym:

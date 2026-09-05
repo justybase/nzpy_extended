@@ -38,6 +38,7 @@ const MONTHS = ["January", "February", "March", "April", "May", "June",
 const state = { page: "overview", from: null, to: null, dim: null };
 const charts = [];      // active Chart.js instances
 const sortState = {};   // tableId -> {col, dir}
+let pageRequestId = 0;  // prevents an older response replacing a newer view
 let ALL_MONTHS = [];    // available months from /api/meta
 let currentUser = null; // simulated session ({code, name, role, role_label})
 const USER_ROLES = ["ANALYST", "AREA_MANAGER", "BRANCH_MANAGER", "ADVISOR"];
@@ -121,8 +122,27 @@ function menuItem(id) {
   return MENU.find((m) => m.id === id);
 }
 
+function syncUrl() {
+  const params = new URLSearchParams();
+  params.set("page", state.page);
+  if (state.from) params.set("from", state.from);
+  if (state.to) params.set("to", state.to);
+  if (state.dim) params.set("dim", state.dim);
+  history.replaceState(null, "", window.location.pathname + "?" + params.toString());
+}
+
+function restoreUrlState() {
+  const params = new URLSearchParams(window.location.search);
+  const page = params.get("page");
+  if (page && menuItem(page)) state.page = page;
+  state.from = params.get("from") || state.from;
+  state.to = params.get("to") || state.to;
+  state.dim = params.get("dim") || state.dim;
+}
+
 function selectPage(id) {
   state.page = id;
+  syncUrl();
   renderMenu(id);
   const item = menuItem(id);
   $("page-title").textContent = item ? item.label : id;
@@ -153,15 +173,21 @@ async function fetchJSON(url, opts) {
 /* ------------------------------------------------------------ layout */
 
 function setLayout({ kpis = false, charts: showCharts = false, synthetic = false,
-                     analytic = false, custom = false, fromTo = true }) {
+                     analytic = false, custom = false, fromTo = true,
+                     globalPdf = false, insights = false }) {
   $("kpis").hidden = !kpis;
   $("charts").hidden = !showCharts;
+  $("insights").hidden = !insights;
   $("card-synthetic").hidden = !synthetic;
   $("card-analytic").hidden = !analytic;
   $("custom-page").hidden = !custom;
   $("from-label").hidden = !fromTo;
   $("to-label").hidden = !fromTo;
+  $("preset-label").hidden = !fromTo;
+  $("dim-label").hidden = true;
+  $("btn-charts-pdf").hidden = !globalPdf;
   if (!kpis) $("kpis").innerHTML = "";
+  if (!insights) $("insights").innerHTML = "";
   // 'charts' is the global array — the parameter is renamed to avoid shadowing
   if (!showCharts) { for (const c of charts) c.destroy(); charts.length = 0; }
 }
@@ -169,18 +195,23 @@ function setLayout({ kpis = false, charts: showCharts = false, synthetic = false
 /* ------------------------------------------------------------- reports */
 
 async function loadReportPage() {
-  setLayout({ kpis: true, charts: true, synthetic: true, analytic: true });
+  setLayout({ kpis: true, charts: true, synthetic: true, analytic: true,
+              globalPdf: true, insights: true });
+  const requestId = ++pageRequestId;
   const params = new URLSearchParams();
   if (state.from) params.set("from", state.from);
   if (state.to) params.set("to", state.to);
   if (state.dim) params.set("dim", state.dim);
   try {
     const payload = await fetchJSON(`/api/report/${state.page}?${params}`);
+    if (requestId !== pageRequestId) return;
     renderReport(payload);
   } catch (err) {
+    if (requestId !== pageRequestId) return;
     showNotice(`Could not load report "${state.page}": ${err.message}`);
     $("synthetic-table").innerHTML = "";
     $("analytic-table").innerHTML = "";
+    $("insights").innerHTML = "";
   }
 }
 
@@ -192,10 +223,17 @@ function scopeNote() {
 function renderReport(payload) {
   $("page-subtitle").textContent =
     `${payload.subtitle} · ${monthLabel(payload.period.from)} – ${monthLabel(payload.period.to)}`
-    + scopeNote();
+    + (payload.comparison
+      ? ` · compared with ${monthLabel(payload.comparison.from)} – ${monthLabel(payload.comparison.to)}`
+      : "") + scopeNote();
   renderKpis($("kpis"), payload.kpis || []);
+  renderInsights(payload.insights || []);
   renderCharts(payload.charts || []);
   renderDimSelect(payload.dims || [], payload.dim);
+  if (payload.freshness && payload.freshness.loaded_at) {
+    const stale = payload.freshness.stale ? " · stale data" : "";
+    $("page-subtitle").textContent += ` · refreshed ${new Date(payload.freshness.loaded_at).toLocaleTimeString("en-IE")}${stale}`;
+  }
   renderTableCard("synthetic", payload.synthetic, payload);
   if (payload.dims && payload.dims.length && payload.analytic &&
       payload.analytic.columns && payload.analytic.columns.length) {
@@ -233,12 +271,62 @@ function renderKpis(grid, kpis) {
   grid.innerHTML = "";
   for (const kpi of kpis) {
     const card = document.createElement("div");
-    card.className = "kpi";
+    card.className = `kpi status-${kpi.status || "neutral"}`;
     const value = formatValue(kpi.value, kpi.fmt);
     const neg = typeof kpi.value === "number" && kpi.value < 0;
-    card.innerHTML = `
-      <div class="kpi-label">${kpi.label}</div>
-      <div class="kpi-value ${kpi.fmt === "pct" ? "pct" : ""} ${neg ? "neg" : ""}">${value}</div>`;
+    const label = document.createElement("div");
+    label.className = "kpi-label";
+    label.textContent = kpi.label;
+    const valueEl = document.createElement("div");
+    valueEl.className = `kpi-value ${kpi.fmt === "pct" ? "pct" : ""} ${neg ? "neg" : ""}`;
+    valueEl.textContent = value;
+    card.appendChild(label);
+    card.appendChild(valueEl);
+    if (kpi.delta !== null && kpi.delta !== undefined) {
+      const delta = document.createElement("div");
+      const improving = typeof kpi.delta === "number" && kpi.delta >= 0;
+      delta.className = `kpi-delta ${improving ? "good" : "negative"}`;
+      const deltaText = formatValue(kpi.delta, kpi.delta_fmt || kpi.fmt);
+      const pctText = kpi.delta_pct === null || kpi.delta_pct === undefined
+        ? "" : ` (${kpi.delta_pct >= 0 ? "+" : ""}${Number(kpi.delta_pct).toFixed(2)}%)`;
+      delta.textContent = `${kpi.delta_label || "vs previous period"}: ${deltaText}${pctText}`;
+      card.appendChild(delta);
+    }
+    if (kpi.target !== null && kpi.target !== undefined) {
+      const target = document.createElement("div");
+      target.className = "kpi-target";
+      target.textContent = `Target: ${formatValue(kpi.target, kpi.target_fmt || kpi.fmt)}`;
+      card.appendChild(target);
+    }
+    grid.appendChild(card);
+  }
+}
+
+function renderInsights(insights) {
+  const grid = $("insights");
+  grid.innerHTML = "";
+  if (!insights.length) {
+    grid.hidden = true;
+    return;
+  }
+  grid.hidden = false;
+  for (const item of insights) {
+    const card = document.createElement("article");
+    card.className = `insight ${item.severity || "neutral"}`;
+    const title = document.createElement("div");
+    title.className = "insight-title";
+    title.textContent = item.title;
+    const detail = document.createElement("div");
+    detail.className = "insight-detail";
+    detail.textContent = item.detail;
+    card.appendChild(title);
+    card.appendChild(detail);
+    if (item.action) {
+      const action = document.createElement("div");
+      action.className = "insight-action";
+      action.textContent = item.action;
+      card.appendChild(action);
+    }
     grid.appendChild(card);
   }
 }
@@ -264,6 +352,8 @@ function renderCharts(list) {
     const box = document.createElement("div");
     box.className = "chart-box";
     const canvas = document.createElement("canvas");
+    canvas.setAttribute("role", "img");
+    canvas.setAttribute("aria-label", spec.title || "Chart");
     box.appendChild(canvas);
     card.appendChild(head);
     card.appendChild(box);
@@ -386,19 +476,33 @@ function makeChart(canvas, spec) {
           labels: { boxWidth: 12, font: { size: 10 } },
         },
       },
-      scales: type === "doughnut" ? {} : {
+      scales: type === "doughnut" ? {} : (isHBar ? {
+        x: {
+          beginAtZero: true,
+          ticks: { font: { size: 10 }, callback: compactChartNumber },
+          grid: { display: false },
+        },
+        y: {
+          type: "category",
+          ticks: { autoSkip: false, font: { size: 10 } },
+          grid: { display: false },
+        },
+      } : {
         x: { ticks: { maxRotation: 45, font: { size: 10 } }, grid: { display: false } },
         y: {
           beginAtZero: true,
-          ticks: {
-            font: { size: 10 },
-            callback: (v) => (Math.abs(v) >= 1e6 ? `${(v / 1e6).toFixed(1)}M`
-                               : Math.abs(v) >= 1e3 ? `${(v / 1e3).toFixed(0)}k` : v),
-          },
+          ticks: { font: { size: 10 }, callback: compactChartNumber },
         },
-      },
+      }),
     },
   });
+}
+
+function compactChartNumber(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return v;
+  return Math.abs(n) >= 1e6 ? `${(n / 1e6).toFixed(1)}M`
+    : Math.abs(n) >= 1e3 ? `${(n / 1e3).toFixed(0)}k` : n;
 }
 
 function renderDimSelect(dims, current) {
@@ -416,6 +520,7 @@ function renderDimSelect(dims, current) {
   sel.value = current || dims[0].id;
   sel.onchange = () => {
     state.dim = sel.value;
+    syncUrl();
     loadReportPage();
   };
 }
@@ -471,17 +576,19 @@ function renderTable(container, columns, rows, tableId, drill) {
 
   const table = document.createElement("table");
   table.className = "grid";
+  table.setAttribute("aria-label", tableId.replace(/[:_]/g, " "));
   const thead = document.createElement("thead");
   const trh = document.createElement("tr");
   columns.forEach((c, i) => {
     const th = document.createElement("th");
+    th.scope = "col";
     th.className = c.fmt === "str" ? "" : "num";
     const arrow = sort.col === i ? (sort.dir === 1 ? " ▲" : " ▼") : "";
     th.innerHTML = `${c.label}<span class="arrow">${arrow}</span>`;
     th.addEventListener("click", () => {
       const prev = sortState[tableId] || { col: -1, dir: 1 };
       sortState[tableId] = { col: i, dir: prev.col === i ? -prev.dir : 1 };
-      renderTable(container, columns, rows, tableId);
+      renderTable(container, columns, rows, tableId, drill);
     });
     trh.appendChild(th);
   });
@@ -697,10 +804,12 @@ function renderLedgerTable(payload) {
   }
   const table = document.createElement("table");
   table.className = "grid";
+  table.setAttribute("aria-label", "Sales ledger");
   const thead = document.createElement("thead");
   const trh = document.createElement("tr");
   columns.forEach((c, i) => {
     const th = document.createElement("th");
+    th.scope = "col";
     th.className = c.fmt === "str" ? "" : "num";
     const active = ledgerState.sort === c.key;
     const arrow = active ? (ledgerState.dir === "asc" ? " ▲" : " ▼") : "";
@@ -1123,10 +1232,11 @@ async function loadBrief() {
   const root = $("brief-root");
   root.innerHTML = `<div class="empty">Loading…</div>`;
   try {
+    const overviewParams = new URLSearchParams({ from: briefState.month, to: briefState.month });
     const [cum, overview] = await Promise.all([
       fetchJSON(`/api/people/cumulative?scope=${briefState.scope}`
         + `&code=${encodeURIComponent(briefState.code)}&month=${briefState.month}`),
-      fetchJSON("/api/report/overview"),
+      fetchJSON(`/api/report/overview?${overviewParams}`),
     ]);
     renderBrief(cum, overview);
   } catch (err) {
@@ -1204,6 +1314,8 @@ function renderBrief(cum, overview) {
   charts.length = 0;
   const spec = cum.charts[0];
   if (spec) {
+    $("brief-canvas").setAttribute("role", "img");
+    $("brief-canvas").setAttribute("aria-label", spec.title || "Cumulative sales chart");
     makeChart($("brief-canvas"), spec);
   }
   renderTable($("brief-table"), cum.columns, rows, "brief", null);
@@ -1221,7 +1333,7 @@ async function refreshCache() {
   btn.textContent = "Reloading…";
   try {
     await fetchJSON("/api/cache/refresh", { method: "POST" });
-    showToast("Tables reloaded from Netezza. Report cache cleared.");
+    showToast("Tables reloaded from Netezza. Derived caches cleared.");
     await initMeta();
     selectPage(state.page);
   } catch (err) {
@@ -1237,11 +1349,47 @@ function renderCacheInfo(meta) {
   const tables = Object.values(c.tables || {});
   const total = Object.keys(c.tables || {}).length;
   const rows = tables.reduce((acc, t) => acc + (t.rows || 0), 0);
-  const loadedAt = tables.length
-    ? new Date(tables[0].loaded_at).toLocaleTimeString("en-IE") : "—";
+  const loadedValues = tables.map((t) => t.loaded_at).filter(Boolean).sort();
+  const loadedAt = loadedValues.length
+    ? new Date(loadedValues[loadedValues.length - 1]).toLocaleTimeString("en-IE") : "—";
   let html = `${total} tables in memory<br>${fmtInt.format(rows)} rows<br>loaded ${loadedAt} · TTL ${c.ttl_seconds / 60}m<br>hits ${fmtInt.format(c.hits)} / misses ${fmtInt.format(c.misses)}`;
   if (c.last_error) html += `<br><span class="err">last error: ${c.last_error}</span>`;
   $("cache-info").innerHTML = html;
+}
+
+function selectPeriodPreset(value) {
+  if (!ALL_MONTHS.length || value === "custom") return;
+  const latest = ALL_MONTHS.length - 1;
+  if (value === "last3") {
+    state.from = ALL_MONTHS[Math.max(0, latest - 2)];
+    state.to = ALL_MONTHS[latest];
+  } else if (value === "last12") {
+    state.from = ALL_MONTHS[Math.max(0, latest - 11)];
+    state.to = ALL_MONTHS[latest];
+  } else if (value === "ytd") {
+    const year = ALL_MONTHS[latest].slice(0, 4);
+    state.from = ALL_MONTHS.find((ym) => ym.slice(0, 4) === year) || ALL_MONTHS[0];
+    state.to = ALL_MONTHS[latest];
+  }
+  $("select-from").value = state.from;
+  $("select-to").value = state.to;
+  syncUrl();
+  selectPage(state.page);
+}
+
+function detectPeriodPreset() {
+  const latest = ALL_MONTHS.length - 1;
+  if (latest < 0) return "custom";
+  const year = ALL_MONTHS[latest].slice(0, 4);
+  const ytdFrom = ALL_MONTHS.find((ym) => ym.slice(0, 4) === year) || ALL_MONTHS[0];
+  if (state.to === ALL_MONTHS[latest] && state.from === ALL_MONTHS[Math.max(0, latest - 2)]) {
+    return "last3";
+  }
+  if (state.to === ALL_MONTHS[latest] && state.from === ALL_MONTHS[Math.max(0, latest - 11)]) {
+    return "last12";
+  }
+  if (state.from === ytdFrom && state.to === ALL_MONTHS[latest]) return "ytd";
+  return "custom";
 }
 
 /* ------------------------------------------------------------------ init */
@@ -1256,7 +1404,8 @@ async function initMeta() {
   for (const ym of ALL_MONTHS) {
     const o1 = document.createElement("option");
     o1.value = ym; o1.textContent = monthLabel(ym);
-    const o2 = o1.cloneNode();
+    const o2 = document.createElement("option");
+    o2.value = ym; o2.textContent = monthLabel(ym);
     fromSel.appendChild(o1);
     toSel.appendChild(o2);
   }
@@ -1267,11 +1416,26 @@ async function initMeta() {
     if (!state.to || !ALL_MONTHS.includes(state.to)) {
       state.to = ALL_MONTHS[ALL_MONTHS.length - 1];
     }
+    if (state.from > state.to) {
+      [state.from, state.to] = [state.to, state.from];
+    }
   }
   fromSel.value = state.from;
   toSel.value = state.to;
-  fromSel.onchange = () => { state.from = fromSel.value; selectPage(state.page); };
-  toSel.onchange = () => { state.to = toSel.value; selectPage(state.page); };
+  fromSel.onchange = () => {
+    state.from = fromSel.value;
+    $("select-preset").value = "custom";
+    syncUrl();
+    selectPage(state.page);
+  };
+  toSel.onchange = () => {
+    state.to = toSel.value;
+    $("select-preset").value = "custom";
+    syncUrl();
+    selectPage(state.page);
+  };
+  $("select-preset").value = detectPeriodPreset();
+  $("select-preset").onchange = () => selectPeriodPreset($("select-preset").value);
   renderCacheInfo(meta);
 }
 
@@ -1279,6 +1443,7 @@ async function initMeta() {
   $("cache-refresh").addEventListener("click", refreshCache);
   $("drill-close").addEventListener("click", closeDrill);
   $("btn-charts-pdf").addEventListener("click", downloadAllChartsPDF);
+  restoreUrlState();
   try {
     await initMeta();
   } catch (err) {
@@ -1289,5 +1454,5 @@ async function initMeta() {
   } catch (err) {
     showNotice(`Cannot load the session (${err.message}).`);
   }
-  selectPage("overview");
+  selectPage(state.page || "overview");
 })();

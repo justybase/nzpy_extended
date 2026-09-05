@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fakes import FakeRepository  # noqa: E402
 from app.services import reporting  # noqa: E402
+from app.core.config import Settings  # noqa: E402
 from app.services.export_service import ExportService  # noqa: E402
 from app.services.report_service import ReportService  # noqa: E402
 
@@ -113,6 +114,12 @@ def test_registry_contains_all_reports() -> None:
         assert rid in reporting.REGISTRY
 
 
+def test_settings_preload_every_seeded_table() -> None:
+    assert set(Settings().table_names) >= {
+        "MIS_FACT_BRANCH_PLAN", "MIS_FACT_ADVISOR_PERF", "MIS_DIM_USER",
+    }
+
+
 async def test_loans_report_shape(service: ReportService) -> None:
     payload = await service.build("loans", "2025-09", "2025-10", "branch")
     assert payload["title"] == "Loans"
@@ -128,6 +135,26 @@ async def test_loans_report_shape(service: ReportService) -> None:
     assert payload["analytic"]["rows"][0][1] == "Branch Dublin City Centre"
     # charts present
     assert {c["id"] for c in payload["charts"]} == {"trend", "share", "by_region", "top"}
+
+
+async def test_sales_kpis_use_their_named_measure(service: ReportService) -> None:
+    payload = await service.build("loans", "2025-09", "2025-10", "branch")
+    kpis = {k["key"]: k for k in payload["kpis"]}
+    assert kpis["volume"]["value"] == 45000.0
+    assert kpis["loans"]["value"] == 3
+    assert kpis["avg_ticket"]["value"] == 15000.0
+    assert kpis["commission"]["value"] == 360.0
+    assert kpis["avg_ticket"]["value"] != kpis["volume"]["value"]
+
+
+async def test_report_payload_exposes_insights_and_comparison(
+        service: ReportService) -> None:
+    payload = await service.build("loans", "2025-09", "2025-10", "branch")
+    assert "insights" in payload
+    assert "freshness" in payload
+    # The tiny fixture has no complete preceding period, so comparison is
+    # explicitly absent rather than silently comparing unlike ranges.
+    assert payload["comparison"] is None
 
 
 async def test_unknown_report_raises(service: ReportService) -> None:
@@ -176,6 +203,7 @@ async def test_drill_sales_of_advisor(service: ReportService) -> None:
     assert payload["rows"][0][0] == "2025-10-03"
     assert payload["rows"][0][1] == "Cash loan"
     assert payload["rows"][0][6] == "BOOKED"
+    assert all(row[6] == "BOOKED" for row in payload["rows"])
     assert payload["rows"][1][0] == "2025-09-05"
     assert payload["rows"][1][4] == 10000.0
 
