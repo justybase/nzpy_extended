@@ -3,30 +3,15 @@ import os
 import pytest
 import nzpy_extended as nzpy
 
-from _helpers import compare_rows, odbc_skip_literal_date
-
-try:
-    import pyodbc
-    _HAVE_PYODBC = True
-except ImportError:
-    _HAVE_PYODBC = False
+from reference_driver import ReferenceConnection, compare_reference_rows
 
 pytestmark = pytest.mark.smoke
 
 NZ_HOST     = os.environ.get("NZ_DEV_HOST",     "192.168.0.144")
 NZ_PORT     = int(os.environ.get("NZ_DEV_PORT",  "5480"))
-NZ_DB       = os.environ.get("NZ_DEV_DB",        "JUST_DATA")
+NZ_DB       = os.environ.get("NZ_DEV_DATABASE") or os.environ.get("NZ_DEV_DB", "JUST_DATA")
 NZ_USER     = os.environ.get("NZ_DEV_USER",      "admin")
 NZ_PASSWORD = os.environ.get("NZ_DEV_PASSWORD",  "password")
-
-ODBC_CONN_STR = (
-    f"Driver={{NetezzaSQL}};"
-    f"servername={NZ_HOST};"
-    f"port={NZ_PORT};"
-    f"database={NZ_DB};"
-    f"username={NZ_USER};"
-    f"password={NZ_PASSWORD}"
-)
 
 
 SMOKE_QUERIES = [
@@ -50,17 +35,6 @@ SMOKE_QUERIES = [
 ]
 
 
-def _odbc_conn():
-    if not _HAVE_PYODBC:
-        from odbc_helper import connect as _oc
-        return _oc(dsn="NetezzaSQL", user=NZ_USER, password=NZ_PASSWORD)
-    try:
-        return pyodbc.connect(ODBC_CONN_STR, timeout=15)
-    except Exception:
-        from odbc_helper import connect as _oc
-        return _oc(dsn="NetezzaSQL", user=NZ_USER, password=NZ_PASSWORD)
-
-
 async def _nzpy_conn():
     try:
         return await nzpy.connect(
@@ -73,23 +47,25 @@ async def _nzpy_conn():
 
 @pytest.mark.parametrize("sql", SMOKE_QUERIES)
 @pytest.mark.asyncio
-async def test_query_matches_odbc(sql):
-    odbc_con = _odbc_conn()
+async def test_query_matches_reference_driver(sql):
+    reference_con = ReferenceConnection()
     nzpy_con = await _nzpy_conn()
     try:
         nz_cur = nzpy_con.cursor()
-        odbc_cur = odbc_con.cursor()
+        reference_cur = reference_con.cursor()
         try:
             await nz_cur.execute(sql)
             nz_rows = await nz_cur.fetchall()
 
-            odbc_cur.execute(sql)
-            odbc_rows = odbc_cur.fetchall()
+            reference_cur.execute(sql)
+            reference_rows = reference_cur.fetchall()
 
-            compare_rows(nz_rows, odbc_rows, sql)
+            compare_reference_rows(
+                nz_rows, reference_rows, sql, reference_cur.description
+            )
         finally:
             await nz_cur.close()
-            odbc_cur.close()
+            reference_cur.close()
     finally:
-        odbc_con.close()
+        reference_con.close()
         await nzpy_con.close()

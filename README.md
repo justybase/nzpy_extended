@@ -469,13 +469,20 @@ asyncio.run(main())
 
 #### CI (GitHub Actions)
 
+CI now discovers all `unit` tests, measures branch coverage and runs C/pure-Python
+variants on Python 3.12–3.14 across Linux, macOS and Windows. Publishing depends
+on this quality workflow. Wheel/sdist import checks run outside the source tree.
+Use `NZ_DEV_DATABASE` (preferred) or `NZ_DEV_DB` for live tests; the preferred
+name wins when both are set. See `CHANGELOG.md` for unreleased compatibility fixes.
+
 Pull requests run **without a live Netezza database**:
 
 - Unit tests (`paramstyle`, regressions, C/Python parity, buffer pool/stream, pool, csv_import)
 - `mypy` and `pyright`
 - Wheel and sdist import smoke
 
-Integration tests (`smoke`, `full`, ODBC parity) must be run **locally** against your Netezza instance.
+Integration tests (`smoke`, `full`, and differential parity) must be run
+**locally** against your Netezza instance.
 
 #### Local integration
 
@@ -488,6 +495,22 @@ export NZ_DEV_DB=JUST_DATA
 export NZ_DEV_USER=admin
 export NZ_DEV_PASSWORD=password
 ```
+
+Differential parity tests use the independent JustyBase Netezza driver, not
+ODBC. Build the Node driver from
+[`JustyBase.NetezzaDriver`](https://github.com/justybase/JustyBase.NetezzaDriver)
+or its Node companion, then point the tests at its compiled package:
+
+```shell
+export NZ_REFERENCE_NODE_DRIVER=/path/to/justybase_netezza_node_driver
+pytest tests/test_odbc_comparison_smoke.py -v
+pytest tests/test_odbc_comparison_node.py -m reference_node -v
+```
+
+The bridge in `tests/reference_driver.js` runs the reference driver in a
+separate Node process and exchanges JSON-lines, so the two implementations do
+not share protocol or conversion code. The default local checkout path is
+`../justybase_netezza_node_driver`.
 
 Run all tests locally:
 ```shell

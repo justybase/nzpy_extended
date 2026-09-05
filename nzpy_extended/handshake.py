@@ -291,8 +291,12 @@ class SyncHandshake:
                             ssl_context.check_hostname = True
                             ssl_context.verify_mode = ssl.CERT_REQUIRED
 
-                    self._usock = ssl_context.wrap_socket(self._usock)
-                    self._sock = self._usock  # type: ignore[assignment]
+                    self._sock.close()
+                    self._usock = ssl_context.wrap_socket(
+                        self._usock,
+                        server_hostname=(self.ssl_params or {}).get('server_hostname'),
+                    )
+                    self._sock = self._usock.makefile(mode="rwb")
                     self.log.info("Secured Connect Success")
                 except ssl.SSLError:
                     self.log.warning("Problem establishing secured session")
@@ -331,7 +335,9 @@ class SyncHandshake:
                         return False
                 elif beresp == b'N':
                     if information == HSV2_SSL_NEGOTIATE:
-                        if requested_security >= 2 and not self._ssl_allow_fallback():
+                        if requested_security >= 2 and not (
+                            requested_security == 2 and self._ssl_allow_fallback()
+                        ):
                             self.log.warning(
                                 "Server offered unsecured session but ssl_allow_fallback "
                                 "is not enabled (requested securityLevel=%s)",
@@ -528,7 +534,6 @@ class SyncHandshake:
             md5encoded = md5(salt + password)
             md5pwd = base64.standard_b64encode(md5encoded.digest())
             pwd = md5pwd.rstrip(b"=")
-            self.log.debug("md5 encrypted password is =%s", pwd)
 
             self._write(i_pack(len(pwd + NULL_BYTE) + 4))
             self._write(pwd + NULL_BYTE)
@@ -545,7 +550,6 @@ class SyncHandshake:
             sha256encoded = sha256(salt + password)
             sha256pwd = base64.standard_b64encode(sha256encoded.digest())
             pwd = sha256pwd.rstrip(b"=")
-            self.log.debug("sha256 encrypted password is =%s", pwd)
 
             self._write(i_pack(len(pwd + NULL_BYTE) + 4))
             self._write(pwd + NULL_BYTE)
@@ -580,7 +584,6 @@ class SyncHandshake:
                 self.log.debug("Backend response PID: %s", self.backend_pid)
 
                 self.backend_key = i_unpack(self._read(4))[0]
-                self.log.debug("Backend response KEY: %s", self.backend_key)
 
             if response == PARAMETER_STATUS:
                 data = self._read(length)

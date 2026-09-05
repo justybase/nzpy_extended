@@ -1,78 +1,58 @@
-"""
-Extended ODBC parity tests ported from Node.js OdbcComparison.test.js (~727 queries).
-Run explicitly: pytest tests/test_odbc_comparison_node.py -m odbc_node
-"""
+"""Extended parity tests against the independent JustyBase Node driver."""
 
 import pytest
 
-from test_odbc_comparison import (
-    compare_rows,
-    _odbc_conn,
-    _nzpy_conn,
-)
+from reference_driver import ReferenceConnection, compare_reference_rows
+from test_odbc_comparison import _nzpy_conn
 from odbc_queries_node import QUERIES_NODE
 
-pytestmark = [pytest.mark.full, pytest.mark.odbc_node]
+pytestmark = [pytest.mark.full, pytest.mark.reference_node]
 
-_SHARED_ODBC = None
+_SHARED_REFERENCE = None
 
-
-def _skip_nvarchar_linux(sql: str) -> None:
-    import sys
-    if sys.platform != "linux":
-        return
-    if "::nchar" in sql.lower() or "::nvarchar" in sql.lower():
-        pytest.skip("NCHAR/NVARCHAR ODBC parity skipped on Linux (node-odbc limitation)")
+_OPTIONAL_RELATIONS = (
+    "JUST_DATA.ADMIN.CUSTOMERADDRESS",
+    "JUST_DATA.ADMIN.CUSTOMERDATA",
+)
 
 
-def _skip_known_odbc_gaps(sql: str) -> None:
-    """Skip queries where ODBC driver has known gaps (returns 0 rows or tables missing)."""
+def _skip_missing_fixture_relations(sql: str) -> None:
     sql_upper = sql.upper()
-
-    missing_tables = [
-        "JUST_DATA.ADMIN.CUSTOMERADDRESS",
-        "JUST_DATA.ADMIN.CUSTOMERDATA",
-    ]
-    for tb in missing_tables:
-        if tb in sql_upper:
-            pytest.skip(f"Table {tb} does not exist in this environment")
-
-    if "_T_USER" in sql_upper or "_V_USER" in sql_upper:
-        pytest.skip("ODBC returns 0 rows for _T_USER/_V_USER on this environment")
-
-    if "'::DATE" in sql_upper or "'::TIME" in sql_upper:
-        pytest.skip("ODBC returns 0 rows for DATE/TIME literal cast (type conversion gap)")
-
-    if "CURRENT_DATE" in sql_upper or "CURRENT_TIMESTAMP" in sql_upper:
-        if " FROM " not in sql_upper:
-            pytest.skip("ODBC returns 0 rows for CURRENT_DATE/TIMESTAMP without FROM")
+    for relation in _OPTIONAL_RELATIONS:
+        if relation in sql_upper:
+            pytest.skip(f"Optional fixture relation is unavailable: {relation}")
 
 
-def _get_shared_odbc():
-    global _SHARED_ODBC
-    if _SHARED_ODBC is None:
-        _SHARED_ODBC = _odbc_conn()
-    return _SHARED_ODBC
+def _get_shared_reference():
+    global _SHARED_REFERENCE
+    if _SHARED_REFERENCE is None:
+        _SHARED_REFERENCE = ReferenceConnection()
+    return _SHARED_REFERENCE
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _close_reference_driver():
+    yield
+    if _SHARED_REFERENCE is not None:
+        _SHARED_REFERENCE.close()
 
 
 @pytest.mark.parametrize("sql", QUERIES_NODE)
 @pytest.mark.asyncio
 @pytest.mark.timeout(600)  # 10 min timeout per query
-async def test_node_query_matches_odbc(sql):
-    _skip_nvarchar_linux(sql)
-    _skip_known_odbc_gaps(sql)
-    odbc_con = _get_shared_odbc()
+async def test_node_query_matches_reference_driver(sql):
+    _skip_missing_fixture_relations(sql)
+    reference_con = _get_shared_reference()
     nzpy_con = await _nzpy_conn()
     nz_cur = nzpy_con.cursor()
-    odbc_cur = odbc_con.cursor()
+    reference_cur = reference_con.cursor()
     try:
         await nz_cur.execute(sql)
         nz_rows = await nz_cur.fetchall()
-        odbc_cur.execute(sql)
-        from test_odbc_comparison import _odbc_safe_fetchall
-        odbc_rows = _odbc_safe_fetchall(odbc_cur)
-        compare_rows(nz_rows, odbc_rows, sql)
+        reference_cur.execute(sql)
+        reference_rows = reference_cur.fetchall()
+        compare_reference_rows(nz_rows, reference_rows, sql, reference_cur.description)
     finally:
         await nz_cur.close()
-        odbc_cur.close()
+        reference_cur.close()
         await nzpy_con.close()

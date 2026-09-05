@@ -8,14 +8,29 @@ from typing import Any, Callable, Literal
 
 from ._runner import runner  # pyright: ignore[reportPrivateUsage]
 from .core import Connection
+from .exceptions import (Warning, Error, InterfaceError, DatabaseError, DataError,
+                         OperationalError, IntegrityError, InternalError,
+                         ProgrammingError, NotSupportedError, ConnectionClosedError)
+from .types import (Date, Time, Timestamp, DateFromTicks, TimeFromTicks,
+                    TimestampFromTicks, Binary, BINARY, STRING, NUMBER, DATETIME, ROWID)
+
+apilevel = "2.0"
+threadsafety = 1
+paramstyle = "qmark"
 
 _log = logging.getLogger(__name__)
 
 
 class SyncCursor:
     def __init__(self, async_cursor: Any) -> None:
-        self._c: Any = async_cursor
+        self._cursor: Any = async_cursor
         self._timeout: float | None = None
+
+    @property
+    def _c(self) -> Any:
+        if self._cursor is None:
+            raise InterfaceError("Cursor is closed")
+        return self._cursor
 
     @property
     def timeout(self) -> float | None:
@@ -91,10 +106,10 @@ class SyncCursor:
 
     def close(self) -> None:
         try:
-            if self._c is not None:
-                runner.run(self._c.close())
+            if self._cursor is not None:
+                runner.run(self._cursor.close())
         finally:
-            self._c = None
+            self._cursor = None
 
     def __enter__(self) -> SyncCursor:
         return self
@@ -118,7 +133,7 @@ class SyncCursor:
 
     def __del__(self) -> None:
         try:
-            self._c = None
+            self._cursor = None
         except Exception:
             pass
 
@@ -134,29 +149,28 @@ class _TransactionContext:
         self._conn = conn
 
     def __enter__(self) -> SyncConnection:
+        if self._conn._conn is None:
+            raise ConnectionClosedError()
+        if self._conn._conn.in_transaction:
+            raise NotSupportedError("Nested transaction contexts are not supported")
+        self._autocommit = self._conn.autocommit
+        runner.run(self._conn._conn._execute(self._conn._conn._cursor, "begin", None))
+        self._conn._conn.in_transaction = True
+        self._conn.autocommit = False
         return self._conn
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> Literal[False]:
-        if self._conn._conn is None:  # pyright: ignore[reportPrivateUsage]
-            return False
-        if exc_type:
-            try:
-                self._conn.rollback()
-            except Exception as exc:
-                _log.debug(
-                    "Error rolling back sync transaction context: %s",
-                    exc,
-                    exc_info=True,
-                )
-        else:
-            try:
+        try:
+            if exc_type is None:
                 self._conn.commit()
-            except Exception as exc:
-                _log.debug(
-                    "Error committing sync transaction context: %s",
-                    exc,
-                    exc_info=True,
-                )
+            else:
+                try:
+                    self._conn.rollback()
+                except Exception:
+                    _log.debug("Rollback failed during transaction exit", exc_info=True)
+        finally:
+            if not self._conn.closed:
+                self._conn.autocommit = self._autocommit
         return False
 
 
@@ -176,13 +190,13 @@ class SyncConnection:
     @property
     def autocommit(self) -> bool:
         if self._conn is None:
-            raise RuntimeError("Connection is closed")
+            raise ConnectionClosedError()
         return self._conn.autocommit
 
     @autocommit.setter
     def autocommit(self, value: bool) -> None:
         if self._conn is None:
-            raise RuntimeError("Connection is closed")
+            raise ConnectionClosedError()
         self._conn.autocommit = value
 
     @property
@@ -191,7 +205,7 @@ class SyncConnection:
 
     def cursor(self) -> SyncCursor:
         if self._conn is None:
-            raise RuntimeError("Connection is closed")
+            raise ConnectionClosedError()
         c = SyncCursor(self._conn.cursor())
         c._timeout = self._timeout  # pyright: ignore[reportPrivateUsage]
         return c
@@ -202,12 +216,14 @@ class SyncConnection:
         return c
 
     def commit(self) -> None:
-        if self._conn is not None:
-            runner.run(self._conn.commit())
+        if self._conn is None:
+            raise ConnectionClosedError()
+        runner.run(self._conn.commit())
 
     def rollback(self) -> None:
-        if self._conn is not None:
-            runner.run(self._conn.rollback())
+        if self._conn is None:
+            raise ConnectionClosedError()
+        runner.run(self._conn.rollback())
 
     def cancel(self, exec_gen: Any = None) -> None:
         if self._conn is not None:
@@ -219,7 +235,7 @@ class SyncConnection:
                   distribute_on_random: bool = True, logdir: str | None = None,
                   escape_char: str | None = '\\') -> int:
         if self._conn is None:
-            raise RuntimeError("Connection is closed")
+            raise ConnectionClosedError()
         return runner.run(self._conn.load_data(  # type: ignore[no-any-return]
             table_name=table_name,
             rows=rows,
@@ -248,7 +264,7 @@ class SyncConnection:
         logdir: str | None = None,
     ) -> int:
         if self._conn is None:
-            raise RuntimeError("Connection is closed")
+            raise ConnectionClosedError()
         return runner.run(self._conn.load_csv(  # type: ignore[no-any-return]
             table_name=table_name,
             csv_path=csv_path,
@@ -297,30 +313,11 @@ class SyncConnection:
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> Literal[False]:
-        if exc_type:
-            try:
-                self.rollback()
-            except Exception as exc:
-                _log.debug(
-                    "Error rolling back sync connection context: %s",
-                    exc,
-                    exc_info=True,
-                )
-        else:
-            try:
-                self.commit()
-            except Exception as exc:
-                _log.debug(
-                    "Error committing sync connection context: %s",
-                    exc,
-                    exc_info=True,
-                )
         try:
-            self.close()
-        except Exception as exc:
-            _log.debug(
-                "Error closing sync connection context: %s", exc, exc_info=True
-            )
+            if self._conn is not None:
+                runner.run(self._conn.__aexit__(exc_type, exc_val, exc_tb))
+        finally:
+            self._conn = None
         return False
 
 
@@ -458,4 +455,9 @@ def load_data(
     )
 
 
-__all__ = ["SyncCursor", "SyncConnection", "connect", "load_data"]
+__all__ = ["SyncCursor", "SyncConnection", "connect", "load_data",
+           "apilevel", "threadsafety", "paramstyle", "Warning", "Error",
+           "InterfaceError", "DatabaseError", "DataError", "OperationalError",
+           "IntegrityError", "InternalError", "ProgrammingError", "NotSupportedError",
+           "Date", "Time", "Timestamp", "DateFromTicks", "TimeFromTicks",
+           "TimestampFromTicks", "Binary", "BINARY", "STRING", "NUMBER", "DATETIME", "ROWID"]

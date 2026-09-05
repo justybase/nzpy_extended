@@ -4,49 +4,30 @@ test_basic.py
 Python equivalent of BasicTests.cs from JustyBase.NetezzaDriver.Tests.
 
 Key goals:
-  - Verify that nzpy_extended results match pyodbc (ODBC reference) for a wide
+  - Verify that nzpy_extended results match the independent JustyBase driver for a wide
     range of SQL types and queries.
   - Cover interval/time scalar types.
   - Cover null handling for string types (IsDBNull / GetString equivalents).
   - Cover column access by index.
 
-NOTE: pyodbc tests are skipped automatically if the ODBC driver / pyodbc is
-      not available on this machine.
+The differential tests use the built @justybase/netezza-driver Node package
+through tests/reference_driver.js, so they do not require ODBC.
 """
 
-import datetime
-import decimal
 import os
 import pytest
 
 import nzpy_extended as nzpy
+from reference_driver import ReferenceConnection, compare_reference_rows
 
 pytestmark = pytest.mark.full
 
 
-# ---------------------------------------------------------------------------
-# Try to import pyodbc – skip ODBC comparisons if unavailable
-# ---------------------------------------------------------------------------
-try:
-    import pyodbc  # type: ignore
-    _HAVE_PYODBC = True
-except ImportError:
-    _HAVE_PYODBC = False
-
 NZ_HOST     = os.environ.get("NZ_DEV_HOST",     "192.168.0.144")
 NZ_PORT     = int(os.environ.get("NZ_DEV_PORT",  "5480"))
-NZ_DB       = os.environ.get("NZ_DEV_DB",        "JUST_DATA")
+NZ_DB       = os.environ.get("NZ_DEV_DATABASE") or os.environ.get("NZ_DEV_DB", "JUST_DATA")
 NZ_USER     = os.environ.get("NZ_DEV_USER",      "admin")
 NZ_PASSWORD = os.environ.get("NZ_DEV_PASSWORD",  "password")
-
-ODBC_CONN_STR = (
-    f"Driver={{NetezzaSQL}};"
-    f"servername={NZ_HOST};"
-    f"port={NZ_PORT};"
-    f"database={NZ_DB};"
-    f"username={NZ_USER};"
-    f"password={NZ_PASSWORD}"
-)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -237,28 +218,10 @@ async def test_column_access_consistency():
 
 
 # ---------------------------------------------------------------------------
-# ODBC parity – optional, skipped when pyodbc / ODBC driver is not installed
+# Differential parity against the independent JustyBase driver
 # ---------------------------------------------------------------------------
 
-def _odbc_connection():
-    if not _HAVE_PYODBC:
-        from odbc_helper import connect as _oc
-        return _oc(dsn="NetezzaSQL", user=NZ_USER, password=NZ_PASSWORD)
-    try:
-        return pyodbc.connect(ODBC_CONN_STR, timeout=15)
-    except Exception:
-        from odbc_helper import connect as _oc
-        return _oc(dsn="NetezzaSQL", user=NZ_USER, password=NZ_PASSWORD)
-
-
-def _odbc_rows(sql):
-    with _odbc_connection() as con:
-        cur = con.cursor()
-        cur.execute(sql)
-        return cur.fetchall()
-
-
-ODBC_COMPARE_QUERIES = [
+REFERENCE_COMPARE_QUERIES = [
     "SELECT false::BOOLEAN FROM JUST_DATA.ADMIN.DIMDATE LIMIT 1",
     "SELECT 15::BYTEINT FROM JUST_DATA.ADMIN.DIMDATE LIMIT 1",
     "SELECT 'ABC'::VARCHAR(10) FROM JUST_DATA.ADMIN.DIMDATE LIMIT 1",
@@ -270,61 +233,26 @@ ODBC_COMPARE_QUERIES = [
 ]
 
 
-@pytest.mark.parametrize("sql", ODBC_COMPARE_QUERIES)
+@pytest.mark.parametrize("sql", REFERENCE_COMPARE_QUERIES)
 @pytest.mark.asyncio
-async def test_odbc_and_nzpy_match(sql):
-    """
-    nzpy_extended result must agree with ODBC reference driver.
-    Falls back to SQLConnect ctypes helper if pyodbc is unavailable.
-    """
-    odbc_con = _odbc_connection()
+async def test_reference_driver_and_nzpy_match(sql):
+    """nzpy_extended result must agree with the independent JustyBase driver."""
+    reference_con = ReferenceConnection()
     nzpy_con = await _make_conn()
     try:
-        odbc_cur = odbc_con.cursor()
-        odbc_cur.execute(sql)
-        odbc_rows = odbc_cur.fetchall()
+        reference_cur = reference_con.cursor()
+        reference_cur.execute(sql)
+        reference_rows = reference_cur.fetchall()
 
         nzpy_cur = nzpy_con.cursor()
         await nzpy_cur.execute(sql)
         nzpy_rows = await nzpy_cur.fetchall()
 
-        assert len(odbc_rows) == len(nzpy_rows), (
-            f"Row count mismatch for {sql}: odbc={len(odbc_rows)}, nzpy={len(nzpy_rows)}"
+        compare_reference_rows(
+            nzpy_rows, reference_rows, sql, reference_cur.description
         )
-        for o_row, n_row in zip(odbc_rows, nzpy_rows):
-            assert len(o_row) == len(n_row)
-            for col_idx, (o_val, n_val) in enumerate(zip(o_row, n_row)):
-                if o_val is None and n_val is None:
-                    continue
-                if isinstance(o_val, datetime.datetime) and isinstance(n_val, datetime.datetime):
-                    diff = abs((o_val - n_val).total_seconds())
-                    assert diff <= 15, f"Datetime mismatch col {col_idx}: {o_val} vs {n_val}"
-                elif isinstance(o_val, str) and isinstance(n_val, str):
-                    # trim to 4000 chars like the C# test
-                    assert o_val[:4000] == n_val[:4000], (
-                        f"String mismatch col {col_idx}: {o_val!r} vs {n_val!r}"
-                    )
-                else:
-                    # coerce to string for comparison (type differences between ODBC and nzpy)
-                    o_str = str(o_val)
-                    n_str = str(n_val)
-                    if o_str == n_str:
-                        continue
-                    # Allow IEEE 754 float tolerance (e.g. REAL precision)
-                    try:
-                        o_num = float(o_str) if '.' in o_str or 'e' in o_str.lower() else int(o_str)
-                        n_num = float(n_str) if '.' in n_str or 'e' in n_str.lower() else int(n_str)
-                        if abs(o_num - n_num) <= 1e-3:
-                            continue
-                        if o_num and abs(o_num - n_num) / abs(o_num) <= 1e-3:
-                            continue
-                    except (ValueError, TypeError):
-                        pass
-                    assert o_str == n_str, (
-                        f"Value mismatch col {col_idx}: {o_val!r} vs {n_val!r}"
-                    )
     finally:
-        odbc_con.close()
+        reference_con.close()
         await nzpy_con.close()
 
 

@@ -777,7 +777,7 @@ static PyObject* call_interval_to_text(int64_t interval_time, int interval_month
 static PyObject* call_timetz_out(int64_t timetz_time, int timetz_zone) {
     static PyObject *func = NULL;
     if (!func) {
-        PyObject *mod = PyImport_ImportModule("nzpy_extended.core");
+        PyObject *mod = PyImport_ImportModule("nzpy_extended.types");
         if (!mod) { PyErr_Clear(); Py_RETURN_NONE; }
         func = PyObject_GetAttrString(mod, "timetz_out_timetzadt");
         Py_DECREF(mod);
@@ -789,7 +789,7 @@ static PyObject* call_timetz_out(int64_t timetz_time, int timetz_zone) {
 static PyObject* call_timestamp2struct(int64_t workspace) {
     static PyObject *func = NULL;
     if (!func) {
-        PyObject *mod = PyImport_ImportModule("nzpy_extended.core");
+        PyObject *mod = PyImport_ImportModule("nzpy_extended.types");
         if (!mod) { PyErr_Clear(); Py_RETURN_NONE; }
         func = PyObject_GetAttrString(mod, "timestamp2struct");
         Py_DECREF(mod);

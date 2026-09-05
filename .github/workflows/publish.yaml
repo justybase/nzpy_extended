@@ -8,6 +8,8 @@ on:
   workflow_dispatch:
 
 jobs:
+  quality:
+    uses: ./.github/workflows/test.yaml
   build-wheels:
     name: Build wheels on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -61,7 +63,7 @@ jobs:
 
   publish:
     name: Publish to PyPI
-    needs: [build-wheels, build-sdist]
+    needs: [quality, build-wheels, build-sdist]
     runs-on: ubuntu-latest
     environment: release
     permissions:
