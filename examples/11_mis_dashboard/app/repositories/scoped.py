@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.core.roles import SessionUser
+from app.core.cache_types import DatasetVersion
 from app.repositories.base import MISRepository
 
 # fact tables and the entity column they are scoped by
@@ -83,8 +84,8 @@ class ScopedMISRepository(MISRepository):
             return cols, [r for r in rows if r[bi] in branch_ids]
         return cols, rows
 
-    async def refresh_all(self) -> dict[str, Any]:
-        return await self._inner.refresh_all()
+    async def refresh_all(self, generation: DatasetVersion | None = None) -> dict[str, Any]:
+        return await self._inner.refresh_all(generation)
 
     async def get_table_slice(self, name: str, column: str, value: Any):
         # Slice first, then reuse the same row-level masking rules.

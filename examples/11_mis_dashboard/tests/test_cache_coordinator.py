@@ -12,6 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.services.cache_coordinator import CacheCoordinator, DatasetVersionStore  # noqa: E402
+from app.core.cache_types import DatasetVersion  # noqa: E402
 
 
 class FakeCursor:
@@ -58,13 +59,19 @@ class RefreshRepository:
         self.refresh_calls = 0
         self.fail_next = False
         self.status: dict[str, Any] = {}
+        self.restore_result: dict[str, Any] = {"restored": False}
+        self.received_generations: list[DatasetVersion | None] = []
 
-    async def refresh_all(self) -> dict[str, Any]:
+    async def refresh_all(self, generation: DatasetVersion | None = None) -> dict[str, Any]:
         self.refresh_calls += 1
+        self.received_generations.append(generation)
         if self.fail_next:
             self.fail_next = False
             return {"reloaded": 0, "errors": ["MIS_FACT_SALES: unavailable"]}
         return {"reloaded": 3, "errors": []}
+
+    async def restore_persisted(self) -> dict[str, Any]:
+        return self.restore_result
 
     def set_freshness(self, status: dict[str, Any]) -> None:
         self.status = status
@@ -118,6 +125,93 @@ async def test_unchanged_version_does_not_reload_dataset(
     assert all(service.clear_calls == 1 for service in services)
     assert repository.status["dataset_version"] == 1
     assert repository.status["stale"] is False
+
+
+async def test_matching_persisted_version_skips_source_reload(
+        clock: list[dt.datetime]) -> None:
+    pool = FakeControlPool(control_row(1))
+    repository = RefreshRepository()
+    repository.restore_result = {
+        "restored": True,
+        "generation": DatasetVersion(
+            "MIS_DASHBOARD", 1, "LOAD-1", "2026-08-15",
+            "2026-08-15T06:01:00", "PUBLISHED",
+        ),
+        "committed_at": "2026-08-15T06:30:00+00:00",
+    }
+    coordinator, services = make_coordinator(pool, repository, clock)
+
+    result = await coordinator.initialize()
+
+    assert result["restored"] is True
+    assert repository.refresh_calls == 0
+    assert all(service.clear_calls == 0 for service in services)
+
+
+async def test_missing_published_version_refreshes_restored_snapshot(
+        clock: list[dt.datetime]) -> None:
+    pool = FakeControlPool(control_row(1))
+    pool.row = None
+    repository = RefreshRepository()
+    repository.restore_result = {
+        "restored": True,
+        "generation": DatasetVersion(
+            "MIS_DASHBOARD", 1, "LOAD-1", "2026-08-15",
+            "2026-08-15T06:01:00", "PUBLISHED",
+        ),
+        "committed_at": "2026-08-15T06:30:00+00:00",
+    }
+    coordinator, _services = make_coordinator(pool, repository, clock)
+
+    result = await coordinator.initialize()
+
+    assert result["reloaded"] == 3
+    assert repository.refresh_calls == 1
+    assert repository.received_generations == [None]
+
+
+async def test_older_persisted_version_refreshes_with_control_generation(
+        clock: list[dt.datetime]) -> None:
+    pool = FakeControlPool(control_row(2))
+    repository = RefreshRepository()
+    repository.restore_result = {
+        "restored": True,
+        "generation": DatasetVersion(
+            "MIS_DASHBOARD", 1, "LOAD-1", "2026-08-15",
+            "2026-08-15T06:01:00", "PUBLISHED",
+        ),
+        "committed_at": "2026-08-15T06:30:00+00:00",
+    }
+    coordinator, _services = make_coordinator(pool, repository, clock)
+
+    result = await coordinator.initialize()
+
+    assert result["reloaded"] == 3
+    assert repository.refresh_calls == 1
+    assert repository.received_generations[0] is not None
+    assert repository.received_generations[0].version_no == 2
+
+
+async def test_control_failure_keeps_restored_snapshot(
+        clock: list[dt.datetime]) -> None:
+    pool = FakeControlPool(control_row(1))
+    pool.error = RuntimeError("control table unavailable")
+    repository = RefreshRepository()
+    repository.restore_result = {
+        "restored": True,
+        "generation": DatasetVersion(
+            "MIS_DASHBOARD", 1, "LOAD-1", "2026-08-15",
+            "2026-08-15T06:01:00", "PUBLISHED",
+        ),
+        "committed_at": "2026-08-15T06:30:00+00:00",
+    }
+    coordinator, _services = make_coordinator(pool, repository, clock)
+
+    result = await coordinator.initialize()
+
+    assert result["restored"] is True
+    assert repository.refresh_calls == 0
+    assert repository.status["stale"] is True
 
 
 async def test_new_published_version_reloads_and_clears_derived_caches(

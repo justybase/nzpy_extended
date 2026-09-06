@@ -1,5 +1,10 @@
 # MIS dashboard ERD
 
+> Document type: relationship reference
+> Status: demo schema reference
+> Production adaptation: target warehouse schema and ownership required
+> Owner: data engineering
+
 The diagram shows the tables created by `seed.py`. Arrows point from a child
 table to its referenced parent. Composite relationships are labelled with the
 columns participating in the relationship.

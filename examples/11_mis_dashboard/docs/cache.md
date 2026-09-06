@@ -1,10 +1,18 @@
 # Cache and ETL publication contract
 
+> Document type: current cache contract and operational guidance
+> Status: maintained
+> Production adaptation: topology, encryption and stale-data policy required
+> Owner: data engineering / platform architecture
+
 This document describes why the dashboard uses an application cache, what is
 cached, how an ETL process publishes a new dataset, and how operators can
 diagnose freshness. The design uses ordinary Netezza tables only. It does not
 use materialized views, CTAS tables owned by the application, or a separate
 distributed cache service.
+
+For the complete module map, repository contract and extension checklist, see
+[`implementation-guide.md`](implementation-guide.md).
 
 ## Decision and motivation
 
@@ -16,8 +24,8 @@ actions would create avoidable scans, latency and workload on Netezza.
 The selected pattern is:
 
 1. Netezza remains the system of record for the ordinary `MIS_*` tables.
-2. The application keeps a process-local copy of the data needed by the
-   dashboard.
+2. The application keeps a process-local RAM copy of the data needed by the
+   dashboard and a durable SQLite snapshot for restart recovery.
 3. The ETL publishes a small version marker in the ordinary
    `MIS_CONTROL_DATASET_LOAD` table only after a complete, validated batch is
    available.
@@ -37,18 +45,17 @@ model visible in `seed.py`, makes the ETL publication boundary explicit, and
 does not introduce a database-managed materialization lifecycle. The cache is
 an application performance mechanism, not another warehouse data product.
 
-The trade-off is that each application process has its own memory cache. A
-multi-process deployment therefore needs every process to poll the same
-control table. It also means a process restart performs a fresh initial load.
-Those properties are intentional and are documented below.
+The trade-off is that each application process has its own memory cache. The
+SQLite snapshot removes the mandatory full reload after restart, but this
+example still assumes one process/host; it is not a distributed cache.
 
 ## Cache layers
 
 | Layer | Contents | Netezza access | Invalidation |
 |---|---|---|---|
 | Publication control | Latest `PUBLISHED` row in `MIS_CONTROL_DATASET_LOAD` | One small query per polling interval, plus startup/manual refresh | Never copied into the data cache; read directly |
-| Eager table cache | Dimensions and regular facts listed in `Settings.table_names`, excluding the lazy snapshot mart | Full table read at startup, after a new ETL version, or manual refresh | Complete generation swap |
-| Lazy snapshot cache | Requested equality slices of `MIS_FACT_PERFORMANCE_SNAPSHOT`, normally by `snapshot_date` | One filtered query for a cold slice | Cleared after a successful dataset swap |
+| Eager table cache | Dimensions and regular facts listed in `Settings.table_names`, excluding the lazy snapshot mart | RAM restore from SQLite, or full table read after a new ETL version/manual refresh | Complete generation swap in RAM and SQLite |
+| Lazy snapshot cache | Requested equality slices of `MIS_FACT_PERFORMANCE_SNAPSHOT`, normally by `snapshot_date` | RAM, then persisted SQLite slice, then one filtered Netezza query | Cleared with the active SQLite generation |
 | Report payload cache | Computed report and drill responses | No Netezza query when the payload is cached | Two-minute TTL by default and dataset refresh |
 | People/temporal caches | Advisor panels, cumulative views and temporal calculations | Computed from the table cache | Cleared after a successful dataset swap; short TTL where configured |
 | Ledger join cache | Joined sales-detail rows used for filtering, sorting and paging | Built from cached sales and dimensions | Cleared after a successful dataset swap |
@@ -82,8 +89,10 @@ is:
 - a new published ETL version causes a refresh immediately after the next
   control poll;
 - a manual reload can force a refresh;
-- if no freshness confirmation is possible for 24 hours, the application marks
-  the data `stale` and continues serving the last complete generation;
+- if the control query fails, the application marks the data `stale`
+  immediately and continues serving the last complete generation;
+- if no successful freshness confirmation is possible for 24 hours, the
+  application also marks the data `stale`;
 - the application does not silently replace a complete generation with a
   partial one and does not discard usable data merely because the warning
   threshold was reached.
@@ -143,10 +152,11 @@ business entity.
 
 ### Startup
 
-`CacheCoordinator.initialize()` first loads the eager tables. A successful
-load is committed as one cache generation. It then reads the latest published
-control row and associates that generation with the version. The background
-poller starts only after initial loading has completed.
+`CacheCoordinator.initialize()` first tries to restore the complete eager
+generation from SQLite. It then reads the latest published control row. A
+matching `(dataset_name, version_no, load_id)` avoids the large Netezza read.
+An older, missing or invalid snapshot triggers the normal complete refresh.
+The background poller starts only after restore or refresh has completed.
 
 If the control table is not present yet, the application still starts in
 compatibility mode and serves the loaded ordinary tables. The status endpoint
@@ -208,18 +218,26 @@ poll. The `unconfirmed_age_seconds` clock is based on the last successful
 freshness confirmation (or the last successful initial table load when no
 control confirmation has ever succeeded).
 
-After `NZ_CACHE_MAX_UNCONFIRMED_SECONDS` (24 hours by default), `stale` becomes
-true. Data remains readable, but the API and sidebar display a warning. A
+The control error marks `stale` immediately, while data remains readable and
+the API and sidebar display a warning. The
+`NZ_CACHE_MAX_UNCONFIRMED_SECONDS` threshold also marks the data stale when no
+successful freshness confirmation has been possible for that long. A
 successful control query clears the warning if the published version is
 already loaded; a changed version additionally triggers the normal refresh.
 
 ### Process restart and multiple workers
 
-The table cache is process-local and not persisted. Restarting a worker clears
-its memory and causes a fresh startup load. In a multi-worker deployment every
-worker independently polls `MIS_CONTROL_DATASET_LOAD` and refreshes its own
-cache. The control table is therefore the shared coordination signal, while
-the actual table contents remain in each worker's memory.
+Restarting the supported single process restores the last complete generation
+from `NZ_CACHE_SQLITE_PATH`. If Netezza is unavailable, that generation remains
+readable and the status is marked stale when freshness cannot be confirmed.
+The SQLite file contains the full unmasked cache. The example only assumes
+that the configured directory is writable by the application and is handled
+according to the target environment's normal access policy; exclusive access
+for the application account is not a requirement of this example.
+
+Multi-worker and multi-host coordination are outside this example's scope. A
+future deployment of that kind must add cross-process locking and a shared
+storage policy; the current in-process refresh lock is not sufficient.
 
 ## Quality gates and point-in-time reporting
 
@@ -251,7 +269,7 @@ Important status fields are:
 
 | Field | Meaning |
 |---|---|
-| `cache_mode` | `etl_versioned` for the ordinary-table cache |
+| `cache_mode` | `etl_versioned_sqlite` when durable persistence is enabled |
 | `dataset_name` | Logical ETL dataset being monitored |
 | `dataset_version`, `load_id` | Latest published control identity |
 | `refreshed_version` | Version of the complete generation currently in memory |
@@ -268,6 +286,11 @@ Important status fields are:
 | `hits`, `misses` | Process-local table/slice cache counters |
 | `tables` | Row count and load timestamp for each cached table |
 | `report_cache_size`, `report_cache_ttl` | Derived report cache state |
+| `persistent_snapshot_present` | Whether the active SQLite snapshot exists |
+| `persistent_snapshot_version`, `persistent_snapshot_load_id` | Generation represented on disk |
+| `restored_from_disk` | Whether the current process started from SQLite data |
+| `persistent_error` | Last SQLite restore, staging or lazy-slice error |
+| `lazy_persistent_hits`, `lazy_persistent_misses` | Disk-backed lazy-slice counters |
 
 The UI's **Data cache** panel presents the same information, including the
 loaded generation, control-check time, age and warnings. A report freshness
@@ -284,6 +307,7 @@ traced back to the table generation from which it was built.
 | `NZ_CACHE_MAX_UNCONFIRMED_SECONDS` | `86400` | Freshness-warning threshold |
 | `NZ_CACHE_DATASET_NAME` | `MIS_DASHBOARD` | Logical dataset name selected from the control table |
 | `NZ_CACHE_CONTROL_TABLE` | `MIS_CONTROL_DATASET_LOAD` | Ordinary control-table name |
+| `NZ_CACHE_SQLITE_PATH` | `var/cache/mis_dashboard.sqlite3` | Durable local snapshot; empty disables persistence |
 
 The control-table identifier is validated before being interpolated into the
 SQL statement. Dataset name and status are query parameters. In production,

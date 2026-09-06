@@ -12,28 +12,11 @@ import asyncio
 import datetime as dt
 import logging
 import re
-from dataclasses import dataclass
 from typing import Any, Callable, cast
 
+from app.core.cache_types import DatasetVersion
+
 logger = logging.getLogger("mis.cache.coordinator")
-
-
-@dataclass(frozen=True)
-class DatasetVersion:
-    """The latest published ETL version for one logical dataset."""
-
-    dataset_name: str
-    version_no: int
-    load_id: str
-    source_watermark: str | None
-    published_at: str
-    status: str
-    row_count: int | None = None
-    checksum: str | None = None
-
-    @property
-    def token(self) -> tuple[str, int, str]:
-        return self.dataset_name, self.version_no, self.load_id
 
 
 class DatasetVersionStore:
@@ -116,33 +99,77 @@ class CacheCoordinator:
         return self._dataset_name
 
     async def initialize(self) -> dict[str, Any]:
-        """Warm the data cache once and associate it with the published version."""
-        result = await self._refresh_tables("startup")
+        """Restore a durable generation or warm the cache from Netezza."""
+        restored: dict[str, Any] = {}
+        restore_persisted = getattr(self._repository, "restore_persisted", None)
+        if restore_persisted is not None:
+            restored = cast(dict[str, Any], await restore_persisted())
+            if restored.get("restored"):
+                restored_generation = restored.get("generation")
+                if isinstance(restored_generation, DatasetVersion):
+                    self._refreshed_version = restored_generation
+                committed_at = restored.get("committed_at")
+                if committed_at:
+                    try:
+                        self._last_refresh = dt.datetime.fromisoformat(str(committed_at))
+                        self._last_refresh_reason = "disk_restore"
+                    except ValueError:
+                        logger.warning("invalid persisted cache timestamp: %s", committed_at)
+
+        control_read_ok = False
+        version: DatasetVersion | None = None
+        result: dict[str, Any]
         try:
             version = await self._read_control()
             checked_at = self._clock()
             self._last_control_check = checked_at
             self._last_successful_control_check = checked_at
             self._control_error = None
+            control_read_ok = True
         except Exception as exc:  # noqa: BLE001 - startup remains usable with warning
             self._record_control_error(exc)
-        else:
+        if control_read_ok:
             self._control_version = version
-            if not result.get("errors"):
-                self._refreshed_version = version
+            restored_generation = restored.get("generation")
+            if restored.get("restored") and (
+                isinstance(restored_generation, DatasetVersion)
+                and version is not None
+                and restored_generation.token == version.token
+            ):
+                result = {
+                    "restored": True,
+                    "reloaded": 0,
+                    "errors": [],
+                    "committed": True,
+                    "persistent_committed": True,
+                }
+            else:
+                result = await self._refresh_tables("startup", version)
+        elif restored.get("restored"):
+            result = {
+                "restored": True,
+                "reloaded": 0,
+                "errors": [],
+                "committed": True,
+                "persistent_committed": True,
+            }
+        else:
+            result = await self._refresh_tables("startup", None)
         self._publish_status()
         return result
 
     async def refresh(self, reason: str = "manual") -> dict[str, Any]:
         """Force a table refresh, then clear all derived application caches."""
+        generation: DatasetVersion | None = None
         try:
-            self._control_version = await self._read_control()
+            generation = await self._read_control()
+            self._control_version = generation
             self._last_control_check = self._clock()
             self._last_successful_control_check = self._last_control_check
             self._control_error = None
         except Exception as exc:  # noqa: BLE001 - data refresh can still be attempted
             self._record_control_error(exc)
-        result = await self._refresh_tables(reason)
+        result = await self._refresh_tables(reason, generation)
         self._publish_status()
         return result
 
@@ -170,7 +197,7 @@ class CacheCoordinator:
                     "version": version.version_no}
 
         result = await self._refresh_tables(
-            f"dataset version {version.version_no} ({version.load_id})")
+            f"dataset version {version.version_no} ({version.load_id})", version)
         result["changed"] = True
         result["version"] = version.version_no
         self._publish_status()
@@ -205,6 +232,7 @@ class CacheCoordinator:
         stale = bool(
             version_mismatch
             or self._refresh_error
+            or self._control_error
             or (unconfirmed_age is not None and unconfirmed_age > self._max_unconfirmed_seconds)
         )
         return {
@@ -229,23 +257,35 @@ class CacheCoordinator:
     async def _read_control(self) -> DatasetVersion | None:
         return await self._store.latest(self._dataset_name)
 
-    async def _refresh_tables(self, reason: str) -> dict[str, Any]:
+    async def _refresh_tables(
+        self,
+        reason: str,
+        generation: DatasetVersion | None,
+    ) -> dict[str, Any]:
         async with self._refresh_lock:
             try:
-                result = cast(dict[str, Any], await self._repository.refresh_all())
+                result = cast(
+                    dict[str, Any],
+                    await self._repository.refresh_all(generation),
+                )
             except Exception as exc:  # noqa: BLE001 - retain the last good data
                 result = {"reloaded": 0, "errors": [str(exc)], "committed": False}
-            errors = result.get("errors", [])
+            raw_errors: Any = result.get("errors", [])
+            errors = [str(error) for error in raw_errors]
             if errors:
-                self._refresh_error = "; ".join(str(error) for error in errors)
+                self._refresh_error = "; ".join(errors)
                 logger.warning("cache refresh failed (%s): %s", reason, errors)
                 return result
 
             self._refresh_error = None
             self._last_refresh = self._clock()
             self._last_refresh_reason = reason
-            if self._control_version is not None:
-                self._refreshed_version = self._control_version
+            if generation is not None:
+                self._refreshed_version = generation
+            else:
+                # A successful unversioned refresh has no identity that can
+                # be reported as the active ETL generation.
+                self._refreshed_version = None
             self._clear_derived_caches()
             result["derived_caches_cleared"] = True
             return result

@@ -10,6 +10,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
+from app.core.cache_types import DatasetVersion
+
 
 class MISRepository(ABC):
     """Read access to the MIS_* tables plus cache lifecycle hooks."""
@@ -32,9 +34,13 @@ class MISRepository(ABC):
         return columns, [row for row in rows if str(row[idx])[:10] == expected]
 
     @abstractmethod
-    async def refresh_all(self) -> dict[str, Any]:
+    async def refresh_all(self, generation: DatasetVersion | None = None) -> dict[str, Any]:
         """Reload every table. Failed tables keep their previous contents;
         errors are reported in the returned dict."""
+
+    async def restore_persisted(self) -> dict[str, Any]:
+        """Restore a durable cache generation when an implementation has one."""
+        return {"restored": False, "reason": "unsupported"}
 
     @abstractmethod
     def snapshot(self) -> dict[str, Any]:

@@ -6,6 +6,7 @@ import calendar
 import datetime as dt
 from typing import Any
 
+from app.core.cache_types import DatasetVersion
 from app.repositories.base import MISRepository
 
 
@@ -106,8 +107,8 @@ class AsOfMISRepository(MISRepository):
                           or (closed and str(row[idx])[:7] == self._month)]
         return cols, rows
 
-    async def refresh_all(self) -> dict[str, Any]:
-        return await self._inner.refresh_all()
+    async def refresh_all(self, generation: DatasetVersion | None = None) -> dict[str, Any]:
+        return await self._inner.refresh_all(generation)
 
     async def get_table_slice(self, name: str, column: str, value: Any):
         return await self._inner.get_table_slice(name, column, value)

@@ -1,5 +1,10 @@
 # Authentication and access model
 
+> Document type: authentication and authorization contract
+> Status: demo contract
+> Production adaptation: corporate identity, secrets, MFA and audit required
+> Owner: security / IAM
+
 This example uses a self-contained authentication flow so it can be demoed
 without a corporate identity provider. It is deliberately not a production
 LDAP implementation.
