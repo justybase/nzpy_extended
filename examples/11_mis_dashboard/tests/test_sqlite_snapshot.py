@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -60,6 +62,28 @@ async def test_snapshot_round_trip(tmp_path: Path) -> None:
     assert restored["generation"].token == generation().token
     assert restored["tables"] == tables
     assert restored["metadata"]["MIS_DIM_PRODUCT"]["storage"] == "ram+sqlite"
+
+
+async def test_snapshot_restore_does_not_block_the_event_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = SQLiteSnapshotStore(tmp_path / "mis-dashboard.sqlite3")
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_restore(_table_names: list[str]) -> dict[str, Any]:
+        started.set()
+        release.wait(timeout=1)
+        return {"restored": False, "reason": "missing"}
+
+    monkeypatch.setattr(store, "_restore_sync", blocking_restore)
+    task = asyncio.create_task(store.restore([]))
+    assert await asyncio.to_thread(started.wait, 0.2)
+    await asyncio.sleep(0)
+    assert not task.done()
+    release.set()
+    assert await task == {"restored": False, "reason": "missing"}
 
 
 async def test_staged_snapshot_has_private_permissions(tmp_path: Path) -> None:

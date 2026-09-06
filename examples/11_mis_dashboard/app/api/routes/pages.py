@@ -12,7 +12,7 @@ router = APIRouter(tags=["pages"])
 
 
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
-async def index(settings: Settings = Depends(get_settings)) -> HTMLResponse:
+def index(settings: Settings = Depends(get_settings)) -> HTMLResponse:
     html = settings.static_dir / "index.html"
     if html.exists():
         return HTMLResponse(html.read_text(encoding="utf-8"))

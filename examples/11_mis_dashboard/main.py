@@ -116,6 +116,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             if refresh_task is not None:
                 refresh_task.cancel()
+                try:
+                    await refresh_task
+                except asyncio.CancelledError:
+                    pass
             await pool.close_all()
 
     app = FastAPI(

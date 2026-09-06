@@ -109,8 +109,9 @@ async def ledger_export(
         ["Generated", dt.datetime.now().isoformat(timespec="seconds")],
         ["Data source", "cached ordinary MIS_* tables (ETL-versioned)"],
     ]
-    path = export_service.write_workbook(fmt, sheet_name, result["columns"],
-                                         result["rows"], meta_lines)
+    path = await export_service.write_workbook_async(
+        fmt, sheet_name, result["columns"], result["rows"], meta_lines
+    )
     filename = f"ledger_{period}_{dt.datetime.now():%Y%m%d}.{fmt}"
     return FileResponse(
         path,
