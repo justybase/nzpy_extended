@@ -94,7 +94,10 @@ def split_statements(sql: str) -> list[SqlStatement]:
 
 def statement_for_cursor(sql: str, offset: int) -> SqlStatement | None:
     for statement in split_statements(sql):
-        if statement.start_offset <= offset <= statement.end_offset:
+        # Monaco reports the cursor after the last character.  For a
+        # statement terminated with `;`, that means the offset is one past
+        # `end_offset` immediately after typing the terminator.
+        if statement.start_offset <= offset <= statement.end_offset + 1:
             return statement
     return None
 

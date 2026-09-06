@@ -32,5 +32,9 @@ test.describe('Netezza SQL workspace', () => {
     await expect(page.locator('.result-grid-shell')).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText('3 rows')).toBeVisible({ timeout: 30_000 });
     await expect(page.locator('.data-grid')).toContainText('alpha');
+    await page.locator('.virtual-row').first().click({ button: 'right' });
+    await expect(page.getByRole('button', { name: 'Copy row as TSV' })).toBeVisible();
+    await page.getByRole('button', { name: 'Copy row as TSV' }).click();
+    await expect(page.getByRole('button', { name: '▶ Run' })).toBeEnabled();
   });
 });

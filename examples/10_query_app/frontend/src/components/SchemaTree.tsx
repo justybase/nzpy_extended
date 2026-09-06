@@ -59,7 +59,9 @@ export function SchemaTree({ onMenu, onSelect, onRefresh, refreshKey = 0 }: { on
 }
 
 export function schemaMenu(node: SchemaNode, insert: (value: string) => void, openQuery: (sql: string) => void, refresh: () => void, showDetail: () => void): MenuItem[] {
-  const qualified = [node.database, node.schema, node.object_name || node.label].filter(Boolean).join('.');
+  const qualified = node.kind === 'column'
+    ? [node.database, node.schema, node.object_name, node.column_name || node.label].filter(Boolean).join('.')
+    : [node.database, node.schema, node.object_name || node.label].filter(Boolean).join('.');
   const items: MenuItem[] = [
     { label: 'Copy qualified name', action: () => void navigator.clipboard?.writeText(qualified) },
     { label: 'Insert name into editor', action: () => insert(qualified) },

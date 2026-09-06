@@ -30,10 +30,12 @@ def main() -> None:
         conn = connection()
         try:
             conn.execute(f"CREATE TABLE {table} (ID INTEGER, LABEL VARCHAR(80), AMOUNT NUMERIC(12, 2))")
-            conn.execute(
-                f"INSERT INTO {table} VALUES "
-                "(1, 'alpha', 10.50), (2, 'beta', 20.25), (3, 'gamma', 30.75)"
-            )
+            for row in (
+                "(1, 'alpha', 10.50)",
+                "(2, 'beta', 20.25)",
+                "(3, 'gamma', 30.75)",
+            ):
+                conn.execute(f"INSERT INTO {table} VALUES {row}")
             conn.commit()
         finally:
             conn.close()
