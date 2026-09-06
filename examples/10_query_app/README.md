@@ -1,21 +1,21 @@
 # Netezza SQL Workspace — FastAPI example
 
-Modułowy przykład edytora SQL dla `nzpy_extended`, inspirowany architekturą webowego JustyBase.
+Modular SQL editor example for `nzpy_extended`, inspired by the architecture of the JustyBase web application.
 
-## Funkcje
+## Features
 
-- wiele zakładek SQL z osobnymi modelami Monaco;
-- wykonywanie statementu pod kursorem, zaznaczenia albo całego skryptu;
-- równoległe zapytania z niezależnym cancel/progress przez WebSocket;
-- osobne result-tab dla każdego statementu;
-- serwerowe sesje wyników SQLite z TTL, restore po reloadzie i pagingiem;
-- wirtualizowany grid z filtrowaniem, sortowaniem, resize i menu kontekstowym;
-- lazy schema tree: database → schema → typ obiektu → obiekt → kolumny;
-- completion Netezza oparty o backendowy metadata cache;
-- podstawowa diagnostyka SQL i preview operacji DDL/DML;
-- eksport wyników oraz kompatybilne stare endpointy `/api/query` i `/api/cancel`.
+- multiple SQL tabs with separate Monaco models;
+- execution of the statement under the cursor, the selected text, or the entire script;
+- parallel queries with independent cancel/progress handling over WebSocket;
+- a separate result tab for each statement;
+- server-side SQLite result sessions with TTL, restore after reload, and paging;
+- a Tabulator-based virtualized grid with server-side filtering/sorting, drag-and-drop multi-column grouping, column resizing, cell-range selection, clipboard support, a context menu, and a result search field;
+- a lazy schema tree: database → schema → object type → object → columns;
+- Netezza completion powered by a backend metadata cache;
+- basic SQL diagnostics and DDL/DML operation previews;
+- frontend CSV/XLSX/XLSB export powered by `@justybase/spreadsheet-tasks`, plus backwards-compatible `/api/query` and `/api/cancel` endpoints.
 
-## Uruchomienie
+## Getting started
 
 Wymagane są `NZ_DEV_HOST`, `NZ_DEV_PORT`, `NZ_DEV_DATABASE`, `NZ_DEV_USER` i `NZ_DEV_PASSWORD`.
 
@@ -29,10 +29,10 @@ cd ..
 python3 server.py
 ```
 
-Aplikacja będzie dostępna pod `http://127.0.0.1:8480`.
+The application will be available at `http://127.0.0.1:8480`.
 
-Sesje wyników są przechowywane domyślnie w `/tmp/nzpy_extended-query-sessions`.
-Można zmienić ustawienia przez:
+Result sessions are stored in `/tmp/nzpy_extended-query-sessions` by default.
+The following settings can be used to change the defaults:
 
 ```text
 NZ_RESULT_STORAGE_DIR
@@ -43,7 +43,7 @@ NZ_RESULT_CHUNK_SIZE
 NZ_QUERY_TIMEOUT
 ```
 
-## Testy
+## Tests
 
 ```bash
 cd examples/10_query_app
@@ -52,9 +52,9 @@ cd frontend
 npm run build
 ```
 
-Playwright/Netezza E2E powinien korzystać z izolowanego obiektu utworzonego z `NZ_DEV_*` i sprzątać go po teście.
+Playwright/Netezza E2E tests should use an isolated object created from `NZ_DEV_*` and clean it up after the test.
 
-Pełny browser suite uruchamia się po zbudowaniu frontendu i wymaga przeglądarki Playwright:
+Run the full browser suite after building the frontend. It requires a Playwright browser:
 
 ```bash
 cd frontend
@@ -62,11 +62,11 @@ npx playwright install chromium
 NZ_E2E=1 NZ_E2E_START_SERVER=1 npm run test:e2e
 ```
 
-Przed uruchomieniem doinstaluj zależności Pythona przez `python3 -m pip install -r ../requirements.txt`; extra `uvicorn[standard]` włącza streaming, cancel i progress przez WebSocket. Jeśli ten backend nie jest dostępny, edytor użyje synchronicznego fallbacku HTTP dla podstawowego wykonania i gridu. Jeśli używasz virtualenvu, wskaż jego interpreter przez `NZ_E2E_PYTHON=/ścieżka/venv/bin/python`. `python-multipart` jest potrzebny również dla legacy endpointów formularzowych import/export.
+Before running the suite, install the Python dependencies with `python3 -m pip install -r ../requirements.txt`; the `uvicorn[standard]` extra enables streaming, cancel, and progress over WebSocket. If this backend is unavailable, the editor uses a synchronous HTTP fallback for basic execution and the grid. If you use a virtual environment, set its interpreter with `NZ_E2E_PYTHON=/path/to/venv/bin/python`. `python-multipart` is also required by the legacy form-based import/export endpoints.
 
-Global setup tworzy tabelę `NZPY_E2E_*`, testuje completion, wiele zakładek i renderowanie wyniku, a teardown usuwa wyłącznie utworzony obiekt.
+Global setup creates an `NZPY_E2E_*` table, tests completion, multiple tabs, and result rendering; teardown removes only the object created by the test.
 
-## Główne kontrakty
+## Main API contracts
 
 ```text
 WS  /api/v1/workspace/ws
@@ -80,4 +80,4 @@ POST /api/v1/results/{session_id}/page
 POST /api/v1/results/{session_id}/export
 ```
 
-Wyniki nie są przesyłane jako jeden duży JSON. Executor zapisuje je partiami, a przeglądarka pobiera wyłącznie potrzebną stronę.
+Results are not sent as one large JSON payload. The executor stores them in chunks, and the browser fetches only the page it needs.

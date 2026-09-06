@@ -44,10 +44,10 @@ async def schema_search(q: str = Query(..., min_length=1), schema: str | None = 
 
 
 @router.get("/api/v1/schema/detail")
-async def schema_detail(table: str = Query(...), schema: str | None = Query(None), database: str | None = Query(None), service: SchemaService = Depends(get_schema_service)) -> dict[str, Any]:
+async def schema_detail(table: str = Query(...), schema: str | None = Query(None), database: str | None = Query(None), object_type: str | None = Query(None), service: SchemaService = Depends(get_schema_service)) -> dict[str, Any]:
     if not table.strip():
         raise HTTPException(400, "table is required")
-    return await service.table_detail(table.strip(), schema=schema, database=database)
+    return await service.object_detail(table.strip(), schema=schema, database=database, object_type=object_type)
 
 
 @router.post("/api/v1/schema/refresh")

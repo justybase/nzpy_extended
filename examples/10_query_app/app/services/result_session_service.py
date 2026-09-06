@@ -131,7 +131,7 @@ class ResultSessionManager:
     def page(self, session_id: str, *, offset: int = 0, limit: int | None = None, global_filter: str = "", column_filters: list[dict[str, Any]] | None = None, sorting: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         manifest = self.manifest(session_id)
         try:
-            limit = min(1000, max(1, int(limit or self.default_page_size)))
+            limit = min(5000, max(1, int(limit or self.default_page_size)))
         except (TypeError, ValueError):
             limit = self.default_page_size
         try:

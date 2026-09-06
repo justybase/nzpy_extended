@@ -30,6 +30,8 @@ export function App(): ReactElement {
   const columnsRef = useRef(new Map<string, Record<string, unknown>[]>());
   const resultRefs = useRef(new Map<string, string>());
   const httpAbortersRef = useRef(new Map<string, AbortController>());
+  const runChordPendingRef = useRef(false);
+  const runChordTimerRef = useRef<number | undefined>(undefined);
 
   useEffect(() => { localStorage.setItem('nz.query-workspace.v2', JSON.stringify({ tabs: state.tabs.map(item => ({ ...item, results: item.results.map(result => ({ ...result, columns: [] })) })), activeTabId: state.activeTabId })); }, [state.tabs, state.activeTabId]);
 
@@ -80,20 +82,21 @@ export function App(): ReactElement {
   }
 
   const run = async (mode: 'cursor' | 'selection' | 'script' = 'cursor'): Promise<void> => {
-    if (!tab) return;
+    const currentTab = activeTabRef.current;
+    if (!currentTab) return;
     const editor = editorRef.current; const model = editor?.getModel();
-    const sql = tab.sql; if (!sql.trim()) return;
-    const preview = await api.preview(sql, tab.database);
+    const sql = currentTab.sql; if (!sql.trim()) return;
+    const preview = await api.preview(sql, currentTab.database);
     let writeConfirmed = false;
     if (preview.containsWrite) { writeConfirmed = window.confirm('This script contains statements that change database state. Execute it?'); if (!writeConfirmed) return; }
     const queryId = crypto.randomUUID();
-    dispatch({ type: 'query.start', id: tab.id, queryId });
+    dispatch({ type: 'query.start', id: currentTab.id, queryId });
     const position = editor?.getPosition();
     const selection = editor?.getSelection();
-    const payload = { type: 'query.start', queryId, tabId: tab.id, sql, mode, database: tab.database, schema: tab.schema, cursorOffset: position && model ? model.getOffsetAt(position) : undefined, selection: selection && model && !selection.isEmpty() ? { start: model.getOffsetAt({ lineNumber: selection.startLineNumber, column: selection.startColumn }), end: model.getOffsetAt({ lineNumber: selection.endLineNumber, column: selection.endColumn }) } : undefined, timeoutSeconds: 30, previewToken: preview.previewToken, writeConfirmed };
+    const payload = { type: 'query.start', queryId, tabId: currentTab.id, sql, mode, database: currentTab.database, schema: currentTab.schema, cursorOffset: position && model ? model.getOffsetAt(position) : undefined, selection: selection && model && !selection.isEmpty() ? { start: model.getOffsetAt({ lineNumber: selection.startLineNumber, column: selection.startColumn }), end: model.getOffsetAt({ lineNumber: selection.endLineNumber, column: selection.endColumn }) } : undefined, timeoutSeconds: 30, previewToken: preview.previewToken, writeConfirmed };
     const socket = socketRef.current;
     if (socket?.readyState === WebSocket.OPEN) {
-      queryOwnersRef.current.set(queryId, tab.id);
+      queryOwnersRef.current.set(queryId, currentTab.id);
       socket.send(JSON.stringify(payload));
       return;
     }
@@ -103,15 +106,15 @@ export function App(): ReactElement {
       const response = await api.execute(payload, aborter.signal);
       for (const item of response.results) {
         const result: ResultSet = { id: item.resultSetId, sessionId: item.sessionId, queryId, statementIndex: item.statementIndex, label: `Statement ${item.statementIndex + 1}`, status: 'running', columns: item.columns || [], totalRows: 0, createdAt: new Date().toISOString() };
-        dispatch({ type: 'query.result', tabId: tab.id, result });
-        if (item.status === 'complete') dispatch({ type: 'query.complete', tabId: tab.id, resultId: result.id, totalRows: item.totalRows, truncated: item.truncated, message: item.message });
-        else dispatch({ type: 'query.resultStatus', tabId: tab.id, resultId: result.id, status: item.status === 'cancelled' ? 'cancelled' : 'error', message: item.message });
+        dispatch({ type: 'query.result', tabId: currentTab.id, result });
+        if (item.status === 'complete') dispatch({ type: 'query.complete', tabId: currentTab.id, resultId: result.id, totalRows: item.totalRows, truncated: item.truncated, message: item.message });
+        else dispatch({ type: 'query.resultStatus', tabId: currentTab.id, resultId: result.id, status: item.status === 'cancelled' ? 'cancelled' : 'error', message: item.message });
       }
-      if (response.status === 'complete' || response.status === 'cancelled') dispatch({ type: 'query.batchComplete', tabId: tab.id, status: response.status });
-      else dispatch({ type: 'query.error', tabId: tab.id, message: response.error || 'Query failed' });
+      if (response.status === 'complete' || response.status === 'cancelled') dispatch({ type: 'query.batchComplete', tabId: currentTab.id, status: response.status });
+      else dispatch({ type: 'query.error', tabId: currentTab.id, message: response.error || 'Query failed' });
     } catch (reason) {
-      if (aborter.signal.aborted) dispatch({ type: 'query.batchComplete', tabId: tab.id, status: 'cancelled' });
-      else dispatch({ type: 'query.error', tabId: tab.id, message: reason instanceof Error ? reason.message : 'Could not execute query.' });
+      if (aborter.signal.aborted) dispatch({ type: 'query.batchComplete', tabId: currentTab.id, status: 'cancelled' });
+      else dispatch({ type: 'query.error', tabId: currentTab.id, message: reason instanceof Error ? reason.message : 'Could not execute query.' });
     } finally {
       httpAbortersRef.current.delete(queryId);
     }
@@ -121,7 +124,7 @@ export function App(): ReactElement {
   const openQuery = (sql: string): void => { dispatch({ type: 'tab.add', sql, title: 'Preview' }); };
   const refreshSchema = async (database?: string, schema?: string): Promise<void> => { try { await api.refreshSchema(database, schema); } catch { /* the reload below renders the server error in the tree */ } finally { setSchemaRefreshKey(value => value + 1); } };
   const showDetail = async (node: Parameters<typeof schemaMenu>[0]): Promise<void> => {
-    if (!node.object_name || !['TABLE', 'VIEW', 'EXTERNAL TABLE'].includes(node.object_type || '')) return;
+    if (!node.object_name || !['TABLE', 'VIEW', 'EXTERNAL TABLE', 'PROCEDURE', 'SYNONYM'].includes(node.object_type || '')) return;
     try { setDetail(await api.detail(node)); } catch (reason) { setDetail({ error: reason instanceof Error ? reason.message : 'Could not load object details.' }); }
   };
   const closeTab = (id: string): void => {
@@ -132,6 +135,38 @@ export function App(): ReactElement {
   };
   const onMount: OnMount = (editor, monaco) => {
     editorRef.current = editor; monacoRef.current = monaco;
+    const quickSql = new Map([['SX', 'SELECT '], ['FX', 'FROM '], ['WX', 'WHERE '], ['HX', 'HAVING '], ['GX', 'GROUP BY ']]);
+    editor.onKeyDown(event => {
+      const isCtrlW = event.keyCode === monaco.KeyCode.KeyW && (event.ctrlKey || event.metaKey);
+      if (isCtrlW) {
+        event.preventDefault();
+        event.stopPropagation();
+        runChordPendingRef.current = true;
+        window.clearTimeout(runChordTimerRef.current);
+        runChordTimerRef.current = window.setTimeout(() => { runChordPendingRef.current = false; }, 1500);
+        return;
+      }
+      if (runChordPendingRef.current && event.keyCode === monaco.KeyCode.Enter) {
+        event.preventDefault();
+        event.stopPropagation();
+        runChordPendingRef.current = false;
+        window.clearTimeout(runChordTimerRef.current);
+        void run('cursor');
+        return;
+      }
+      if (runChordPendingRef.current) runChordPendingRef.current = false;
+    });
+    editor.onKeyUp(event => {
+      if (event.keyCode !== monaco.KeyCode.Space) return;
+      const model = editor.getModel();
+      const position = editor.getPosition();
+      if (!model || !position) return;
+      const beforeCursor = model.getLineContent(position.lineNumber).slice(0, position.column - 1);
+      const match = /(^|[\s(])(SX|FX|WX|HX|GX)\s$/i.exec(beforeCursor);
+      if (!match) return;
+      const abbreviationStart = match.index + match[1].length;
+      editor.executeEdits('quick-sql', [{ range: { startLineNumber: position.lineNumber, startColumn: abbreviationStart + 1, endLineNumber: position.lineNumber, endColumn: position.column }, text: quickSql.get(match[2].toUpperCase()) || '' }]);
+    });
     monaco.languages.registerCompletionItemProvider('sql', { triggerCharacters: ['.', ' ', '\n'], provideCompletionItems: async (model: MonacoTypes.editor.ITextModel, position: MonacoTypes.Position) => {
       const currentTab = activeTabRef.current;
       const response = await api.completion(model.getValue(), model.getOffsetAt(position), currentTab.database, currentTab.schema);
@@ -158,12 +193,14 @@ export function App(): ReactElement {
     updateDiagnostics();
   };
   const activeResult = useMemo(() => tab?.results.find(result => result.id === tab.activeResultId), [tab]);
+  const definition = typeof detail?.definition === 'string' ? detail.definition : typeof detail?.source === 'string' ? detail.source : '';
+  const detailMetadata = detail ? Object.fromEntries(Object.entries(detail).filter(([key]) => !['definition', 'source'].includes(key))) : null;
   return <div className="app-shell" onClick={() => setContext(null)}>
     <header className="topbar"><div className="brand">Netezza SQL Workspace</div><button className="primary" onClick={() => void run('cursor')} disabled={Boolean(tab?.runningQueryId)}>▶ Run</button><button onClick={() => void run('selection')} disabled={Boolean(tab?.runningQueryId)}>Run selection</button><button onClick={() => void run('script')} disabled={Boolean(tab?.runningQueryId)}>Run script</button><button className="danger" onClick={cancel} disabled={!tab?.runningQueryId}>■ Cancel</button><span className="toolbar-spacer" /><span className="status-dot" /><span>{state.status}</span></header>
     <div className="sql-tabs">{state.tabs.map(item => <div key={item.id} className={`sql-tab ${item.id === tab.id ? 'active' : ''}`} onClick={() => dispatch({ type: 'tab.activate', id: item.id })}><span onDoubleClick={() => { const title = window.prompt('Tab name', item.title); if (title) dispatch({ type: 'tab.rename', id: item.id, title }); }}>{item.title}{item.dirty ? ' •' : ''}</span><button onClick={event => { event.stopPropagation(); closeTab(item.id); }}>×</button></div>)}<button className="new-tab" onClick={() => dispatch({ type: 'tab.add' })}>＋</button></div>
-    <main className="workspace"><aside><SchemaTree refreshKey={schemaRefreshKey} onMenu={(node, event) => { event.preventDefault(); setContext({ x: event.clientX, y: event.clientY, items: schemaMenu(node, insert, openQuery, () => void refreshSchema(node.database, node.schema), () => void showDetail(node)) }); }} onSelect={node => { if (node.kind === 'object' || node.kind === 'column') { const name = node.kind === 'column' ? [node.database, node.schema, node.object_name, node.column_name || node.label] : [node.database, node.schema, node.object_name || node.label]; insert(name.filter(Boolean).join('.')); } }} onRefresh={() => void refreshSchema()} /></aside><section className="editor-results"><div className="editor-head"><span>{tab.database || 'Configured database'}</span><span>{tab.schema || 'All schemas'}</span><button onClick={() => insert('SELECT ')}>Insert SELECT</button></div><div className="editor"><Editor height="100%" language="sql" theme="vs-dark" path={tab.id} value={tab.sql} onChange={value => dispatch({ type: 'tab.sql', id: tab.id, sql: value || '' })} onMount={onMount} options={{ minimap: { enabled: false }, automaticLayout: true, fontSize: 14, wordWrap: 'on', bracketPairColorization: { enabled: true }, scrollBeyondLastLine: false }} /></div><ResultTabs results={tab.results} activeId={tab.activeResultId} onSelect={id => dispatch({ type: 'result.activate', tabId: tab.id, resultId: id })} onClose={id => dispatch({ type: 'result.close', tabId: tab.id, resultId: id })} /></section></main>
+    <main className="workspace"><aside><SchemaTree refreshKey={schemaRefreshKey} onMenu={(node, event) => { event.preventDefault(); setContext({ x: event.clientX, y: event.clientY, items: schemaMenu(node, insert, openQuery, () => void refreshSchema(node.database, node.schema), () => void showDetail(node)) }); }} onSelect={node => { if (node.kind === 'object' || node.kind === 'column') { const name = node.kind === 'column' ? [node.database, node.schema, node.object_name, node.column_name || node.label] : [node.database, node.schema, node.object_name || node.label]; insert(name.filter(Boolean).join('.')); } }} onRefresh={() => void refreshSchema()} /></aside><section className="editor-results"><div className="editor-head"><span>{tab.database || 'Configured database'}</span><span>{tab.schema || 'All schemas'}</span><button onClick={() => insert('SELECT ')}>Insert SELECT</button></div><div className="editor"><Editor height="100%" language="sql" theme="vs-dark" path={tab.id} value={tab.sql} onChange={value => dispatch({ type: 'tab.sql', id: tab.id, sql: value || '' })} onMount={onMount} options={{ minimap: { enabled: false }, automaticLayout: true, fontSize: 14, wordWrap: 'on', bracketPairColorization: { enabled: true }, scrollBeyondLastLine: false, acceptSuggestionOnEnter: 'off' }} /></div><ResultTabs results={tab.results} activeId={tab.activeResultId} onSelect={id => dispatch({ type: 'result.activate', tabId: tab.id, resultId: id })} onClose={id => dispatch({ type: 'result.close', tabId: tab.id, resultId: id })} /></section></main>
     {context && <ContextMenu x={context.x} y={context.y} items={context.items} onClose={() => setContext(null)} />}
-    {detail && <div className="detail-overlay" onClick={() => setDetail(null)}><section className="detail-dialog" onClick={event => event.stopPropagation()}><div className="detail-head"><strong>Object details</strong><button onClick={() => setDetail(null)}>×</button></div><pre>{JSON.stringify(detail, null, 2)}</pre></section></div>}
+    {detail && <div className="detail-overlay" onClick={() => setDetail(null)}><section className="detail-dialog" onClick={event => event.stopPropagation()}><div className="detail-head"><strong>{definition ? `${String(detail.object_type || 'Object')} definition` : 'Object details'}</strong><button onClick={() => setDetail(null)}>×</button></div>{definition && <div className="definition-block"><div className="definition-toolbar"><span>Source definition</span><button onClick={() => void navigator.clipboard?.writeText(definition)}>Copy definition</button></div><pre className="source-code">{definition}</pre></div>}<pre>{JSON.stringify(detailMetadata, null, 2)}</pre></section></div>}
     {activeResult?.message && <div className="toast">{activeResult.message}</div>}
   </div>;
 }

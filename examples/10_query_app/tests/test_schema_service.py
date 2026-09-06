@@ -71,6 +71,14 @@ class FakePool:
         return FakeConn(self._meta)
 
 
+class DefinitionMeta(FakeMeta):
+    async def get_views(self, schema: Any = None) -> list[dict[str, Any]]:
+        return [{"schema": schema or "ADMIN", "view_name": "V_SALES", "owner": "ADMIN", "definition": "SELECT * FROM SALES"}]
+
+    async def get_procedures(self, schema: Any = None) -> list[dict[str, Any]]:
+        return [{"schema": schema or "ADMIN", "proc_name": "P_REFRESH", "owner": "ADMIN", "signature": "()", "returns": "INTEGER", "builtin": False, "source": "BEGIN RETURN 1; END"}]
+
+
 def test_escape_like_doubles_quotes() -> None:
     assert escape_like("o'clock") == "o''clock"
 
@@ -106,3 +114,15 @@ async def test_invalidate_clears_cache() -> None:
     svc.invalidate()
     await svc.get_schemas()
     assert meta.calls["schemas"] == 2
+
+
+async def test_object_detail_returns_view_and_procedure_source() -> None:
+    svc = SchemaService(lambda: FakePool(DefinitionMeta()))
+
+    view = await svc.object_detail("V_SALES", schema="ADMIN", object_type="VIEW")
+    assert view["object_type"] == "VIEW"
+    assert view["definition"] == "SELECT * FROM SALES"
+
+    procedure = await svc.object_detail("P_REFRESH", schema="ADMIN", object_type="PROCEDURE")
+    assert procedure["object_type"] == "PROCEDURE"
+    assert procedure["source"] == "BEGIN RETURN 1; END"

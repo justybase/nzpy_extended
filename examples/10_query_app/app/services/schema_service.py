@@ -164,6 +164,25 @@ class SchemaService:
         size = next((item.get("size_mb") for item in sizes if str(item.get("table_name", "")).upper() == table.upper()), None)
         return {"database": database, "schema": (schema or "").upper(), "table_name": table.upper(), "object_type": "TABLE", "columns": columns, "distribution_key": dist, "size_mb": size}
 
+    async def object_detail(self, name: str, schema: str | None = None, database: str | None = None, object_type: str | None = None) -> dict[str, Any]:
+        """Return metadata plus source text for views and procedures."""
+        kind = (object_type or "TABLE").upper()
+        wanted = name.upper()
+        if kind == "VIEW":
+            rows = await self.get_views(schema=schema, database=database)
+            row = next((item for item in rows if str(item.get("view_name", "")).upper() == wanted), {})
+            columns = await self.get_columns(name, schema=schema, database=database)
+            return {"database": database, "schema": (schema or row.get("schema") or "").upper(), "table_name": name.upper(), "object_type": "VIEW", "owner": row.get("owner"), "columns": columns, "definition": row.get("definition") or ""}
+        if kind == "PROCEDURE":
+            rows = await self.get_procedures(schema=schema, database=database)
+            row = next((item for item in rows if str(item.get("proc_name", "")).upper() == wanted), {})
+            return {"database": database, "schema": (schema or row.get("schema") or "").upper(), "object_name": name.upper(), "object_type": "PROCEDURE", "owner": row.get("owner"), "signature": row.get("signature"), "returns": row.get("returns"), "builtin": row.get("builtin"), "source": row.get("source") or ""}
+        if kind == "SYNONYM":
+            rows = await self.get_synonyms(schema=schema, database=database)
+            row = next((item for item in rows if str(item.get("synonym_name", "")).upper() == wanted), {})
+            return {"database": database, "schema": (schema or row.get("schema") or "").upper(), "object_name": name.upper(), "object_type": "SYNONYM", **row}
+        return await self.table_detail(name, schema=schema, database=database)
+
     async def search(self, pattern: str, schema: str | None = None, database: str | None = None) -> list[dict[str, Any]]:
         safe = escape_like(pattern)
         pool = await self._pool(database)
