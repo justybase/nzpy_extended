@@ -52,10 +52,19 @@ window.addEventListener("afterprint", () => {
 });
 const sortState = {};   // tableId -> {col, dir}
 let pageRequestId = 0;  // prevents an older response replacing a newer view
+let ledgerRequestId = 0; // stale guard for ledger pagination/filter/sort
+let drillRequestId = 0; // stale guard for drill-down
+let panelRequestId = 0; // stale guard for advisor panels
+let cumulativeRequestId = 0; // stale guard for cumulative views
+let briefRequestId = 0; // stale guard for daily brief
 let ALL_MONTHS = [];    // available months from /api/meta
 let ALL_SNAPSHOTS = []; // exact reporting cut-offs from the audit ledger
-let currentUser = null; // simulated session ({code, name, role, role_label})
-const USER_ROLES = ["ANALYST", "AREA_MANAGER", "BRANCH_MANAGER", "ADVISOR"];
+let currentUser = null; // authenticated/effective session user
+const USER_ROLES = [
+  "MIS_SQL_DEVELOPER", "NETWORK_HEAD", "HQ_FULL_ACCESS", "APP_TESTER",
+  "REGIONAL_DIRECTOR", "AREA_MANAGER", "BRANCH_DIRECTOR", "BRANCH_MANAGER",
+  "CUSTOMER_ADVISOR", "ADVISOR",
+];
 
 // Row-level drill-through: which reports and which first columns are clickable
 const DRILLABLE_PAGES = new Set([
@@ -133,6 +142,9 @@ function renderMenu(activeId) {
   const menu = $("menu");
   menu.innerHTML = "";
   for (const item of MENU) {
+    if (item.id === "data_quality" && currentUser && !currentUser.can_view_global_quality) {
+      continue;
+    }
     if (item.sep) {
       const div = document.createElement("div");
       div.className = "menu-sep";
@@ -143,7 +155,10 @@ function renderMenu(activeId) {
     const btn = document.createElement("button");
     btn.className = "menu-item" + (item.id === activeId ? " active" : "");
     if (item.id === activeId) btn.setAttribute("aria-current", "page");
-    btn.innerHTML = `<span class="menu-label">${item.label}</span>`;
+    const labelSpan = document.createElement("span");
+    labelSpan.className = "menu-label";
+    labelSpan.textContent = item.label;
+    btn.appendChild(labelSpan);
     btn.addEventListener("click", () => selectPage(item.id));
     menu.appendChild(btn);
   }
@@ -176,6 +191,9 @@ function restoreUrlState() {
 }
 
 function selectPage(id) {
+  if (id === "data_quality" && currentUser && !currentUser.can_view_global_quality) {
+    id = "overview";
+  }
   $("sidebar").classList.remove("menu-open");
   $("menu-toggle").setAttribute("aria-expanded", "false");
   state.page = id;
@@ -198,17 +216,81 @@ function selectPage(id) {
 
 /* ------------------------------------------------------------------ fetch */
 
-async function fetchJSON(url, opts) {
-  const res = await fetch(url, opts);
+async function fetchJSON(url, opts = {}) {
+  const res = await fetch(url, { credentials: "same-origin", ...opts });
   let body = null;
   try { body = await res.json(); } catch { /* non-JSON */ }
   if (!res.ok) {
+    if (res.status === 401 && !url.endsWith("/api/auth/login")) {
+      showLogin("Your session has expired. Please sign in again.");
+    }
     const detail = body && body.detail ? body.detail : `HTTP ${res.status}`;
     const err = new Error(detail);
     err.status = res.status;
     throw err;
   }
   return body;
+}
+
+function showLogin(message = "") {
+  currentUser = null;
+  $("app").hidden = true;
+  $("login-view").hidden = false;
+  $("user-box").hidden = true;
+  $("login-error").textContent = message;
+  $("login-error").hidden = !message;
+  $("login-password").value = "";
+  $("login-username").focus();
+}
+
+function showDashboard() {
+  $("login-view").hidden = true;
+  $("app").hidden = false;
+  $("user-box").hidden = false;
+}
+
+function wireDemoAccounts() {
+  document.querySelectorAll(".demo-account-button").forEach((button) => {
+    button.addEventListener("click", () => {
+      $("login-username").value = button.dataset.demoUsername || "";
+      $("login-password").value = button.dataset.demoPassword || "";
+      $("login-error").hidden = true;
+      $("login-submit").focus();
+    });
+  });
+}
+
+async function submitLogin(event) {
+  event.preventDefault();
+  const button = $("login-submit");
+  const error = $("login-error");
+  button.disabled = true;
+  error.hidden = true;
+  try {
+    await fetchJSON("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: $("login-username").value,
+        password: $("login-password").value,
+      }),
+    });
+    await initSession();
+    await initMeta();
+    selectPage(state.page || "overview");
+  } catch (err) {
+    showLogin(err.status === 401 ? "Invalid username or password." :
+      `Cannot sign in (${err.message}).`);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function signOut() {
+  try {
+    await fetchJSON("/api/auth/logout", { method: "POST" });
+  } catch { /* clearing the local UI is still the right logout fallback */ }
+  showLogin("You have signed out.");
 }
 
 /* ------------------------------------------------------------ layout */
@@ -380,6 +462,10 @@ function renderInsights(insights) {
   }
 }
 
+function hasChartLib() {
+  return typeof window.Chart !== "undefined";
+}
+
 function renderCharts(list) {
   for (const c of charts) c.destroy();
   charts.length = 0;
@@ -387,6 +473,10 @@ function renderCharts(list) {
   grid.innerHTML = "";
   if (!list.length) { grid.hidden = true; return; }
   grid.hidden = false;
+  if (!hasChartLib()) {
+    grid.innerHTML = `<div class="empty">Charts are unavailable — the Chart.js CDN failed to load. Tables below still work.</div>`;
+    return;
+  }
   for (const spec of list) {
     const card = document.createElement("div");
     card.className = "chart-card";
@@ -408,10 +498,12 @@ function renderCharts(list) {
     card.appendChild(box);
     grid.appendChild(card);
     const chart = makeChart(canvas, spec);
-    charts.push(chart);
-    const base = `${state.page}_${spec.id}`;
-    addButton(actions, "PNG", () => downloadChartPNG(chart, base));
-    addButton(actions, "PDF", () => downloadChartPDF(chart, base));
+    if (chart) {
+      charts.push(chart);
+      const base = `${state.page}_${spec.id}`;
+      addButton(actions, "PNG", () => downloadChartPNG(chart, base));
+      addButton(actions, "PDF", () => downloadChartPDF(chart, base));
+    }
   }
 }
 
@@ -427,6 +519,10 @@ function addButton(container, text, onClick) {
 }
 
 function downloadChartPNG(chart, name) {
+  if (!chart) {
+    showToast("Chart export is unavailable — the Chart.js CDN failed to load.");
+    return;
+  }
   const a = document.createElement("a");
   a.href = chart.toBase64Image("image/png");
   a.download = `${name}.png`;
@@ -458,6 +554,10 @@ function addChartImageToPDF(pdf, chart, topOffset, center) {
 }
 
 function downloadChartPDF(chart, name) {
+  if (!chart) {
+    showToast("Chart export is unavailable — the Chart.js CDN failed to load.");
+    return;
+  }
   const jsPDF = pdfLib();
   if (!jsPDF) return;
   const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
@@ -484,6 +584,7 @@ function downloadAllChartsPDF() {
 }
 
 function makeChart(canvas, spec) {
+  if (!hasChartLib()) return null;
   const labels = spec.labels || [];
   const seriesList = spec.series || [];
   const colors = seriesList.map((_, i) => PALETTE[i % PALETTE.length]);
@@ -616,6 +717,9 @@ function renderTableCard(kind, tableDef, payload, drill) {
 
 function renderTable(container, columns, rows, tableId, drill) {
   container.innerHTML = "";
+  container.tabIndex = 0;
+  container.setAttribute("role", "region");
+  container.setAttribute("aria-label", `${tableId.replace(/[:_]/g, " ")} scrollable table`);
   if (!columns.length || !rows.length) {
     container.innerHTML = `<div class="empty">No data for the selected period.</div>`;
     return;
@@ -644,12 +748,29 @@ function renderTable(container, columns, rows, tableId, drill) {
     const th = document.createElement("th");
     th.scope = "col";
     th.className = c.fmt === "str" ? "" : "num";
-    const arrow = sort.col === i ? (sort.dir === 1 ? " ▲" : " ▼") : "";
-    th.innerHTML = `${c.label}<span class="arrow">${arrow}</span>`;
-    th.addEventListener("click", () => {
+    th.tabIndex = 0;
+    const isSorted = sort.col === i;
+    th.setAttribute("aria-sort", isSorted ? (sort.dir === 1 ? "ascending" : "descending") : "none");
+    const arrow = isSorted ? (sort.dir === 1 ? " ▲" : " ▼") : "";
+    const labelEl = document.createElement("span");
+    labelEl.textContent = c.label;
+    th.appendChild(labelEl);
+    const arrowEl = document.createElement("span");
+    arrowEl.className = "arrow";
+    arrowEl.setAttribute("aria-hidden", "true");
+    arrowEl.textContent = arrow;
+    th.appendChild(arrowEl);
+    const toggleSort = () => {
       const prev = sortState[tableId] || { col: -1, dir: 1 };
       sortState[tableId] = { col: i, dir: prev.col === i ? -prev.dir : 1 };
       renderTable(container, columns, rows, tableId, drill);
+    };
+    th.addEventListener("click", toggleSort);
+    th.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggleSort();
+      }
     });
     trh.appendChild(th);
   });
@@ -685,6 +806,8 @@ async function openDrill(drill, code, label) {
   drillState.target = drill.target;
   drillState.key = code;
   drillState.label = label;
+  const pageId = pageRequestId;
+  const requestId = ++drillRequestId;
   const params = new URLSearchParams({ key: code });
   if (state.from) params.set("from", state.from);
   if (state.to) params.set("to", state.to);
@@ -692,8 +815,10 @@ async function openDrill(drill, code, label) {
   params.set("attribution", state.attribution);
   try {
     const payload = await fetchJSON(`/api/drill/${drill.page}/${drill.target}?${params}`);
+    if (requestId !== drillRequestId || pageId !== pageRequestId) return;
     renderDrill(payload);
   } catch (err) {
+    if (requestId !== drillRequestId || pageId !== pageRequestId) return;
     showToast(`Drill-down failed: ${err.message}`);
     closeDrill();
   }
@@ -702,12 +827,17 @@ async function openDrill(drill, code, label) {
 function renderDrill(payload) {
   const pageLabel = menuItem(payload.report_id)?.label || payload.report_id;
   $("drill-title").textContent = `${DRILL_LABELS[payload.target]} — ${payload.key}`;
-  $("drill-sub").innerHTML =
-    `<span class="drill-breadcrumb">${pageLabel} → ${payload.key}</span>` +
-    ` · ${payload.rows.length} rows · ${monthLabel(payload.period.from)} – ${monthLabel(payload.period.to)}`
-    + (payload.reporting_context?.as_of
-      ? ` · as of ${payload.reporting_context.as_of} · ${payload.reporting_context.attribution} structure`
-      : "");
+  const drillSub = $("drill-sub");
+  drillSub.textContent = "";
+  const crumb = document.createElement("span");
+  crumb.className = "drill-breadcrumb";
+  crumb.textContent = `${pageLabel} → ${payload.key}`;
+  drillSub.appendChild(crumb);
+  let rest = ` · ${payload.rows.length} rows · ${monthLabel(payload.period.from)} – ${monthLabel(payload.period.to)}`;
+  if (payload.reporting_context?.as_of) {
+    rest += ` · as of ${payload.reporting_context.as_of} · ${payload.reporting_context.attribution} structure`;
+  }
+  drillSub.appendChild(document.createTextNode(rest));
   const actions = $("drill-actions");
   actions.innerHTML = "";
   for (const fmt of ["xlsx", "xlsb"]) {
@@ -726,7 +856,8 @@ function renderDrill(payload) {
   renderTable($("drill-table"), payload.columns, payload.rows, "drill");
   const card = $("card-drill");
   card.hidden = false;
-  card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  card.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "nearest" });
 }
 
 function closeDrill() {
@@ -760,6 +891,7 @@ function monthsThroughAsOf() {
 
 async function loadPerformancePage(dim = "branch") {
   setLayout({ kpis: true, charts: true, custom: true, fromTo: false });
+  const requestId = ++pageRequestId;
   const page = $("custom-page");
   page.innerHTML = `<div class="person-picker card">
     <label>Breakdown <select id="performance-dim">
@@ -773,6 +905,7 @@ async function loadPerformancePage(dim = "branch") {
   $("performance-dim").onchange = () => loadPerformancePage($("performance-dim").value);
   try {
     const payload = await fetchJSON(`/api/performance?${temporalParams({ dim })}`);
+    if (requestId !== pageRequestId) return;
     $("page-subtitle").textContent = contextText(payload.reporting_context) + scopeNote();
     renderKpis($("kpis"), payload.kpis || []);
     renderCharts(payload.charts || []);
@@ -785,23 +918,35 @@ async function loadPerformancePage(dim = "branch") {
       card.className = "comparison-card card";
       const delta = value.delta_pct === null ? "—"
         : `${value.delta_pct >= 0 ? "+" : ""}${value.delta_pct.toFixed(2)}%`;
-      card.innerHTML = `<div class="comparison-code">${code}</div>
-        <div class="comparison-value">${formatValue(value.current, "eur")}</div>
-        <div class="comparison-delta ${value.delta_pct >= 0 ? "good" : "negative"}">${delta}</div>
-        <div class="card-sub">vs ${value.reference_period.from} – ${value.reference_period.to}</div>`;
+      const codeEl = document.createElement("div");
+      codeEl.className = "comparison-code";
+      codeEl.textContent = code;
+      const valueEl = document.createElement("div");
+      valueEl.className = "comparison-value";
+      valueEl.textContent = formatValue(value.current, "eur");
+      const deltaEl = document.createElement("div");
+      deltaEl.className = `comparison-delta ${value.delta_pct >= 0 ? "good" : "negative"}`;
+      deltaEl.textContent = delta;
+      const refEl = document.createElement("div");
+      refEl.className = "card-sub";
+      refEl.textContent = `vs ${value.reference_period.from} – ${value.reference_period.to}`;
+      card.append(codeEl, valueEl, deltaEl, refEl);
       card.title = value.label;
       comparisons.appendChild(card);
     }
     renderTable($("performance-table"), payload.columns, payload.rows, `performance:${dim}`);
   } catch (err) {
+    if (requestId !== pageRequestId) return;
     showNotice(`Could not load point-in-time performance: ${err.message}`);
   }
 }
 
 async function loadHierarchyPage() {
   setLayout({ custom: true, fromTo: false });
+  const requestId = ++pageRequestId;
   try {
     const payload = await fetchJSON(`/api/hierarchy?${temporalParams()}`);
+    if (requestId !== pageRequestId) return;
     $("page-subtitle").textContent = contextText(payload.reporting_context) + scopeNote();
     const regions = payload.regions.map((region) => `<details class="org-region" open>
       <summary>${escAttr(region.name)} <span>${region.branches.length} branches</span></summary>
@@ -824,15 +969,18 @@ async function loadHierarchyPage() {
       <div id="org-change-table" class="table-wrap"></div></section></div>`;
     renderTable($("org-change-table"), changeColumns, changeRows, "org-changes");
   } catch (err) {
+    if (requestId !== pageRequestId) return;
     showNotice(`Could not load organization history: ${err.message}`);
   }
 }
 
 async function loadLeaguePage(level = "advisor") {
   setLayout({ custom: true, fromTo: false });
+  const requestId = ++pageRequestId;
   $("custom-page").innerHTML = `<div class="person-picker card"><label>League
     <select id="league-level"><option value="advisor">Advisors</option>
     <option value="branch">Branches</option></select></label></div>
+    <section id="league-top3" class="comparison-grid" aria-label="Top 3" hidden></section>
     <div class="league-rules card" id="league-rules"></div>
     <section class="card"><div class="card-head"><div><h2>Champions League</h2>
     <div class="card-sub">Qualified leaders first; non-qualified entries remain explainable</div></div></div>
@@ -841,22 +989,81 @@ async function loadLeaguePage(level = "advisor") {
   $("league-level").onchange = () => loadLeaguePage($("league-level").value);
   try {
     const payload = await fetchJSON(`/api/league?${temporalParams({ level })}`);
+    if (requestId !== pageRequestId) return;
     $("page-subtitle").textContent = contextText(payload.reporting_context) + scopeNote();
     const rules = payload.rules;
-    $("league-rules").innerHTML = `<b>Transparent score:</b> attainment ${rules.weights.attainment}% · `
-      + `PMTD growth ${rules.weights["PMTD growth"]}% · quality ${rules.weights.quality}% · `
-      + `activity ${rules.weights.activity}% &nbsp; <b>Eligibility:</b> ≥${rules.minimum_sales} sales, `
-      + `quality ≥${rules.minimum_quality}, attainment capped at ${rules.attainment_cap}%.`;
+    const rulesEl = $("league-rules");
+    rulesEl.textContent = "";
+    const boldScore = document.createElement("b");
+    boldScore.textContent = "Transparent score:";
+    rulesEl.append(
+      boldScore,
+      document.createTextNode(
+        ` attainment ${rules.weights.attainment}% · PMTD growth ${rules.weights["PMTD growth"]}% · ` +
+        `quality ${rules.weights.quality}% · activity ${rules.weights.activity}%  `),
+    );
+    const boldElig = document.createElement("b");
+    boldElig.textContent = "Eligibility:";
+    rulesEl.append(
+      boldElig,
+      document.createTextNode(
+        ` ≥${rules.minimum_sales} sales, quality ≥${rules.minimum_quality}, ` +
+        `attainment capped at ${rules.attainment_cap}%.`),
+    );
+    renderLeagueTop3(payload);
     renderTable($("league-table"), payload.columns, payload.rows, `league:${level}`);
   } catch (err) {
+    if (requestId !== pageRequestId) return;
     showNotice(`Could not load Champions League: ${err.message}`);
   }
 }
 
+// Top 3 in the same quiet card language as the Daily performance comparisons:
+// no medals, no colours — just rank, score and who holds it.
+function renderLeagueTop3(payload) {
+  const grid = $("league-top3");
+  if (!grid) return;
+  grid.innerHTML = "";
+  const cols = payload.columns || [];
+  const colIdx = (key) => cols.findIndex((c) => c.key === key);
+  const iName = colIdx("name");
+  const iScore = colIdx("score");
+  const iElig = colIdx("eligible");
+  const iAtt = colIdx("attainment");
+  const top = (payload.rows || []).slice(0, 3);
+  if (!top.length) {
+    grid.hidden = true;
+    return;
+  }
+  grid.hidden = false;
+  top.forEach((row, i) => {
+    const card = document.createElement("article");
+    card.className = "comparison-card card";
+    const codeEl = document.createElement("div");
+    codeEl.className = "comparison-code";
+    codeEl.textContent = `Rank ${i + 1}`;
+    const valueEl = document.createElement("div");
+    valueEl.className = "comparison-value";
+    valueEl.textContent = `${Number(row[iScore]).toFixed(2)} pts`;
+    const nameEl = document.createElement("div");
+    nameEl.className = "card-sub";
+    nameEl.textContent = String(row[iName]);
+    const stateEl = document.createElement("div");
+    stateEl.className = "card-sub";
+    stateEl.textContent = row[iElig] === true
+      ? `Qualified · attainment ${Number(row[iAtt]).toFixed(2)}%`
+      : `Not qualified · attainment ${Number(row[iAtt]).toFixed(2)}%`;
+    card.append(codeEl, valueEl, nameEl, stateEl);
+    grid.appendChild(card);
+  });
+}
+
 async function loadQualityPage() {
   setLayout({ custom: true, fromTo: false });
+  const requestId = ++pageRequestId;
   try {
     const payload = await fetchJSON(`/api/quality?${temporalParams()}`);
+    if (requestId !== pageRequestId) return;
     $("page-subtitle").textContent = contextText(payload.reporting_context);
     $("custom-page").innerHTML = `<div class="quality-banner status-${payload.overall_status.toLowerCase()}">
       Reporting gate: ${payload.overall_status}</div><div class="quality-grid">${payload.checks.map((check) =>
@@ -865,6 +1072,7 @@ async function loadQualityPage() {
           <div class="quality-value">${escAttr(String(check.value))}</div>
           <div class="card-sub">${escAttr(check.detail)}</div></article>`).join("")}</div>`;
   } catch (err) {
+    if (requestId !== pageRequestId) return;
     showNotice(`Could not load data quality: ${err.message}`);
   }
 }
@@ -890,11 +1098,14 @@ function ledgerParams(extra) {
 
 async function loadLedgerPage() {
   setLayout({ custom: true });
+  const requestId = ++pageRequestId;
   $("page-subtitle").textContent = "Full sales detail — server-side pagination and filtering";
   try {
     const first = await fetchJSON("/api/ledger?" + ledgerParams());
+    if (requestId !== pageRequestId) return;
     renderLedger(first);
   } catch (err) {
+    if (requestId !== pageRequestId) return;
     showNotice(`Could not load the sales ledger: ${err.message}`);
     $("custom-page").innerHTML = "";
   }
@@ -986,8 +1197,16 @@ function escAttr(s) {
 }
 
 async function fetchLedgerPage() {
-  const payload = await fetchJSON("/api/ledger?" + ledgerParams());
-  renderLedgerTable(payload);
+  const pageId = pageRequestId;
+  const requestId = ++ledgerRequestId;
+  try {
+    const payload = await fetchJSON("/api/ledger?" + ledgerParams());
+    if (requestId !== ledgerRequestId || pageId !== pageRequestId) return;
+    renderLedgerTable(payload);
+  } catch (err) {
+    if (requestId !== ledgerRequestId || pageId !== pageRequestId) return;
+    showNotice(`Could not load the sales ledger: ${err.message}`);
+  }
 }
 
 function renderLedgerTable(payload) {
@@ -999,6 +1218,9 @@ function renderLedgerTable(payload) {
   }
   const container = $("ledger-table");
   container.innerHTML = "";
+  container.tabIndex = 0;
+  container.setAttribute("role", "region");
+  container.setAttribute("aria-label", "Sales ledger scrollable table");
   const columns = payload.columns;
   const rows = payload.rows;
   if (!rows.length) {
@@ -1015,10 +1237,19 @@ function renderLedgerTable(payload) {
     const th = document.createElement("th");
     th.scope = "col";
     th.className = c.fmt === "str" ? "" : "num";
+    th.tabIndex = 0;
     const active = ledgerState.sort === c.key;
+    th.setAttribute("aria-sort", active ? (ledgerState.dir === "asc" ? "ascending" : "descending") : "none");
     const arrow = active ? (ledgerState.dir === "asc" ? " ▲" : " ▼") : "";
-    th.innerHTML = `${c.label}<span class="arrow">${arrow}</span>`;
-    th.addEventListener("click", () => {
+    const labelEl = document.createElement("span");
+    labelEl.textContent = c.label;
+    th.appendChild(labelEl);
+    const arrowEl = document.createElement("span");
+    arrowEl.className = "arrow";
+    arrowEl.setAttribute("aria-hidden", "true");
+    arrowEl.textContent = arrow;
+    th.appendChild(arrowEl);
+    const toggleLedgerSort = () => {
       if (active) {
         ledgerState.dir = ledgerState.dir === "asc" ? "desc" : "asc";
       } else {
@@ -1027,6 +1258,13 @@ function renderLedgerTable(payload) {
       }
       ledgerState.page = 1;
       fetchLedgerPage().catch((err) => showNotice(`Sort failed: ${err.message}`));
+    };
+    th.addEventListener("click", toggleLedgerSort);
+    th.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggleLedgerSort();
+      }
     });
     trh.appendChild(th);
   });
@@ -1062,6 +1300,7 @@ function renderLedgerTable(payload) {
 
 async function loadAdvisorsPage() {
   setLayout({ charts: true, custom: true, fromTo: false });
+  const requestId = ++pageRequestId;
   $("page-subtitle").textContent = "Select an advisor to see their profile, scores and ratings";
   const page = $("custom-page");
   page.innerHTML = `
@@ -1074,6 +1313,7 @@ async function loadAdvisorsPage() {
     <div id="advisor-panel"></div>`;
   try {
     const data = await fetchJSON("/api/people/advisors");
+    if (requestId !== pageRequestId) return;
     const advisors = data.advisors || [];
     const sel = $("advisor-select");
     sel.innerHTML = "";
@@ -1096,6 +1336,7 @@ async function loadAdvisorsPage() {
     fillAdvisorSelect();
     if (personState.code) await loadAdvisorPanel();
   } catch (err) {
+    if (requestId !== pageRequestId) return;
     showNotice(`Could not load advisors: ${err.message}`);
   }
 }
@@ -1110,12 +1351,17 @@ function fillAdvisorSelect() {
 
 async function loadAdvisorPanel() {
   const panel = $("advisor-panel");
+  if (!panel) return;
+  const pageId = pageRequestId;
+  const requestId = ++panelRequestId;
   panel.innerHTML = `<div class="empty">Loading…</div>`;
   try {
     const params = state.asOf ? `?as_of=${encodeURIComponent(state.asOf)}` : "";
     const payload = await fetchJSON(`/api/people/advisors/${personState.code}${params}`);
+    if (requestId !== panelRequestId || pageId !== pageRequestId) return;
     renderAdvisorPanel(payload);
   } catch (err) {
+    if (requestId !== panelRequestId || pageId !== pageRequestId) return;
     panel.innerHTML = `<div class="empty">Could not load advisor: ${err.message}</div>`;
   }
 }
@@ -1212,6 +1458,7 @@ function renderAdvisorPanel(payload) {
 
 async function loadPersonalPage(scope) {
   setLayout({ kpis: true, charts: true, custom: true, fromTo: false });
+  const requestId = ++pageRequestId;
   const label = scope === "branch" ? "branch" : "advisor";
   $("page-subtitle").textContent =
     `Cumulative ${scope === "branch" ? "branch" : "advisor"} sales within the month — vs plan and vs previous month`;
@@ -1252,6 +1499,7 @@ async function loadPersonalPage(scope) {
   try {
     const data = await fetchJSON(scope === "branch"
       ? "/api/people/branches" : "/api/people/advisors");
+    if (requestId !== pageRequestId) return;
     const items = scope === "branch" ? (data.branches || []) : (data.advisors || []);
     const sel = $("entity-select");
     sel.innerHTML = "";
@@ -1271,18 +1519,23 @@ async function loadPersonalPage(scope) {
     }
     if (personState.code) await loadCumulative(scope);
   } catch (err) {
+    if (requestId !== pageRequestId) return;
     showNotice(`Could not load ${label}s: ${err.message}`);
   }
 }
 
 async function loadCumulative(scope) {
+  const pageId = pageRequestId;
+  const requestId = ++cumulativeRequestId;
   try {
     const payload = await fetchJSON(
       `/api/people/cumulative?scope=${scope}&code=${encodeURIComponent(personState.code)}`
       + `&month=${personState.month}`
       + (state.asOf && state.asOf.startsWith(personState.month) ? `&as_of=${state.asOf}` : ""));
+    if (requestId !== cumulativeRequestId || pageId !== pageRequestId) return;
     renderCumulative(payload);
   } catch (err) {
+    if (requestId !== cumulativeRequestId || pageId !== pageRequestId) return;
     showNotice(`Could not load the cumulative view: ${err.message}`);
   }
 }
@@ -1316,33 +1569,51 @@ function renderUserBadge() {
   const badge = $("user-badge");
   if (!currentUser) { badge.hidden = true; return; }
   badge.hidden = false;
-  badge.textContent = `Signed in as ${currentUser.name} · ${currentUser.role_label}`;
+  badge.textContent = currentUser.is_impersonating
+    ? `Acting as ${currentUser.name} · ${currentUser.role_label}`
+    : `Signed in as ${currentUser.name} · ${currentUser.role_label}`;
+
+  const acting = $("acting-as");
+  if (currentUser.is_impersonating) {
+    acting.hidden = false;
+    acting.textContent = `Tester session: ${currentUser.authenticated_username}`;
+  } else {
+    acting.hidden = true;
+    acting.textContent = "";
+  }
 }
 
 async function initSession() {
-  const [me, users] = await Promise.all([
-    fetchJSON("/api/session/me"),
-    fetchJSON("/api/session/users"),
-  ]);
+  const me = await fetchJSON("/api/auth/me");
   currentUser = me.user;
+  showDashboard();
   renderUserBadge();
   const sel = $("user-select");
   sel.innerHTML = "";
-  for (const role of USER_ROLES) {
-    const group = users.users.filter((u) => u.role === role);
-    if (!group.length) continue;
-    const og = document.createElement("optgroup");
-    og.label = group[0].role_label;
-    for (const u of group) {
-      const opt = document.createElement("option");
-      opt.value = u.code;
-      opt.textContent = u.name;
-      og.appendChild(opt);
+  sel.hidden = !currentUser.can_switch_persona;
+  $("cache-refresh").hidden = !currentUser.can_refresh_cache;
+
+  if (currentUser.can_switch_persona) {
+    const users = await fetchJSON("/api/session/users");
+    const roles = [...USER_ROLES,
+      ...users.users.map((u) => u.role).filter((role) => !USER_ROLES.includes(role))];
+    for (const role of [...new Set(roles)]) {
+      const group = users.users.filter((u) => u.role === role);
+      if (!group.length) continue;
+      const og = document.createElement("optgroup");
+      og.label = group[0].role_label;
+      for (const u of group) {
+        const opt = document.createElement("option");
+        opt.value = u.code;
+        opt.textContent = u.name;
+        og.appendChild(opt);
+      }
+      sel.appendChild(og);
     }
-    sel.appendChild(og);
+    sel.value = currentUser.code;
   }
-  sel.value = currentUser.code;
   sel.onchange = async () => {
+    const previousCode = currentUser.code;
     try {
       const res = await fetchJSON("/api/session/user", {
         method: "POST",
@@ -1355,7 +1626,7 @@ async function initSession() {
       selectPage(state.page); // re-scope pickers on the current page
     } catch (err) {
       showToast(`Switch failed: ${err.message}`);
-      sel.value = currentUser.code;
+      sel.value = previousCode;
     }
   };
 }
@@ -1368,6 +1639,7 @@ function resetCodeIfOutOfScope(items, code) {
 
 async function loadBriefPage() {
   setLayout({ custom: true, fromTo: false });
+  const requestId = ++pageRequestId;
   $("page-subtitle").textContent =
     "One-page daily brief: your results plus the top network KPIs — ready to print";
   const page = $("custom-page");
@@ -1410,10 +1682,11 @@ async function loadBriefPage() {
     briefState.code = null; // re-pick in the new scope
     await fillBriefEntity();
   };
-  await fillBriefEntity();
+  await fillBriefEntity(requestId);
 }
 
-async function fillBriefEntity() {
+async function fillBriefEntity(pageId = pageRequestId) {
+  const entityRequestId = ++briefRequestId;
   const scope = briefState.scope;
   const isAdvisor = scope === "advisor";
   $("brief-entity-label").firstChild.textContent = isAdvisor ? "Advisor" : "Branch";
@@ -1421,6 +1694,7 @@ async function fillBriefEntity() {
   sel.innerHTML = "<option>Loading…</option>";
   try {
     const data = await fetchJSON(isAdvisor ? "/api/people/advisors" : "/api/people/branches");
+    if (entityRequestId !== briefRequestId || pageId !== pageRequestId) return;
     const items = isAdvisor ? (data.advisors || []) : (data.branches || []);
     sel.innerHTML = "";
     for (const it of items) {
@@ -1435,14 +1709,19 @@ async function fillBriefEntity() {
     sel.value = briefState.code;
     sel.disabled = items.length <= 1;
     sel.onchange = () => { briefState.code = sel.value; loadBrief(); };
-    if (briefState.code) await loadBrief();
+    if (briefState.code) await loadBrief(pageId, entityRequestId);
   } catch (err) {
+    if (entityRequestId !== briefRequestId || pageId !== pageRequestId) return;
     $("brief-root").innerHTML = `<div class="empty">Could not load: ${err.message}</div>`;
   }
 }
 
-async function loadBrief() {
+async function loadBrief(pageId, entityId) {
+  const linked = pageId !== undefined;
+  const myPageId = linked ? pageId : pageRequestId;
+  const myId = linked ? entityId : ++briefRequestId;
   const root = $("brief-root");
+  if (!root) return;
   root.innerHTML = `<div class="empty">Loading…</div>`;
   try {
     const overviewParams = new URLSearchParams({ from: briefState.month, to: briefState.month });
@@ -1454,8 +1733,10 @@ async function loadBrief() {
         + (state.asOf ? `&as_of=${encodeURIComponent(state.asOf)}` : "")
         + `&attribution=${encodeURIComponent(state.attribution)}`),
     ]);
+    if (myId !== briefRequestId || myPageId !== pageRequestId) return;
     renderBrief(cum, overview);
   } catch (err) {
+    if (myId !== briefRequestId || myPageId !== pageRequestId) return;
     root.innerHTML = `<div class="empty">Could not load the brief: ${err.message}</div>`;
   }
 }
@@ -1531,10 +1812,11 @@ function renderBrief(cum, overview) {
   for (const c of charts) c.destroy();
   charts.length = 0;
   const spec = cum.charts[0];
-  if (spec) {
+  if (spec && hasChartLib()) {
     $("brief-canvas").setAttribute("role", "img");
     $("brief-canvas").setAttribute("aria-label", spec.title || "Cumulative sales chart");
-    charts.push(makeChart($("brief-canvas"), spec));
+    const briefChart = makeChart($("brief-canvas"), spec);
+    if (briefChart) charts.push(briefChart);
   }
   renderTable($("brief-table"), cum.columns, rows, "brief", null);
 }
@@ -1570,9 +1852,39 @@ function renderCacheInfo(meta) {
   const loadedValues = tables.map((t) => t.loaded_at).filter(Boolean).sort();
   const loadedAt = loadedValues.length
     ? new Date(loadedValues[loadedValues.length - 1]).toLocaleTimeString("en-IE") : "—";
-  let html = `${total} tables in memory<br>${fmtInt.format(rows)} rows<br>loaded ${loadedAt} · TTL ${c.ttl_seconds / 60}m<br>hits ${fmtInt.format(c.hits)} / misses ${fmtInt.format(c.misses)}`;
-  if (c.last_error) html += `<br><span class="err">last error: ${c.last_error}</span>`;
-  $("cache-info").innerHTML = html;
+  const age = Number.isFinite(c.cache_age_seconds)
+    ? `${Math.floor(c.cache_age_seconds / 3600)}h ${Math.floor(c.cache_age_seconds % 3600 / 60)}m`
+    : "—";
+  const checkedAt = c.control_checked_at
+    ? new Date(c.control_checked_at).toLocaleTimeString("en-IE") : "—";
+  const version = c.dataset_version == null ? "—" : `v${c.dataset_version}`;
+  const box = $("cache-info");
+  box.textContent = "";
+  box.appendChild(document.createTextNode(
+    `${total} tables in memory, ${fmtInt.format(rows)} rows, ` +
+    `loaded ${loadedAt} · dataset ${version}, checked ${checkedAt}, age ${age} · ` +
+    `hits ${fmtInt.format(c.hits)} / misses ${fmtInt.format(c.misses)}`));
+  if (c.stale) {
+    box.appendChild(document.createElement("br"));
+    const stale = document.createElement("span");
+    stale.className = "err";
+    stale.textContent = `Warning: freshness not confirmed for ${Math.round((c.max_unconfirmed_seconds || 0) / 3600)}h.`;
+    box.appendChild(stale);
+  }
+  if (c.last_error) {
+    box.appendChild(document.createElement("br"));
+    const err = document.createElement("span");
+    err.className = "err";
+    err.textContent = `last error: ${c.last_error}`;
+    box.appendChild(err);
+  }
+  if (c.control_error) {
+    box.appendChild(document.createElement("br"));
+    const err = document.createElement("span");
+    err.className = "err";
+    err.textContent = `control table: ${c.control_error}`;
+    box.appendChild(err);
+  }
 }
 
 function selectPeriodPreset(value) {
@@ -1684,19 +1996,22 @@ async function initMeta() {
 }
 
 (async function main() {
+  wireDemoAccounts();
+  $("login-form").addEventListener("submit", submitLogin);
+  $("logout-button").addEventListener("click", signOut);
   $("cache-refresh").addEventListener("click", refreshCache);
   $("drill-close").addEventListener("click", closeDrill);
   $("btn-charts-pdf").addEventListener("click", downloadAllChartsPDF);
   restoreUrlState();
   try {
-    await initMeta();
-  } catch (err) {
-    showNotice(`Cannot reach the backend (${err.message}). Is the server running with seeded tables?`);
-  }
-  try {
     await initSession();
+    await initMeta();
+    selectPage(state.page || "overview");
   } catch (err) {
-    showNotice(`Cannot load the session (${err.message}).`);
+    if (err.status === 401) {
+      showLogin("");
+    } else {
+      showLogin(`Cannot reach the backend (${err.message}). Is the server running with seeded tables?`);
+    }
   }
-  selectPage(state.page || "overview");
 })();

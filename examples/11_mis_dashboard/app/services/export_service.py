@@ -98,7 +98,7 @@ class ExportService:
             ["Period to", period["to"]],
             ["Rows", len(export["rows"])],
             ["Generated", dt.datetime.now().isoformat(timespec="seconds")],
-            ["Data source", "cached MIS_* tables (TTLCache)"],
+            ["Data source", "cached ordinary MIS_* tables (ETL-versioned)"],
         ]
         context = export["reporting_context"]
         if context:

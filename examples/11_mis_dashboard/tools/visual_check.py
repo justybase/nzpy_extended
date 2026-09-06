@@ -8,8 +8,8 @@ layout invariants on the pages that changed most recently:
     - overview page: renders without horizontal overflow
     - daily brief: KPI cards, network strip, chart canvas, day table;
       the print emulation hides the sidebar
-    - role switcher: "Signed in as" selector switches users; pickers lock to
-      the allowed scope; the badge updates
+    - authentication: the tester logs in, switches users; pickers lock to the
+      allowed scope; the badge updates
 
 Screenshots are saved to tools/screenshots/ for manual review. Any failed
 assertion exits with a non-zero code and a message — the screenshots are
@@ -70,6 +70,13 @@ def open_menu(page, label: str) -> bool:
     return True
 
 
+def sign_in_as_tester(page) -> None:
+    page.fill("#login-username", "app.tester")
+    page.fill("#login-password", "Demo-Tester-2026!")
+    page.click("#login-submit")
+    page.wait_for_selector("#app:not([hidden])", state="visible", timeout=15000)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--base", default="http://127.0.0.1:8481")
@@ -85,6 +92,8 @@ def main() -> int:
         # ------------------------------------------------------------ overview
         print("Overview page")
         page.goto(args.base, wait_until="networkidle")
+        check("login screen renders", visible(page, "#login-view"))
+        sign_in_as_tester(page)
         check("overview loads", wait_for(page, "#kpis .kpi"))
         check("overview no horizontal overflow", no_horizontal_overflow(page))
         check("period selectors have labels",
@@ -174,7 +183,7 @@ def main() -> int:
         check("picker has many advisors as analyst",
               page.locator("#entity-select option").count() > 100,
               f"count={page.locator('#entity-select option').count()}")
-        check("user selector present",
+        check("tester selector present",
               page.locator("#user-select option").count() >= 10,
               f"count={page.locator('#user-select option').count()}")
 

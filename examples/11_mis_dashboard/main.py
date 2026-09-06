@@ -9,9 +9,11 @@ Layered architecture:
     app/repositories/*          data access (cached Netezza tables, fake for tests)
     app/schemas/*               Pydantic response models
 
-Existing reports use cached MIS_* tables. The larger point-in-time mart is
-read through parameterized snapshot slices and those slices are cached too —
-Netezza is queried only on a cold/expired cache or explicit refresh.
+Existing reports use cached ordinary MIS_* tables. The larger point-in-time
+mart is read through parameterized snapshot slices and those slices are cached
+too — Netezza data tables are queried at startup, after a published ETL version
+change, or on explicit refresh. A small control-table query runs on the
+background polling interval.
 
 Usage:
     python seed.py   # create & populate the MIS_* tables first
@@ -37,7 +39,10 @@ from app.core.config import Settings
 from app.core.logging import configure_logging
 from app.db.pool import build_pool
 from app.repositories import CachedMISRepository
+from app.services.auth_service import AuthService
+from app.services.cache_coordinator import CacheCoordinator
 from app.services.export_service import ExportService
+from app.services.fake_ldap import FakeLDAPService
 from app.services.ledger_service import LedgerService
 from app.services.people_service import PeopleService
 from app.services.report_service import ReportService
@@ -74,17 +79,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.people_service = PeopleService(
             repository, ttl=settings.cache_ttl_reports)
         app.state.session_service = SessionService(repository)
+        app.state.auth_service = AuthService(
+            app.state.session_service,
+            FakeLDAPService(),
+            settings.jwt_secret,
+            settings.jwt_ttl_minutes,
+            settings.auth_issuer,
+        )
         app.state.temporal_service = TemporalMISService(
             repository, ttl=settings.cache_ttl_reports)
+        app.state.cache_coordinator = CacheCoordinator(
+            repository,
+            pool,
+            app.state.report_service,
+            app.state.people_service,
+            app.state.ledger_service,
+            app.state.temporal_service,
+            dataset_name=settings.cache_dataset_name,
+            control_table_name=settings.cache_control_table,
+            poll_seconds=settings.cache_control_poll_seconds,
+            max_unconfirmed_seconds=settings.cache_max_unconfirmed_seconds,
+        )
 
         refresh_task: asyncio.Task[None] | None = None
         try:
             # Preload eager dimensions/facts. The large performance mart is
             # intentionally fetched and cached as date slices on demand.
-            result = await repository.refresh_all()
+            result = await app.state.cache_coordinator.initialize()
             logger.info("initial table load: %s", result)
             refresh_task = asyncio.create_task(
-                repository.refresh_loop(settings.cache_refresh_seconds))
+                app.state.cache_coordinator.refresh_loop(
+                    settings.cache_control_poll_seconds))
             yield
         finally:
             if refresh_task is not None:

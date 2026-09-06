@@ -98,19 +98,19 @@ class PeopleService:
     def _authorize(self, user: SessionUser | None, scope: str,
                    ctx: dict[str, int]) -> None:
         """Raise Forbidden unless `user` may see the entity described by ctx."""
-        if user is None or user.is_analyst:
+        if user is None or user.has_full_scope:
             return
         if scope == "branch":
-            if user.role == "AREA_MANAGER":
+            if user.is_region_scoped:
                 if user.region_id != ctx["region_id"]:
                     raise Forbidden("This branch is outside your area")
             elif user.branch_id != ctx["branch_id"]:
                 raise Forbidden("You can only view your own branch")
         else:  # advisor scope
-            if user.role == "AREA_MANAGER":
+            if user.is_region_scoped:
                 if user.region_id != ctx["region_id"]:
                     raise Forbidden("This advisor works outside your area")
-            elif user.role == "BRANCH_MANAGER":
+            elif user.is_branch_scoped:
                 if user.branch_id != ctx["branch_id"]:
                     raise Forbidden("You can only view advisors of your branch")
             elif user.advisor_id != ctx["advisor_id"]:
@@ -131,14 +131,14 @@ class PeopleService:
             reg = region_by_id.get(b[bcols.index("region_id")]) if b else None
             branch_id = r[acols.index("branch_id")]
             region_id = b[bcols.index("region_id")] if b else None
-            if user is not None and not user.is_analyst:
-                if user.role == "ADVISOR":
+            if user is not None and not user.has_full_scope:
+                if user.is_advisor_scoped:
                     if user.advisor_id != r[acols.index("advisor_id")]:
                         continue
-                elif user.role == "BRANCH_MANAGER":
+                elif user.is_branch_scoped:
                     if user.branch_id != branch_id:
                         continue
-                elif user.role == "AREA_MANAGER" and user.region_id != region_id:
+                elif user.is_region_scoped and user.region_id != region_id:
                     continue
             out.append({
                 "code": r[acols.index("advisor_code")],
@@ -163,8 +163,8 @@ class PeopleService:
         out: list[dict[str, Any]] = []
         for r in brows:
             reg = region_by_id.get(r[bcols.index("region_id")])
-            if user is not None and not user.is_analyst:
-                if user.role == "AREA_MANAGER":
+            if user is not None and not user.has_full_scope:
+                if user.is_region_scoped:
                     if user.region_id != r[bcols.index("region_id")]:
                         continue
                 elif user.branch_id != r[bcols.index("branch_id")]:

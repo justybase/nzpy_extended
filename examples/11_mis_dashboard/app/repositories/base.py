@@ -1,7 +1,7 @@
 """Repository interface for the MIS data source.
 
 Implementations:
-    CachedMISRepository — full Netezza tables cached in memory (TTLCache)
+    CachedMISRepository — ordinary Netezza tables cached in memory
     FakeRepository (tests) — small in-memory datasets, no database needed
 """
 

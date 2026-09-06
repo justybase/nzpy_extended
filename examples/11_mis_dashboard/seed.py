@@ -15,11 +15,12 @@ Tables created / recreated:
     MIS_FACT_CAMPAIGN_RESULTS   - campaign effectiveness per branch
     MIS_FACT_BRANCH_PLAN        - monthly sales plans per branch (sum of advisor plans)
     MIS_FACT_ADVISOR_PERF       - monthly advisor plans, KPI scores and ratings
-    MIS_DIM_USER                - simulated users (analyst, area/branch managers, advisors)
+    MIS_DIM_USER                - role personas and demo users for the login flow
     MIS_DIM_DATE                - reporting calendar (calendar and business-day attributes)
     MIS_DIM_ORG_ASSIGNMENT      - advisor -> branch -> region history (SCD type 2)
     MIS_FACT_PERFORMANCE_SNAPSHOT - daily and accumulating MTD reporting mart
     MIS_AUDIT_SNAPSHOT_LOAD     - freshness and reconciliation evidence
+    MIS_CONTROL_DATASET_LOAD    - latest published ETL dataset versions
 
 Usage:
     python seed.py             # full dataset (~180k sales rows)
@@ -65,6 +66,14 @@ START = dt.date(2024, 1, 1)
 END = dt.date(2026, 8, 15)
 FIRST_MONTH = dt.date(2024, 1, 1)
 
+# Keep a small, deterministic group of visible Champions League qualifiers in
+# every demo scale. The regular generator is intentionally stochastic and its
+# reduced fixtures (for example ``--rows 10``) can otherwise leave every
+# advisor below the minimum-volume guardrail.
+LEAGUE_SHOWCASE_ADVISOR_IDS = (64, 82, 92, 101, 135, 187)
+LEAGUE_MIN_BOOKED_SALES = 10
+LEAGUE_SHOWCASE_SALE_AMOUNT = 12_000.0
+
 SEASON = [0.85, 0.90, 1.05, 1.00, 1.10, 1.00, 0.90, 0.80, 1.10, 1.05, 1.00, 1.15]
 
 TABLES = [
@@ -73,8 +82,8 @@ TABLES = [
     "MIS_DIM_ADVISOR",
     "MIS_DIM_PRODUCT",
     "MIS_DIM_CHANNEL",
-    "MIS_DIM_CAMPAIGN",
     "MIS_DIM_DATE",
+    "MIS_DIM_CAMPAIGN",
     "MIS_DIM_ORG_ASSIGNMENT",
     "MIS_FACT_SALES",
     "MIS_FACT_BALANCES",
@@ -85,6 +94,7 @@ TABLES = [
     "MIS_DIM_USER",
     "MIS_FACT_PERFORMANCE_SNAPSHOT",
     "MIS_AUDIT_SNAPSHOT_LOAD",
+    "MIS_CONTROL_DATASET_LOAD",
 ]
 
 TABLE_DDL = {
@@ -94,7 +104,9 @@ TABLE_DDL = {
             region_code NVARCHAR(10)  NOT NULL,
             region_name NVARCHAR(60) NOT NULL,
             area_name   NVARCHAR(60),
-            seat_city   NVARCHAR(40)
+            seat_city   NVARCHAR(40),
+            CONSTRAINT pk_mis_dim_region PRIMARY KEY (region_id),
+            CONSTRAINT uq_mis_dim_region_code UNIQUE (region_code)
         ) DISTRIBUTE ON (region_id)""",
     "MIS_DIM_BRANCH": """
         CREATE TABLE MIS_DIM_BRANCH (
@@ -105,7 +117,11 @@ TABLE_DDL = {
             city        NVARCHAR(40),
             district    NVARCHAR(60),
             open_date   DATE,
-            status      NVARCHAR(10)
+            status      NVARCHAR(10),
+            CONSTRAINT pk_mis_dim_branch PRIMARY KEY (branch_id),
+            CONSTRAINT uq_mis_dim_branch_code UNIQUE (branch_code),
+            CONSTRAINT fk_mis_dim_branch_region FOREIGN KEY (region_id)
+                REFERENCES MIS_DIM_REGION (region_id)
         ) DISTRIBUTE ON (branch_id)""",
     "MIS_DIM_ADVISOR": """
         CREATE TABLE MIS_DIM_ADVISOR (
@@ -116,7 +132,11 @@ TABLE_DDL = {
             branch_id    INTEGER NOT NULL,
             role         NVARCHAR(40),
             hire_date    DATE,
-            status       NVARCHAR(10)
+            status       NVARCHAR(10),
+            CONSTRAINT pk_mis_dim_advisor PRIMARY KEY (advisor_id),
+            CONSTRAINT uq_mis_dim_advisor_code UNIQUE (advisor_code),
+            CONSTRAINT fk_mis_dim_advisor_branch FOREIGN KEY (branch_id)
+                REFERENCES MIS_DIM_BRANCH (branch_id)
         ) DISTRIBUTE ON (advisor_id)""",
     "MIS_DIM_PRODUCT": """
         CREATE TABLE MIS_DIM_PRODUCT (
@@ -128,12 +148,16 @@ TABLE_DDL = {
             is_balance_product  SMALLINT NOT NULL,
             min_amount          NUMERIC(14, 2),
             max_amount          NUMERIC(14, 2),
-            commission_rate     NUMERIC(6, 4)
+            commission_rate     NUMERIC(6, 4),
+            CONSTRAINT pk_mis_dim_product PRIMARY KEY (product_id),
+            CONSTRAINT uq_mis_dim_product_code UNIQUE (product_code)
         ) DISTRIBUTE ON (product_id)""",
     "MIS_DIM_CHANNEL": """
         CREATE TABLE MIS_DIM_CHANNEL (
             channel_id   INTEGER NOT NULL,
-            channel_name NVARCHAR(40) NOT NULL
+            channel_name NVARCHAR(40) NOT NULL,
+            CONSTRAINT pk_mis_dim_channel PRIMARY KEY (channel_id),
+            CONSTRAINT uq_mis_dim_channel_name UNIQUE (channel_name)
         ) DISTRIBUTE ON (channel_id)""",
     "MIS_DIM_CAMPAIGN": """
         CREATE TABLE MIS_DIM_CAMPAIGN (
@@ -145,7 +169,15 @@ TABLE_DDL = {
             product_id     INTEGER,
             start_date     DATE,
             end_date       DATE,
-            budget         NUMERIC(14, 2)
+            budget         NUMERIC(14, 2),
+            CONSTRAINT pk_mis_dim_campaign PRIMARY KEY (campaign_id),
+            CONSTRAINT uq_mis_dim_campaign_code UNIQUE (campaign_code),
+            CONSTRAINT fk_mis_dim_campaign_product FOREIGN KEY (product_id)
+                REFERENCES MIS_DIM_PRODUCT (product_id),
+            CONSTRAINT fk_mis_dim_campaign_start_date FOREIGN KEY (start_date)
+                REFERENCES MIS_DIM_DATE (calendar_date),
+            CONSTRAINT fk_mis_dim_campaign_end_date FOREIGN KEY (end_date)
+                REFERENCES MIS_DIM_DATE (calendar_date)
         ) DISTRIBUTE ON (campaign_id)""",
     "MIS_DIM_DATE": """
         CREATE TABLE MIS_DIM_DATE (
@@ -155,7 +187,8 @@ TABLE_DDL = {
             day_of_month           SMALLINT NOT NULL,
             is_business_day        SMALLINT NOT NULL,
             business_day_of_month  SMALLINT NOT NULL,
-            business_days_in_month SMALLINT NOT NULL
+            business_days_in_month SMALLINT NOT NULL,
+            CONSTRAINT pk_mis_dim_date PRIMARY KEY (calendar_date)
         ) DISTRIBUTE ON (calendar_date)""",
     "MIS_DIM_ORG_ASSIGNMENT": """
         CREATE TABLE MIS_DIM_ORG_ASSIGNMENT (
@@ -166,7 +199,15 @@ TABLE_DDL = {
             valid_from        DATE NOT NULL,
             valid_to          DATE NOT NULL,
             is_current        SMALLINT NOT NULL,
-            change_reason     NVARCHAR(60)
+            change_reason     NVARCHAR(60),
+            CONSTRAINT pk_mis_dim_org_assignment PRIMARY KEY (org_assignment_sk),
+            CONSTRAINT uq_mis_dim_org_assignment_start UNIQUE (advisor_id, valid_from),
+            CONSTRAINT fk_mis_dim_org_assignment_advisor FOREIGN KEY (advisor_id)
+                REFERENCES MIS_DIM_ADVISOR (advisor_id),
+            CONSTRAINT fk_mis_dim_org_assignment_branch FOREIGN KEY (branch_id)
+                REFERENCES MIS_DIM_BRANCH (branch_id),
+            CONSTRAINT fk_mis_dim_org_assignment_region FOREIGN KEY (region_id)
+                REFERENCES MIS_DIM_REGION (region_id)
         ) DISTRIBUTE ON (advisor_id)""",
     "MIS_FACT_SALES": """
         CREATE TABLE MIS_FACT_SALES (
@@ -179,7 +220,18 @@ TABLE_DDL = {
             customer_id  INTEGER NOT NULL,
             amount       NUMERIC(14, 2),
             commission   NUMERIC(12, 2),
-            sale_status  NVARCHAR(10) NOT NULL
+            sale_status  NVARCHAR(10) NOT NULL,
+            CONSTRAINT pk_mis_fact_sales PRIMARY KEY (sale_id),
+            CONSTRAINT fk_mis_fact_sales_branch FOREIGN KEY (branch_id)
+                REFERENCES MIS_DIM_BRANCH (branch_id),
+            CONSTRAINT fk_mis_fact_sales_advisor FOREIGN KEY (advisor_id)
+                REFERENCES MIS_DIM_ADVISOR (advisor_id),
+            CONSTRAINT fk_mis_fact_sales_product FOREIGN KEY (product_id)
+                REFERENCES MIS_DIM_PRODUCT (product_id),
+            CONSTRAINT fk_mis_fact_sales_channel FOREIGN KEY (channel_id)
+                REFERENCES MIS_DIM_CHANNEL (channel_id),
+            CONSTRAINT fk_mis_fact_sales_date FOREIGN KEY (sale_date)
+                REFERENCES MIS_DIM_DATE (calendar_date)
         ) DISTRIBUTE ON RANDOM""",
     "MIS_FACT_BALANCES": """
         CREATE TABLE MIS_FACT_BALANCES (
@@ -187,7 +239,14 @@ TABLE_DDL = {
             branch_id     INTEGER NOT NULL,
             product_id    INTEGER NOT NULL,
             account_count INTEGER,
-            balance_amount NUMERIC(16, 2)
+            balance_amount NUMERIC(16, 2),
+            CONSTRAINT pk_mis_fact_balances PRIMARY KEY (balance_month, branch_id, product_id),
+            CONSTRAINT fk_mis_fact_balances_branch FOREIGN KEY (branch_id)
+                REFERENCES MIS_DIM_BRANCH (branch_id),
+            CONSTRAINT fk_mis_fact_balances_product FOREIGN KEY (product_id)
+                REFERENCES MIS_DIM_PRODUCT (product_id),
+            CONSTRAINT fk_mis_fact_balances_date FOREIGN KEY (balance_month)
+                REFERENCES MIS_DIM_DATE (calendar_date)
         ) DISTRIBUTE ON RANDOM""",
     "MIS_FACT_CUSTOMER_MOVEMENT": """
         CREATE TABLE MIS_FACT_CUSTOMER_MOVEMENT (
@@ -200,7 +259,12 @@ TABLE_DDL = {
             product_relations INTEGER,
             customers_2plus  INTEGER,
             customers_3plus  INTEGER,
-            customers_4plus  INTEGER
+            customers_4plus  INTEGER,
+            CONSTRAINT pk_mis_fact_customer_movement PRIMARY KEY (movement_month, branch_id),
+            CONSTRAINT fk_mis_fact_customer_movement_branch FOREIGN KEY (branch_id)
+                REFERENCES MIS_DIM_BRANCH (branch_id),
+            CONSTRAINT fk_mis_fact_customer_movement_date FOREIGN KEY (movement_month)
+                REFERENCES MIS_DIM_DATE (calendar_date)
         ) DISTRIBUTE ON RANDOM""",
     "MIS_FACT_CAMPAIGN_RESULTS": """
         CREATE TABLE MIS_FACT_CAMPAIGN_RESULTS (
@@ -210,13 +274,23 @@ TABLE_DDL = {
             responses    INTEGER,
             conversions  INTEGER,
             sales_amount NUMERIC(14, 2),
-            cost         NUMERIC(12, 2)
+            cost         NUMERIC(12, 2),
+            CONSTRAINT pk_mis_fact_campaign_results PRIMARY KEY (campaign_id, branch_id),
+            CONSTRAINT fk_mis_fact_campaign_results_campaign FOREIGN KEY (campaign_id)
+                REFERENCES MIS_DIM_CAMPAIGN (campaign_id),
+            CONSTRAINT fk_mis_fact_campaign_results_branch FOREIGN KEY (branch_id)
+                REFERENCES MIS_DIM_BRANCH (branch_id)
         ) DISTRIBUTE ON RANDOM""",
     "MIS_FACT_BRANCH_PLAN": """
         CREATE TABLE MIS_FACT_BRANCH_PLAN (
             branch_id   INTEGER NOT NULL,
             plan_month  DATE NOT NULL,
-            plan_amount NUMERIC(14, 2)
+            plan_amount NUMERIC(14, 2),
+            CONSTRAINT pk_mis_fact_branch_plan PRIMARY KEY (branch_id, plan_month),
+            CONSTRAINT fk_mis_fact_branch_plan_branch FOREIGN KEY (branch_id)
+                REFERENCES MIS_DIM_BRANCH (branch_id),
+            CONSTRAINT fk_mis_fact_branch_plan_date FOREIGN KEY (plan_month)
+                REFERENCES MIS_DIM_DATE (calendar_date)
         ) DISTRIBUTE ON (branch_id)""",
     "MIS_FACT_ADVISOR_PERF": """
         CREATE TABLE MIS_FACT_ADVISOR_PERF (
@@ -228,7 +302,12 @@ TABLE_DDL = {
             quality_score    INTEGER,
             activity_score   INTEGER,
             rating           SMALLINT,
-            note             NVARCHAR(60)
+            note             NVARCHAR(60),
+            CONSTRAINT pk_mis_fact_advisor_perf PRIMARY KEY (advisor_id, perf_month),
+            CONSTRAINT fk_mis_fact_advisor_perf_advisor FOREIGN KEY (advisor_id)
+                REFERENCES MIS_DIM_ADVISOR (advisor_id),
+            CONSTRAINT fk_mis_fact_advisor_perf_date FOREIGN KEY (perf_month)
+                REFERENCES MIS_DIM_DATE (calendar_date)
         ) DISTRIBUTE ON (advisor_id)""",
     "MIS_DIM_USER": """
         CREATE TABLE MIS_DIM_USER (
@@ -238,7 +317,15 @@ TABLE_DDL = {
             role         NVARCHAR(20) NOT NULL,
             advisor_id   INTEGER,
             branch_id    INTEGER,
-            region_id    INTEGER
+            region_id    INTEGER,
+            CONSTRAINT pk_mis_dim_user PRIMARY KEY (user_id),
+            CONSTRAINT uq_mis_dim_user_code UNIQUE (user_code),
+            CONSTRAINT fk_mis_dim_user_advisor FOREIGN KEY (advisor_id)
+                REFERENCES MIS_DIM_ADVISOR (advisor_id),
+            CONSTRAINT fk_mis_dim_user_branch FOREIGN KEY (branch_id)
+                REFERENCES MIS_DIM_BRANCH (branch_id),
+            CONSTRAINT fk_mis_dim_user_region FOREIGN KEY (region_id)
+                REFERENCES MIS_DIM_REGION (region_id)
         ) DISTRIBUTE ON (user_id)""",
     "MIS_FACT_PERFORMANCE_SNAPSHOT": """
         CREATE TABLE MIS_FACT_PERFORMANCE_SNAPSHOT (
@@ -261,7 +348,21 @@ TABLE_DDL = {
             customers_mtd        INTEGER,
             plan_amount          NUMERIC(16, 2),
             quality_score        INTEGER,
-            activity_score       INTEGER
+            activity_score       INTEGER,
+            CONSTRAINT pk_mis_fact_performance_snapshot PRIMARY KEY
+                (snapshot_date, advisor_id, historical_branch_id),
+            CONSTRAINT fk_mis_fact_performance_snapshot_date FOREIGN KEY (snapshot_date)
+                REFERENCES MIS_DIM_DATE (calendar_date),
+            CONSTRAINT fk_mis_fact_performance_snapshot_month FOREIGN KEY (month_start)
+                REFERENCES MIS_DIM_DATE (calendar_date),
+            CONSTRAINT fk_mis_fact_performance_snapshot_advisor FOREIGN KEY (advisor_id)
+                REFERENCES MIS_DIM_ADVISOR (advisor_id),
+            CONSTRAINT fk_mis_fact_performance_snapshot_branch FOREIGN KEY (historical_branch_id)
+                REFERENCES MIS_DIM_BRANCH (branch_id),
+            CONSTRAINT fk_mis_fact_performance_snapshot_region FOREIGN KEY (historical_region_id)
+                REFERENCES MIS_DIM_REGION (region_id),
+            CONSTRAINT fk_mis_fact_performance_snapshot_perf FOREIGN KEY (advisor_id, month_start)
+                REFERENCES MIS_FACT_ADVISOR_PERF (advisor_id, perf_month)
         ) DISTRIBUTE ON (snapshot_date)""",
     "MIS_AUDIT_SNAPSHOT_LOAD": """
         CREATE TABLE MIS_AUDIT_SNAPSHOT_LOAD (
@@ -273,8 +374,28 @@ TABLE_DDL = {
             source_booked_amount NUMERIC(18, 2),
             mart_booked_amount   NUMERIC(18, 2),
             difference_amount    NUMERIC(18, 2),
-            status              NVARCHAR(10) NOT NULL
+            status              NVARCHAR(10) NOT NULL,
+            CONSTRAINT pk_mis_audit_snapshot_load PRIMARY KEY (snapshot_date),
+            CONSTRAINT uq_mis_audit_snapshot_load_id UNIQUE (load_id),
+            CONSTRAINT fk_mis_audit_snapshot_load_date FOREIGN KEY (snapshot_date)
+                REFERENCES MIS_DIM_DATE (calendar_date),
+            CONSTRAINT fk_mis_audit_snapshot_load_source_date FOREIGN KEY (source_max_date)
+                REFERENCES MIS_DIM_DATE (calendar_date)
         ) DISTRIBUTE ON (snapshot_date)""",
+    "MIS_CONTROL_DATASET_LOAD": """
+        CREATE TABLE MIS_CONTROL_DATASET_LOAD (
+            dataset_name   NVARCHAR(64) NOT NULL,
+            version_no     BIGINT NOT NULL,
+            load_id        NVARCHAR(64) NOT NULL,
+            source_max_date DATE,
+            published_at   NVARCHAR(30) NOT NULL,
+            status         NVARCHAR(16) NOT NULL,
+            row_count      BIGINT,
+            checksum       NVARCHAR(128),
+            CONSTRAINT pk_mis_control_dataset_load PRIMARY KEY
+                (dataset_name, version_no),
+            CONSTRAINT uq_mis_control_dataset_load_id UNIQUE (load_id)
+        ) DISTRIBUTE ON RANDOM""",
 }
 
 LOAD_COLUMNS = {
@@ -355,6 +476,11 @@ LOAD_COLUMNS = {
         ("snapshot_rows", "INTEGER"), ("source_booked_amount", "NUMERIC(18, 2)"),
         ("mart_booked_amount", "NUMERIC(18, 2)"),
         ("difference_amount", "NUMERIC(18, 2)"), ("status", "NVARCHAR(10)")],
+    "MIS_CONTROL_DATASET_LOAD": [
+        ("dataset_name", "NVARCHAR(64)"), ("version_no", "BIGINT"),
+        ("load_id", "NVARCHAR(64)"), ("source_max_date", "DATE"),
+        ("published_at", "NVARCHAR(30)"), ("status", "NVARCHAR(16)"),
+        ("row_count", "BIGINT"), ("checksum", "NVARCHAR(128)")],
 }
 
 # ---------------------------------------------------------------------------
@@ -747,6 +873,11 @@ def gen_advisor_perf(rng: random.Random,
             conversion_score = score(rng.uniform(55, 95), 40, 100)
             quality_score = score(rng.uniform(50, 95), 35, 100)
             activity_score = score(rng.uniform(55, 100), 45, 100)
+            if advisor_id in LEAGUE_SHOWCASE_ADVISOR_IDS:
+                # Showcase rows must qualify on quality as well as volume and
+                # should look like genuine champions in the score breakdown.
+                quality_score = max(90, quality_score)
+                activity_score = max(90, activity_score)
             overall = (sales_score * 0.40 + conversion_score * 0.25
                        + quality_score * 0.20 + activity_score * 0.15)
             rating = min(5, max(1, int(round(overall / 20))))
@@ -769,8 +900,10 @@ def gen_branch_plans(perf_rows: list[list[Any]],
 
 def gen_users(advisors: list[list[Any]]) -> Iterator[list[Any]]:
     """
-    Simulated users: one analyst, one area manager per region, one branch
-    manager per branch, and every active advisor (login as themselves).
+    Legacy role users plus a small set of named personas used by fake LDAP.
+
+    Passwords are intentionally not stored in the warehouse. The in-process
+    fake LDAP directory owns credential hashes and links to these user codes.
     """
     user_id = 1
     yield [user_id, "NET01", "Network Analyst", "ANALYST", None, None, None]
@@ -788,6 +921,26 @@ def gen_users(advisors: list[list[Any]]) -> Iterator[list[Any]]:
             continue
         yield [user_id, f"ADV_{adv[1]}", f"{adv[2]} {adv[3]}", "ADVISOR",
                adv[0], adv[4], None]
+        user_id += 1
+
+    advisor = next((row for row in advisors if row[1] == "P0001"), advisors[0])
+    branch_region_by_id = {
+        branch_id: region_id
+        for branch_id, (region_id, _code, _city, _district, _weight)
+        in enumerate(BRANCHES, start=1)
+    }
+    demo_users = [
+        ["MIS_SQL_DEV01", "MIS SQL Developer", "MIS_SQL_DEVELOPER", None, None, None],
+        ["NET_HEAD01", "Head of Sales Network", "NETWORK_HEAD", None, None, None],
+        ["REG_DIR_RNOR", "North Region Director", "REGIONAL_DIRECTOR", None, None, 1],
+        ["BR_DIR_BEL01", "Belfast Branch Director", "BRANCH_DIRECTOR", None, 1, 1],
+        ["ADV_DEMO_P0001", "Customer Advisor P0001", "CUSTOMER_ADVISOR",
+         advisor[0], advisor[4], branch_region_by_id[advisor[4]]],
+        ["HQ_FULL01", "HQ Full Access", "HQ_FULL_ACCESS", None, None, None],
+        ["APP_TESTER01", "Application Developer / Tester", "APP_TESTER", None, None, None],
+    ]
+    for code, name, role, advisor_id, branch_id, region_id in demo_users:
+        yield [user_id, code, name, role, advisor_id, branch_id, region_id]
         user_id += 1
 
 
@@ -862,6 +1015,51 @@ def ensure_current_mtd_coverage(sales_rows: list[list[Any]],
                            1, 1, 140000 + branch_id, amount,
                            round(amount * PRODUCTS[0].commission_rate, 2), "BOOKED"])
         next_id += 1
+
+
+def ensure_league_showcase_qualifiers(
+        sales_rows: list[list[Any]], advisors: list[list[Any]]) -> None:
+    """Guarantee visible but guardrail-compliant MTD league qualifiers.
+
+    The normal sales generator is scaled for fast fixtures. At low scales it
+    is useful for report tests, but it produces too few sales for a leaderboard
+    whose eligibility threshold is ten booked sales. Add only the deficit for
+    six stable advisors, spread across several branches. Their records remain
+    ordinary booked sales and are stamped through the same SCD2 assignment
+    process as every other event.
+    """
+    advisor_by_id = {row[0]: row for row in advisors}
+    missing = set(LEAGUE_SHOWCASE_ADVISOR_IDS) - set(advisor_by_id)
+    if missing:
+        raise ValueError(f"league showcase advisors are missing: {sorted(missing)}")
+
+    current_month = END.isoformat()[:7]
+    end_date = END.isoformat()
+    booked_counts = {
+        advisor_id: sum(
+            1 for row in sales_rows
+            if row[3] == advisor_id
+            and row[9] == "BOOKED"
+            and row[1][:7] == current_month
+            and row[1] <= end_date)
+        for advisor_id in LEAGUE_SHOWCASE_ADVISOR_IDS
+    }
+    next_id = max((row[0] for row in sales_rows), default=0) + 1
+    for advisor_id in LEAGUE_SHOWCASE_ADVISOR_IDS:
+        advisor = advisor_by_id[advisor_id]
+        hire_date = advisor[6]
+        if hire_date > end_date:
+            raise ValueError(f"league showcase advisor {advisor_id} is not hired by {END}")
+        deficit = max(0, LEAGUE_MIN_BOOKED_SALES - booked_counts[advisor_id])
+        for offset in range(deficit):
+            sale_date = END - dt.timedelta(days=offset)
+            amount = round(LEAGUE_SHOWCASE_SALE_AMOUNT + (advisor_id % 5) * 750, 2)
+            sales_rows.append([
+                next_id, sale_date.isoformat(), advisor[4], advisor_id,
+                1, 1, 160_000 + advisor_id * 100 + offset,
+                amount, round(amount * PRODUCTS[0].commission_rate, 2), "BOOKED",
+            ])
+            next_id += 1
 
 
 def gen_performance_snapshots(
@@ -1011,7 +1209,9 @@ def table_exists(cur: Any, name: str) -> bool:
 
 def create_schema(conn: Any) -> None:
     cur = conn.cursor()
-    for name in TABLES:
+    # Drop children first; once the DDL declares foreign keys, dropping a
+    # referenced parent before its dependants is rejected by Netezza.
+    for name in reversed(TABLES):
         if table_exists(cur, name):
             cur.execute(f"DROP TABLE {name}")
             print(f"  dropped {name}")
@@ -1093,11 +1293,12 @@ def build_dataset(scale: int = 1) -> dict[str, tuple[list[str], list[list[Any]]]
         products_by_group.setdefault(p.group, []).append(p)
     sales_rows = list(gen_sales(random.Random(7), scale, products_by_group,
                                 advisors_by_branch))
-    # Stamp generated events before checking branch coverage.  Otherwise a
-    # pre-transfer event could make the current branch appear covered even
+    ensure_current_mtd_coverage(sales_rows, advisors_by_branch)
+    ensure_league_showcase_qualifiers(sales_rows, tables["MIS_DIM_ADVISOR"][1])
+    # Stamp generated events after adding coverage and showcase rows. Otherwise
+    # a pre-transfer event could make the current branch appear covered even
     # though temporal attribution correctly moves it to the old branch.
     apply_historical_assignments(sales_rows, org_rows)
-    ensure_current_mtd_coverage(sales_rows, advisors_by_branch)
     tables["MIS_FACT_SALES"] = (cols("MIS_FACT_SALES"), sales_rows)
 
     # booked monthly totals per branch and per advisor -> plans + performance
@@ -1133,6 +1334,15 @@ def build_dataset(scale: int = 1) -> dict[str, tuple[list[str], list[list[Any]]]
         cols("MIS_FACT_PERFORMANCE_SNAPSHOT"), snapshot_rows)
     tables["MIS_AUDIT_SNAPSHOT_LOAD"] = (
         cols("MIS_AUDIT_SNAPSHOT_LOAD"), audit_rows)
+    data_row_count = sum(
+        len(rows) for name, (_columns, rows) in tables.items()
+        if name != "MIS_CONTROL_DATASET_LOAD"
+    )
+    tables["MIS_CONTROL_DATASET_LOAD"] = (
+        cols("MIS_CONTROL_DATASET_LOAD"),
+        [["MIS_DASHBOARD", 1, "SEED-20260815", END.isoformat(),
+          f"{END.isoformat()}T06:00:00", "PUBLISHED", data_row_count, None]],
+    )
     return tables
 
 

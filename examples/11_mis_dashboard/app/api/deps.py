@@ -7,12 +7,14 @@ swap implementations freely.
 
 from __future__ import annotations
 
-from fastapi import Request
+from fastapi import Depends, HTTPException, Request
 
 from app.core.config import Settings
 from app.core.roles import SessionUser
 from app.repositories.base import MISRepository
 from app.services.export_service import ExportService
+from app.services.auth_service import AuthService, InvalidToken
+from app.services.cache_coordinator import CacheCoordinator
 from app.services.ledger_service import LedgerService
 from app.services.people_service import PeopleService
 from app.services.report_service import ReportService
@@ -48,9 +50,24 @@ def get_session_service(request: Request) -> SessionService:
     return request.app.state.session_service
 
 
+def get_auth_service(request: Request) -> AuthService:
+    return request.app.state.auth_service
+
+
 def get_temporal_service(request: Request) -> TemporalMISService:
     return request.app.state.temporal_service
 
 
-async def get_current_user(request: Request) -> SessionUser:
-    return await request.app.state.session_service.current()
+def get_cache_coordinator(request: Request) -> CacheCoordinator:
+    return request.app.state.cache_coordinator
+
+
+async def get_current_user(request: Request,
+                          auth_service: AuthService = Depends(get_auth_service)) -> SessionUser:
+    token = request.cookies.get(request.app.state.settings.auth_cookie_name)
+    if not token:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    try:
+        return await auth_service.authenticate(token)
+    except InvalidToken:
+        raise HTTPException(status_code=401, detail="Invalid or expired access token") from None

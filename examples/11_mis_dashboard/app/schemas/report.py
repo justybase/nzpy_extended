@@ -98,12 +98,29 @@ class CacheTableInfo(BaseModel):
 
 class CacheInfo(BaseModel):
     ttl_seconds: int
+    cache_mode: str = "ttl"
     last_error: str | None = None
     hits: int = 0
     misses: int = 0
     tables: dict[str, CacheTableInfo] = Field(default_factory=dict)
     report_cache_size: int = 0
     report_cache_ttl: int = 0
+    dataset_name: str | None = None
+    dataset_version: int | None = None
+    load_id: str | None = None
+    source_watermark: str | None = None
+    published_at: str | None = None
+    refreshed_version: int | None = None
+    control_checked_at: str | None = None
+    control_check_ok: bool = False
+    control_error: str | None = None
+    cache_age_seconds: int | None = None
+    unconfirmed_age_seconds: int | None = None
+    max_unconfirmed_seconds: int = 86_400
+    stale: bool = False
+    last_refresh_at: str | None = None
+    last_refresh_reason: str | None = None
+    refresh_error: str | None = None
 
 
 class ReportMeta(BaseModel):

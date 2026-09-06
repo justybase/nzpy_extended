@@ -132,11 +132,11 @@ class TemporalMISService:
     @staticmethod
     def _allowed(user: SessionUser | None, advisor_id: int,
                  branch_id: int, region_id: int) -> bool:
-        if user is None or user.is_analyst:
+        if user is None or user.has_full_scope:
             return True
-        if user.role == "AREA_MANAGER":
+        if user.is_region_scoped:
             return user.region_id == region_id
-        if user.role == "BRANCH_MANAGER":
+        if user.is_branch_scoped:
             return user.branch_id == branch_id
         return user.advisor_id == advisor_id
 
@@ -515,7 +515,7 @@ class TemporalMISService:
                 {"key": "activity", "label": "Activity", "fmt": "dec"},
                 {"key": "units", "label": "Sales", "fmt": "int"},
                 {"key": "badges", "label": "Badges"}],
-            "rows": display[:10] if user and user.role == "ADVISOR" else display,
+            "rows": display[:10] if user and user.is_advisor_scoped else display,
             "current_user_position": current_user_position,
         }
 

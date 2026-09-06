@@ -5,12 +5,55 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sales Network MIS — Retail Dashboard</title>
 <link rel="stylesheet" href="/static/style.css">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to content</a>
-<div id="app">
+<section id="login-view" class="login-view" aria-labelledby="login-title">
+  <div class="login-card">
+    <div class="brand-logo login-logo">MIS</div>
+    <div class="page-eyebrow">Retail intelligence <span>/</span> Secure demo</div>
+    <h1 id="login-title">Sign in to Sales Network MIS</h1>
+    <p class="login-copy">Use one of the demo accounts documented in the README, or fill the form manually.</p>
+    <form id="login-form" novalidate>
+      <label for="login-username">Username</label>
+      <input id="login-username" name="username" type="text" autocomplete="username" required>
+      <label for="login-password">Password</label>
+      <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+      <button id="login-submit" class="btn primary login-submit" type="submit">Sign in</button>
+      <p id="login-error" class="login-error" role="alert" hidden></p>
+    </form>
+    <div class="demo-accounts" aria-labelledby="demo-accounts-title">
+      <div class="demo-accounts-title" id="demo-accounts-title">Demo accounts</div>
+      <p class="demo-accounts-copy">Use a button to fill in the credentials. No login is submitted automatically.</p>
+      <div class="demo-account-grid">
+        <button class="demo-account-button" type="button" data-demo-username="mis.sql" data-demo-password="Demo-MIS-SQL-2026!">
+          <span>Use MIS SQL developer</span><small>mis.sql</small>
+        </button>
+        <button class="demo-account-button" type="button" data-demo-username="network.head" data-demo-password="Demo-Network-2026!">
+          <span>Use network head</span><small>network.head</small>
+        </button>
+        <button class="demo-account-button" type="button" data-demo-username="regional.director" data-demo-password="Demo-Region-2026!">
+          <span>Use regional director</span><small>regional.director</small>
+        </button>
+        <button class="demo-account-button" type="button" data-demo-username="branch.director" data-demo-password="Demo-Branch-2026!">
+          <span>Use branch director</span><small>branch.director</small>
+        </button>
+        <button class="demo-account-button" type="button" data-demo-username="customer.advisor" data-demo-password="Demo-Advisor-2026!">
+          <span>Use customer advisor</span><small>customer.advisor</small>
+        </button>
+        <button class="demo-account-button" type="button" data-demo-username="hq.full" data-demo-password="Demo-HQ-2026!">
+          <span>Use HQ full access</span><small>hq.full</small>
+        </button>
+        <button class="demo-account-button" type="button" data-demo-username="app.tester" data-demo-password="Demo-Tester-2026!">
+          <span>Use application tester</span><small>app.tester</small>
+        </button>
+      </div>
+    </div>
+  </div>
+</section>
+<div id="app" hidden>
   <aside id="sidebar">
     <div class="brand">
       <div class="brand-logo">MIS</div>
@@ -21,9 +64,11 @@
       <button id="menu-toggle" class="menu-toggle" type="button" aria-controls="menu" aria-expanded="false">Menu</button>
     </div>
     <nav id="menu" aria-label="Main navigation"></nav>
-    <div id="user-box">
+    <div id="user-box" hidden>
       <label class="cache-title" for="user-select">Signed in as</label>
-      <select id="user-select" title="Simulated sign-in — role-based access"></select>
+      <select id="user-select" title="Tester persona switcher — role-based access"></select>
+      <div id="acting-as" class="acting-as" hidden></div>
+      <button id="logout-button" class="btn btn-small logout-button" type="button">Sign out</button>
     </div>
     <div id="cache-box">
       <div class="cache-title">Data cache</div>
@@ -105,6 +150,7 @@
 </div>
 
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
-<script src="/static/app.js"></script>
+<noscript><p style="padding:16px">This dashboard needs JavaScript to load reports.</p></noscript>
+<script defer src="/static/app.js"></script>
 </body>
 </html>

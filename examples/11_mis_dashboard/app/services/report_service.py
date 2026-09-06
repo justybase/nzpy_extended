@@ -36,7 +36,7 @@ class ReportService:
         repository: MISRepository = self._repository
         if as_of is not None:
             repository = AsOfMISRepository(repository, as_of, attribution)
-        if user is None or user.is_analyst:
+        if user is None or user.has_full_scope:
             return repository
         return ScopedMISRepository(repository, user)
 
@@ -44,18 +44,36 @@ class ReportService:
         snapshot = self._repository.snapshot()
         tables = snapshot.get("tables", {})
         loaded = sorted(str(info.get("loaded_at", "")) for info in tables.values())
-        signature = "|".join(loaded)
+        # Key computed reports by the version actually in memory. During a
+        # failed refresh the control table may already advertise a newer
+        # version, but the old complete table set is still what we serve.
+        data_version = snapshot.get("refreshed_version") or snapshot.get("dataset_version")
+        signature = "|".join([
+            str(snapshot.get("dataset_name", "")),
+            str(data_version or ""),
+            *loaded,
+        ])
         return hashlib.sha1(signature.encode(), usedforsecurity=False).hexdigest()[:12]
 
     def _freshness(self) -> dict[str, Any]:
         snapshot = self._repository.snapshot()
         tables = snapshot.get("tables", {})
         loaded = sorted(str(info.get("loaded_at", "")) for info in tables.values())
-        return {
+        result = {
             "loaded_at": max(loaded, default=None),
-            "stale": bool(snapshot.get("last_error")),
+            "stale": bool(snapshot.get("stale") or snapshot.get("last_error")),
             "snapshot_id": self._snapshot_id(),
         }
+        for key in (
+            "dataset_name", "dataset_version", "load_id", "source_watermark",
+            "published_at", "refreshed_version", "control_checked_at", "control_check_ok",
+            "cache_age_seconds", "unconfirmed_age_seconds",
+            "max_unconfirmed_seconds", "last_refresh_at", "last_refresh_reason",
+            "control_error", "refresh_error",
+        ):
+            if key in snapshot:
+                result[key] = snapshot[key]
+        return result
 
     async def build(self, report_id: str, from_: str | None, to: str | None,
                     dim: str | None,
@@ -79,7 +97,7 @@ class ReportService:
             to = min(to or as_of[:7], as_of[:7])
             if from_ is not None and from_ > to:
                 from_ = to
-        scope = user.code if user and not user.is_analyst else "full"
+        scope = user.code if user and not user.has_full_scope else "full"
         key = ("report", self._snapshot_id(), scope, report_id, from_, to, dim,
                as_of, attribution)
         cached = self._cache.get(key)
@@ -117,7 +135,7 @@ class ReportService:
             to = min(to or as_of[:7], as_of[:7])
             if from_ is not None and from_ > to:
                 from_ = to
-        scope = user.code if user and not user.is_analyst else "full"
+        scope = user.code if user and not user.has_full_scope else "full"
         cache_key = ("drill", self._snapshot_id(), scope, report_id, target, key, from_, to,
                      as_of, attribution)
         cached = self._cache.get(cache_key)
