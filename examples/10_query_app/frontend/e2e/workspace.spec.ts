@@ -33,6 +33,9 @@ test.describe('Netezza SQL workspace', () => {
     await expect(page.getByText('3 rows')).toBeVisible({ timeout: 30_000 });
     await expect(page.locator('.tabulator')).toContainText('alpha');
     await expect(page.locator('.tabulator-col[draggable="true"]').first()).toBeVisible();
+    await page.locator('.tabulator-col[draggable="true"]').first().dragTo(page.locator('.group-drop-zone'));
+    await expect(page.locator('.group-chip')).toContainText('ID');
+    await expect(page.locator('.tabulator-group')).toHaveCount(3);
     await page.locator('.tabulator-row').first().click({ button: 'right' });
     await expect(page.locator('.tabulator-menu')).toContainText('Copy row as TSV');
     await page.locator('.tabulator-menu').getByText('Copy row as TSV').click();
