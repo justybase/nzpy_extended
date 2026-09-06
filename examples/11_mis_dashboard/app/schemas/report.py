@@ -94,6 +94,7 @@ class DrillResponse(BaseModel):
 class CacheTableInfo(BaseModel):
     rows: int
     loaded_at: str
+    storage: str | None = None
 
 
 class CacheInfo(BaseModel):
@@ -121,6 +122,29 @@ class CacheInfo(BaseModel):
     last_refresh_at: str | None = None
     last_refresh_reason: str | None = None
     refresh_error: str | None = None
+    persistent_enabled: bool = False
+    persistent_snapshot_present: bool = False
+    persistent_snapshot_version: int | None = None
+    persistent_snapshot_load_id: str | None = None
+    persistent_generation_id: str | None = None
+    persistent_snapshot_at: str | None = None
+    persistent_error: str | None = None
+    restored_from_disk: bool = False
+    lazy_persistent_hits: int = 0
+    lazy_persistent_misses: int = 0
+
+
+class CacheRefreshResponse(BaseModel):
+    reloaded: int = 0
+    errors: list[str] = Field(default_factory=list)
+    committed: bool = False
+    persistent_committed: bool = False
+    persistent_error: str | None = None
+    derived_caches_cleared: bool = False
+    restored: bool = False
+    changed: bool = False
+    version: int | None = None
+    refresh_reason: str | None = None
 
 
 class ReportMeta(BaseModel):

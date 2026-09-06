@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.cache_types import DatasetVersion
 from app.repositories.base import MISRepository
 
 
@@ -22,7 +23,7 @@ class FakeRepository(MISRepository):
         cols, rows = self._tables[name]
         return cols, [list(r) for r in rows]
 
-    async def refresh_all(self) -> dict[str, Any]:
+    async def refresh_all(self, generation: DatasetVersion | None = None) -> dict[str, Any]:
         return {"reloaded": len(self._tables), "errors": []}
 
     def snapshot(self) -> dict[str, Any]:

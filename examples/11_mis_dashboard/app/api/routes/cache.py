@@ -8,13 +8,22 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import get_cache_coordinator, get_current_user
 from app.core.roles import SessionUser
+from app.schemas.report import CacheRefreshResponse
 from app.services.cache_coordinator import CacheCoordinator
 
 router = APIRouter(prefix="/api/cache", tags=["cache"],
                    dependencies=[Depends(get_current_user)])
 
 
-@router.post("/refresh")
+@router.post(
+    "/refresh",
+    response_model=CacheRefreshResponse,
+    summary="Refresh the data cache",
+    description=(
+        "Reload the complete eager generation for an authorized technical "
+        "user and clear dependent service caches."
+    ),
+)
 async def refresh(coordinator: CacheCoordinator = Depends(get_cache_coordinator),
                   user: SessionUser = Depends(get_current_user)) -> dict[str, Any]:
     if not user.can_refresh_cache:

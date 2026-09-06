@@ -1,0 +1,193 @@
+{
+  "contract_version": 1,
+  "dataset_name": "MIS_DASHBOARD",
+  "source_of_truth": "Netezza",
+  "publication_signal": "MIS_CONTROL_DATASET_LOAD",
+  "publication_identity": [
+    "dataset_name",
+    "version_no",
+    "load_id"
+  ],
+  "tables": [
+    {
+      "name": "MIS_DIM_REGION",
+      "category": "eager",
+      "grain": "one row per sales region",
+      "primary_key": ["region_id"],
+      "date_columns": [],
+      "cache_policy": "RAM plus SQLite snapshot",
+      "production_status": "example_compatible",
+      "owner_role": "data engineering"
+    },
+    {
+      "name": "MIS_DIM_BRANCH",
+      "category": "eager",
+      "grain": "one row per branch",
+      "primary_key": ["branch_id"],
+      "date_columns": ["open_date"],
+      "cache_policy": "RAM plus SQLite snapshot",
+      "production_status": "example_compatible",
+      "owner_role": "data engineering"
+    },
+    {
+      "name": "MIS_DIM_ADVISOR",
+      "category": "eager",
+      "grain": "one row per advisor in the current organization view",
+      "primary_key": ["advisor_id"],
+      "date_columns": ["hire_date"],
+      "cache_policy": "RAM plus SQLite snapshot",
+      "production_status": "production_decision_required",
+      "owner_role": "data governance"
+    },
+    {
+      "name": "MIS_DIM_PRODUCT",
+      "category": "eager",
+      "grain": "one row per product",
+      "primary_key": ["product_id"],
+      "date_columns": [],
+      "cache_policy": "RAM plus SQLite snapshot",
+      "production_status": "example_compatible",
+      "owner_role": "product data owner"
+    },
+    {
+      "name": "MIS_DIM_CHANNEL",
+      "category": "eager",
+      "grain": "one row per sales channel",
+      "primary_key": ["channel_id"],
+      "date_columns": [],
+      "cache_policy": "RAM plus SQLite snapshot",
+      "production_status": "example_compatible",
+      "owner_role": "data engineering"
+    },
+    {
+      "name": "MIS_DIM_CAMPAIGN",
+      "category": "eager",
+      "grain": "one row per marketing campaign",
+      "primary_key": ["campaign_id"],
+      "date_columns": ["start_date", "end_date"],
+      "cache_policy": "RAM plus SQLite snapshot",
+      "production_status": "production_decision_required",
+      "owner_role": "marketing data owner"
+    },
+    {
+      "name": "MIS_DIM_DATE",
+      "category": "eager",
+      "grain": "one row per calendar date",
+      "primary_key": ["calendar_date"],
+      "date_columns": ["calendar_date", "month_start", "month_end"],
+      "cache_policy": "RAM plus SQLite snapshot",
+      "production_status": "production_decision_required",
+      "owner_role": "data engineering"
+    },
+    {
+      "name": "MIS_DIM_ORG_ASSIGNMENT",
+      "category": "eager",
+      "grain": "one advisor organization assignment version",
+      "primary_key": ["org_assignment_sk"],
+      "date_columns": ["valid_from", "valid_to"],
+      "cache_policy": "RAM plus SQLite snapshot",
+      "production_status": "production_decision_required",
+      "owner_role": "organization data owner"
+    },
+    {
+      "name": "MIS_FACT_SALES",
+      "category": "eager",
+      "grain": "one sales event",
+      "primary_key": ["sale_id"],
+      "date_columns": ["sale_date"],
+      "cache_policy": "RAM plus SQLite snapshot",
+      "production_status": "production_decision_required",
+      "owner_role": "sales data owner"
+    },
+    {
+      "name": "MIS_FACT_BALANCES",
+      "category": "eager",
+      "grain": "one branch, balance month and balance-bearing product",
+      "primary_key": ["balance_month", "branch_id", "product_id"],
+      "date_columns": ["balance_month"],
+      "cache_policy": "RAM plus SQLite snapshot",
+      "production_status": "production_decision_required",
+      "owner_role": "finance data owner"
+    },
+    {
+      "name": "MIS_FACT_CUSTOMER_MOVEMENT",
+      "category": "eager",
+      "grain": "one branch and movement month",
+      "primary_key": ["movement_month", "branch_id"],
+      "date_columns": ["movement_month"],
+      "cache_policy": "RAM plus SQLite snapshot",
+      "production_status": "production_decision_required",
+      "owner_role": "customer data owner"
+    },
+    {
+      "name": "MIS_FACT_CAMPAIGN_RESULTS",
+      "category": "eager",
+      "grain": "one campaign and branch",
+      "primary_key": ["campaign_id", "branch_id"],
+      "date_columns": [],
+      "cache_policy": "RAM plus SQLite snapshot",
+      "production_status": "production_decision_required",
+      "owner_role": "marketing data owner"
+    },
+    {
+      "name": "MIS_FACT_BRANCH_PLAN",
+      "category": "eager",
+      "grain": "one branch and plan month",
+      "primary_key": ["branch_id", "plan_month"],
+      "date_columns": ["plan_month"],
+      "cache_policy": "RAM plus SQLite snapshot",
+      "production_status": "production_decision_required",
+      "owner_role": "sales planning owner"
+    },
+    {
+      "name": "MIS_FACT_ADVISOR_PERF",
+      "category": "eager",
+      "grain": "one advisor and performance month",
+      "primary_key": ["advisor_id", "perf_month"],
+      "date_columns": ["perf_month"],
+      "cache_policy": "RAM plus SQLite snapshot",
+      "production_status": "production_decision_required",
+      "owner_role": "sales performance owner"
+    },
+    {
+      "name": "MIS_DIM_USER",
+      "category": "eager",
+      "grain": "one dashboard persona",
+      "primary_key": ["user_id"],
+      "date_columns": [],
+      "cache_policy": "RAM plus SQLite snapshot; replace demo identity in production",
+      "production_status": "demo_only",
+      "owner_role": "security and IAM"
+    },
+    {
+      "name": "MIS_FACT_PERFORMANCE_SNAPSHOT",
+      "category": "lazy",
+      "grain": "one snapshot date, advisor and historical branch",
+      "primary_key": ["snapshot_date", "advisor_id", "historical_branch_id"],
+      "date_columns": ["snapshot_date", "month_start"],
+      "cache_policy": "RAM and persisted equality slices by snapshot_date",
+      "production_status": "production_decision_required",
+      "owner_role": "data engineering"
+    },
+    {
+      "name": "MIS_AUDIT_SNAPSHOT_LOAD",
+      "category": "audit",
+      "grain": "one quality-gate record per snapshot date",
+      "primary_key": ["snapshot_date"],
+      "date_columns": ["snapshot_date", "source_max_date"],
+      "cache_policy": "eager read-only audit metadata",
+      "production_status": "production_decision_required",
+      "owner_role": "data quality"
+    },
+    {
+      "name": "MIS_CONTROL_DATASET_LOAD",
+      "category": "control",
+      "grain": "one ETL publication record per logical dataset and version",
+      "primary_key": ["dataset_name", "version_no"],
+      "date_columns": ["source_max_date", "published_at"],
+      "cache_policy": "direct query; never copied to the application data cache",
+      "production_status": "production_decision_required",
+      "owner_role": "data engineering"
+    }
+  ]
+}

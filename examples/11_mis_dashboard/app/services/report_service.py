@@ -26,7 +26,9 @@ from app.services import reporting
 class ReportService:
     def __init__(self, repository: MISRepository, ttl: int = 120, maxsize: int = 512) -> None:
         self._repository = repository
-        self._cache: TTLCache = TTLCache(maxsize=maxsize, ttl=ttl)
+        self._cache: TTLCache[Any, dict[str, Any]] = TTLCache(
+            maxsize=maxsize, ttl=ttl
+        )
 
     # -- report payloads ----------------------------------------------------
 
@@ -69,7 +71,11 @@ class ReportService:
             "published_at", "refreshed_version", "control_checked_at", "control_check_ok",
             "cache_age_seconds", "unconfirmed_age_seconds",
             "max_unconfirmed_seconds", "last_refresh_at", "last_refresh_reason",
-            "control_error", "refresh_error",
+            "control_error", "refresh_error", "persistent_enabled",
+            "persistent_snapshot_present", "persistent_snapshot_version",
+            "persistent_snapshot_load_id", "persistent_generation_id",
+            "persistent_snapshot_at", "persistent_error", "restored_from_disk",
+            "lazy_persistent_hits", "lazy_persistent_misses",
         ):
             if key in snapshot:
                 result[key] = snapshot[key]

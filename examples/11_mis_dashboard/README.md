@@ -7,6 +7,10 @@ dashboard for a bank's retail sales network. Built with **FastAPI**,
 Everything is in English: table names, columns, menu items, labels and the
 sample data (Irish cities and names).
 
+> Classification: CURRENT EXAMPLE + DEMO BOUNDARIES
+> Production use: adaptation and security review required
+> Documentation index: [`docs/index.md`](docs/index.md)
+
 ## Architecture (professional FastAPI layout)
 
 The app follows the layered structure used in real FastAPI projects — thin
@@ -40,7 +44,8 @@ app/
 │   └── export_service.py      xlspy workbook generation
 ├── repositories/              data access
 │   ├── base.py                MISRepository interface (ABC)
-│   ├── cached.py              ordinary tables + lazy slices in process cache
+│   ├── cached.py              RAM cache + durable SQLite snapshot coordination
+│   ├── sqlite_snapshot.py     atomic SQLite generation snapshots and lazy slices
 │   ├── temporal.py            as-of cut-off + current/historical attribution
 │   └── scoped.py              row-level role masking (ScopedMISRepository)
 ├── schemas/                   Pydantic response models
@@ -53,6 +58,34 @@ Plus `tools/visual_check.py` — browser-based layout checks (Playwright).
 Services depend only on the `MISRepository` interface, so the storage backend
 can be swapped — the unit tests use a tiny in-memory `FakeRepository` and
 never touch a database (`tests/test_report_service.py`).
+
+## Developer documentation
+
+The implementation map and extension rules are in
+[`docs/implementation-guide.md`](docs/implementation-guide.md). Use it when
+adding reports, endpoints, tables, roles or cache behaviour. Domain-specific
+references are kept separate:
+
+- [`docs/index.md`](docs/index.md) — documentation map and source-of-truth
+  rules;
+- [`docs/data_dictionary.md`](docs/data_dictionary.md) — table grain, keys,
+  columns and relationships;
+- [`docs/erd.md`](docs/erd.md) — entity relationship diagram;
+- [`docs/cache.md`](docs/cache.md) — ETL publication, cache lifecycle and
+  operational runbook;
+- [`docs/authentication.md`](docs/authentication.md) — login flow, roles and
+  authorization contract;
+- [`docs/contracts/README.md`](docs/contracts/README.md) — generated API and
+  data contracts;
+- [`docs/adr/README.md`](docs/adr/README.md) — architecture decision records;
+- [`docs/production-adaptation.md`](docs/production-adaptation.md) — bank
+  environment decisions and required evidence;
+- [`docs/operations.md`](docs/operations.md) — startup, failure and recovery
+  runbook.
+
+This repository contains a runnable example, not a production approval. Demo
+identity, credentials, seed data, default secrets, local SQLite persistence and
+single-process assumptions are explicitly marked in the linked documentation.
 
 ## Features
 
@@ -216,23 +249,27 @@ series line chart and a day table. Plans come from `MIS_FACT_BRANCH_PLAN`
 ## Caching — why Netezza is barely queried
 
 The user-facing requirement is: *do not query Netezza for every click*. The
-application keeps ordinary MIS tables in a bounded process-local LRU cache and
-uses the ordinary `MIS_CONTROL_DATASET_LOAD` table only as a freshness signal.
+application keeps ordinary MIS tables in a bounded process-local LRU cache,
+with a durable SQLite snapshot used to survive process restarts, and uses the
+ordinary `MIS_CONTROL_DATASET_LOAD` table only as a freshness signal.
 The larger `MIS_FACT_PERFORMANCE_SNAPSHOT` remains lazy: an equality predicate
 on `snapshot_date` is pushed to Netezza and only that slice is cached.
 
-At startup the eager tables are loaded once. A background coordinator polls the
-small control table (five minutes by default). When its latest `PUBLISHED`
-`version_no` and `load_id` are unchanged, no dataset table is read. When the
-version changes, all eager tables are loaded into a temporary set and swapped
-into the cache only after the complete refresh succeeds; lazy slices and all
-derived report/people/ledger/temporal caches are then cleared. The existing
-**Reload data** button uses the same path.
+At startup the application first validates and restores the latest complete
+SQLite snapshot into RAM. If its `PUBLISHED` `version_no` and `load_id` match
+the control table, no dataset table is read. If the snapshot is missing, older
+or invalid, all eager tables are loaded into a temporary set and written to a
+temporary SQLite file before the complete generation is activated. Lazy slices
+and all derived report/people/ledger/temporal caches are then cleared. The
+existing **Reload data** button uses the same path.
 
 If the control table or a refresh is unavailable, the last complete dataset
-continues to serve. After 24 hours without a successful freshness confirmation
-the API and sidebar mark it as `stale` and display a warning. The table cache
-is not persisted across a process restart; startup performs the initial load.
+continues to serve and the API/sidebar mark it as `stale`. After 24 hours
+without any successful freshness confirmation, the same warning is also
+raised. If SQLite cannot be written, the fresh RAM generation remains usable
+and the persistent-cache error is exposed in status. The default snapshot path is
+`var/cache/mis_dashboard.sqlite3`; it can be changed or disabled with
+`NZ_CACHE_SQLITE_PATH`.
 
 Tunables (environment variables):
 
@@ -244,6 +281,7 @@ Tunables (environment variables):
 | `NZ_CACHE_MAX_UNCONFIRMED_SECONDS` | `86400` | stale-warning threshold |
 | `NZ_CACHE_DATASET_NAME` | `MIS_DASHBOARD` | logical ETL dataset name |
 | `NZ_CACHE_CONTROL_TABLE` | `MIS_CONTROL_DATASET_LOAD` | ordinary control table name |
+| `NZ_CACHE_SQLITE_PATH` | `var/cache/mis_dashboard.sqlite3` | durable local snapshot; empty disables it |
 
 ## Setup
 

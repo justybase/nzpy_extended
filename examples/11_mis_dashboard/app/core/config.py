@@ -8,6 +8,7 @@ driver tests and examples/10_query_app). Caching behaviour:
     NZ_CACHE_TTL_REPORTS             how long computed report payloads stay cached (s)
     NZ_CACHE_CONTROL_POLL_SECONDS    polling interval for the ETL control table (s)
     NZ_CACHE_MAX_UNCONFIRMED_SECONDS warning threshold when freshness cannot be confirmed (s)
+    NZ_CACHE_SQLITE_PATH             durable local snapshot path; empty disables it
 """
 
 from __future__ import annotations
@@ -35,6 +36,9 @@ class Settings:
     cache_max_unconfirmed_seconds: int = 86_400  # 24 h
     cache_dataset_name: str = "MIS_DASHBOARD"
     cache_control_table: str = "MIS_CONTROL_DATASET_LOAD"
+    cache_sqlite_path: Path | None = field(
+        default_factory=lambda: Path("var/cache/mis_dashboard.sqlite3")
+    )
 
     # app
     static_dir: Path = field(default_factory=lambda: Path(__file__).resolve().parents[2] / "static")
@@ -87,6 +91,12 @@ class Settings:
             cache_dataset_name=os.environ.get("NZ_CACHE_DATASET_NAME", "MIS_DASHBOARD"),
             cache_control_table=os.environ.get(
                 "NZ_CACHE_CONTROL_TABLE", "MIS_CONTROL_DATASET_LOAD"),
+            cache_sqlite_path=(
+                Path(sqlite_path)
+                if (sqlite_path := os.environ.get(
+                    "NZ_CACHE_SQLITE_PATH", "var/cache/mis_dashboard.sqlite3"))
+                else None
+            ),
             host=os.environ.get("NZ_DASH_HOST", "0.0.0.0"),
             port=int(os.environ.get("NZ_DASH_PORT", "8481")),
             jwt_secret=os.environ.get("MIS_JWT_SECRET", "mis-dashboard-demo-secret-change-me"),

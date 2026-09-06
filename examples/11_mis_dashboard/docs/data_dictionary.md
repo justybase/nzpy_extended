@@ -1,5 +1,10 @@
 # MIS dashboard data dictionary
 
+> Document type: data contract reference
+> Status: demo schema reference
+> Production adaptation: ownership, classification, lineage and retention required
+> Owner: data engineering / data governance
+
 This document describes the 18 tables created by `seed.py` for the
 `JUST_DATA` demo schema. The model is a sales-network star schema with a
 small type-2 organization history and an accumulating daily performance mart.

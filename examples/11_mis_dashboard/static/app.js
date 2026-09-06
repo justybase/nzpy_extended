@@ -1858,12 +1858,17 @@ function renderCacheInfo(meta) {
   const checkedAt = c.control_checked_at
     ? new Date(c.control_checked_at).toLocaleTimeString("en-IE") : "—";
   const version = c.dataset_version == null ? "—" : `v${c.dataset_version}`;
+  const storage = c.persistent_enabled ? "RAM + SQLite" : "RAM";
   const box = $("cache-info");
   box.textContent = "";
   box.appendChild(document.createTextNode(
     `${total} tables in memory, ${fmtInt.format(rows)} rows, ` +
-    `loaded ${loadedAt} · dataset ${version}, checked ${checkedAt}, age ${age} · ` +
+    `loaded ${loadedAt} · ${storage} · dataset ${version}, checked ${checkedAt}, age ${age} · ` +
     `hits ${fmtInt.format(c.hits)} / misses ${fmtInt.format(c.misses)}`));
+  if (c.restored_from_disk) {
+    box.appendChild(document.createElement("br"));
+    box.appendChild(document.createTextNode("Restored from persistent snapshot."));
+  }
   if (c.stale) {
     box.appendChild(document.createElement("br"));
     const stale = document.createElement("span");
@@ -1883,6 +1888,13 @@ function renderCacheInfo(meta) {
     const err = document.createElement("span");
     err.className = "err";
     err.textContent = `control table: ${c.control_error}`;
+    box.appendChild(err);
+  }
+  if (c.persistent_error) {
+    box.appendChild(document.createElement("br"));
+    const err = document.createElement("span");
+    err.className = "err";
+    err.textContent = `persistent cache: ${c.persistent_error}`;
     box.appendChild(err);
   }
 }
