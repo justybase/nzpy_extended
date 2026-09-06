@@ -138,6 +138,15 @@ export function App(): ReactElement {
     const quickSql = new Map([['SX', 'SELECT '], ['FX', 'FROM '], ['WX', 'WHERE '], ['HX', 'HAVING '], ['GX', 'GROUP BY ']]);
     editor.onKeyDown(event => {
       const isCtrlW = event.keyCode === monaco.KeyCode.KeyW && (event.ctrlKey || event.metaKey);
+      const isRunShortcut = event.keyCode === monaco.KeyCode.Enter && (event.ctrlKey || event.metaKey);
+      if (isRunShortcut) {
+        event.preventDefault();
+        event.stopPropagation();
+        runChordPendingRef.current = false;
+        window.clearTimeout(runChordTimerRef.current);
+        void run('cursor');
+        return;
+      }
       if (isCtrlW) {
         event.preventDefault();
         event.stopPropagation();
