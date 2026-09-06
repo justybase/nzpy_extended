@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Apex Velocity — Sales Network Pipeline & Incentive MIS</title>
+<style>
+:root {
+  --bg-body: #f8fafc;
+  --bg-card: #ffffff;
+  --border: #e2e8f0;
+  --text-dark: #0f172a;
+  --text-muted: #64748b;
+  --primary: #2563eb;
+  --primary-light: #eff6ff;
+  --emerald: #10b981;
+  --emerald-bg: #ecfdf5;
+  --amber: #f59e0b;
+  --amber-bg: #fffbeb;
+  --rose: #ef4444;
+  --rose-bg: #fef2f2;
+  --violet: #8b5cf6;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg-body); color: var(--text-dark); font-family: var(--font); font-size: 13px; line-height: 1.5; display: flex; min-height: 100vh; }
+
+aside { width: 250px; background: #ffffff; border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
+.logo-box { padding: 20px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); }
+.logo-icon { width: 34px; height: 34px; background: #2563eb; border-radius: 8px; color: #fff; font-weight: 800; font-size: 18px; display: grid; place-items: center; }
+.logo-title { font-size: 15px; font-weight: 700; color: #0f172a; }
+.logo-sub { font-size: 10px; color: #2563eb; font-weight: 600; letter-spacing: 0.8px; }
+
+.side-nav { padding: 16px 12px; display: flex; flex-direction: column; gap: 4px; }
+.side-caption { font-size: 10px; font-weight: 700; color: var(--text-muted); padding: 0 8px 6px; letter-spacing: 1px; }
+.nav-btn { width: 100%; border: 0; background: none; color: #475569; padding: 10px 12px; border-radius: 6px; font-size: 13px; font-weight: 500; display: flex; align-items: center; gap: 10px; cursor: pointer; text-align: left; }
+.nav-btn:hover { background: #f1f5f9; color: #0f172a; }
+.nav-btn.active { background: var(--primary-light); color: var(--primary); font-weight: 600; }
+
+.pacing-widget { margin: auto 12px 14px; background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+.pacing-head { display: flex; justify-content: space-between; font-size: 11px; font-weight: 600; margin-bottom: 4px; }
+.pacing-bar { height: 6px; background: #e2e8f0; border-radius: 3px; overflow: hidden; margin: 6px 0; }
+.pacing-fill { height: 100%; width: 84%; background: var(--emerald); border-radius: 3px; }
+
+main { flex: 1; display: flex; flex-direction: column; overflow-y: auto; max-height: 100vh; }
+header { height: 68px; background: #ffffff; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 32px; position: sticky; top: 0; z-index: 10; }
+.header-titles h1 { font-size: 18px; font-weight: 700; color: #0f172a; }
+.header-titles p { font-size: 11px; color: var(--text-muted); }
+.header-actions { display: flex; gap: 10px; }
+
+.btn { padding: 8px 14px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; border: 1px solid var(--border); background: #fff; color: #334155; display: inline-flex; align-items: center; gap: 6px; }
+.btn-primary { background: #2563eb; color: #fff; border-color: #2563eb; }
+.btn-primary:hover { background: #1d4ed8; }
+.select { padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border); font-size: 12px; color: #334155; background: #fff; cursor: pointer; }
+
+.content { padding: 24px 32px 40px; display: flex; flex-direction: column; gap: 20px; }
+
+/* Product Sprint Pills */
+.filter-row { display: flex; gap: 8px; align-items: center; overflow-x: auto; }
+.filter-pill { padding: 6px 14px; border-radius: 20px; border: 1px solid var(--border); background: #fff; color: var(--text-muted); font-size: 12px; font-weight: 500; cursor: pointer; }
+.filter-pill.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+
+/* 5 KPIs Row */
+.kpi-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; }
+.kpi-card { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.02); }
+.kpi-title { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.kpi-val { font-size: 24px; font-weight: 700; color: #0f172a; margin: 4px 0 2px; }
+.kpi-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 4px; font-size: 10.5px; font-weight: 600; }
+.kpi-badge.up { background: var(--emerald-bg); color: var(--emerald); }
+.kpi-badge.warn { background: var(--amber-bg); color: var(--amber); }
+
+/* FUNNEL & RUN-RATE GRID */
+.grid-main { display: grid; grid-template-columns: 1.8fr 1.2fr; gap: 18px; }
+.card { background: #fff; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.02); }
+.card-header { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+.card-header h3 { font-size: 14px; font-weight: 600; color: #0f172a; }
+.card-body { padding: 18px; }
+
+/* Funnel visualizer */
+.funnel-steps { display: flex; flex-direction: column; gap: 10px; }
+.funnel-step { display: flex; flex-direction: column; gap: 4px; }
+.funnel-meta { display: flex; justify-content: space-between; font-size: 12px; font-weight: 500; }
+.funnel-bar-bg { height: 26px; background: #f1f5f9; border-radius: 6px; overflow: hidden; position: relative; display: flex; align-items: center; padding: 0 10px; }
+.funnel-bar-fill { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, #3b82f6, #60a5fa); border-radius: 6px; z-index: 1; }
+.funnel-bar-text { position: relative; z-index: 2; font-weight: 600; font-size: 11px; color: #fff; }
+
+/* Tables */
+table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
+th { background: #f8fafc; color: var(--text-muted); font-weight: 600; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.5px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+td { padding: 12px 14px; border-bottom: 1px solid #f1f5f9; color: #334155; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: #f8fafc; }
+.tier-tag { padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.tier-gold { background: #fef3c7; color: #b45309; }
+.tier-silver { background: #e2e8f0; color: #475569; }
+.tier-bronze { background: #ffedd5; color: #9a3412; }
+
+#toast { position: fixed; bottom: 20px; right: 20px; background: #0f172a; color: #fff; padding: 10px 16px; border-radius: 6px; font-size: 12px; font-weight: 500; opacity: 0; transform: translateY(20px); transition: .2s; }
+#toast.show { opacity: 1; transform: translateY(0); }
+
+@media (max-width: 1200px) { .kpi-row { grid-template-columns: repeat(3, 1fr); } .grid-main { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<aside>
+  <div class="logo-box">
+    <div class="logo-icon">▲</div>
+    <div>
+      <div class="logo-title">APEX VELOCITY</div>
+      <div class="logo-sub">DISTRIBUTION PACING</div>
+    </div>
+  </div>
+
+  <div class="side-nav">
+    <div class="side-caption">SALES STEERING</div>
+    <button class="nav-btn active" data-flow="funnel">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+      Pipeline & Conversion
+    </button>
+    <button class="nav-btn" data-flow="advisors">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+      Advisor Incentive Tiers
+    </button>
+    <button class="nav-btn" data-flow="pacing">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      Daily Run-Rate Tracker
+    </button>
+  </div>
+
+  <div class="pacing-widget">
+    <div class="pacing-head">
+      <span>Day 23 of 31 (Pacing)</span>
+      <span style="color:var(--emerald);">84%</span>
+    </div>
+    <div class="pacing-bar"><div class="pacing-fill"></div></div>
+    <div style="font-size: 10px; color: var(--text-muted); display:flex; justify-content:space-between;">
+      <span>Target: $185M</span>
+      <span>Actual: $155.4M</span>
+    </div>
+  </div>
+</aside>
+
+<main>
+  <header>
+    <div class="header-titles">
+      <h1 id="viewTitle">Sales Pipeline Conversion & Stage Velocity</h1>
+      <p>Real-time lead drop-off and credit application status across 142 branches</p>
+    </div>
+    <div class="header-actions">
+      <select class="select" id="periodSelect">
+        <option>Sprint: Week 34 (Current)</option>
+        <option>Monthly View (August)</option>
+        <option>Quarterly (Q3-to-Date)</option>
+      </select>
+      <button class="btn btn-primary" id="btnExport">Export Deck</button>
+    </div>
+  </header>
+
+  <div class="content">
+    <!-- PRODUCT SPRINT FILTER PILLS -->
+    <div class="filter-row">
+      <span style="font-weight:600; font-size:11px; color:var(--text-muted); margin-right:4px;">CAMPAIGN PRODUCT:</span>
+      <button class="filter-pill active" data-prod="ALL">All Retail Lending</button>
+      <button class="filter-pill" data-prod="MORTGAGE">Green Mortgages</button>
+      <button class="filter-pill" data-prod="CONSUMER">Express Cash Loans</button>
+      <button class="filter-pill" data-prod="SME">SME Credit Lines</button>
+      <button class="filter-pill" data-prod="WEALTH">Wealth & Bancassurance</button>
+    </div>
+
+    <!-- 5 KPIS -->
+    <div class="kpi-row" id="kpiBox"></div>
+
+    <!-- FUNNEL CONVERSION & ADVISOR INCENTIVE TIERS -->
+    <div class="grid-main">
+      <!-- Funnel Chart Card -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h3>Lead-to-Disbursement Pipeline Funnel</h3>
+            <p style="font-size:11px; color:var(--text-muted);">Drop-off rates and approval bottleneck monitoring</p>
+          </div>
+          <span class="kpi-badge up">Avg. Cycle: 11.2 Days</span>
+        </div>
+        <div class="card-body">
+          <div class="funnel-steps" id="funnelStepsBox"></div>
+        </div>
+      </div>
+
+      <!-- Top Advisors Pacing & Bonus Threshold -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h3>Top Bankers Bonus Pacing</h3>
+            <p style="font-size:11px; color:var(--text-muted);">Current sprint payout qualification</p>
+          </div>
+          <span class="kpi-badge up">78% Qualified</span>
+        </div>
+        <div class="card-body" style="padding:0;">
+          <table>
+            <thead>
+              <tr>
+                <th>Banker</th>
+                <th>Volume</th>
+                <th>Target</th>
+                <th>Incentive Tier</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td><b>Sarah Jenkins</b><br><small style="color:var(--text-muted);">Central Flagship</small></td><td>$3.85M</td><td>142%</td><td><span class="tier-tag tier-gold">Gold Elite</span></td></tr>
+              <tr><td><b>Marcus Thorne</b><br><small style="color:var(--text-muted);">Northgate Branch</small></td><td>$3.12M</td><td>118%</td><td><span class="tier-tag tier-gold">Gold Elite</span></td></tr>
+              <tr><td><b>Elena Rossi</b><br><small style="color:var(--text-muted);">Silicon Galleria</small></td><td>$2.84M</td><td>107%</td><td><span class="tier-tag tier-silver">Silver Pro</span></td></tr>
+              <tr><td><b>David Kalu</b><br><small style="color:var(--text-muted);">Riverside Mall</small></td><td>$2.21M</td><td>98%</td><td><span class="tier-tag tier-bronze">Bronze</span></td></tr>
+              <tr><td><b>Anna Lindqvist</b><br><small style="color:var(--text-muted);">Westside Park</small></td><td>$1.89M</td><td>91%</td><td><span class="tier-tag tier-bronze">Bronze</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div id="toast">Report updated</div>
+
+<script>
+const kpisData = [
+  { label: 'Pipeline Volume (Active)', val: '$248.5M', delta: '+12.4%', status: 'up' },
+  { label: 'Weekly Disbursement Run-Rate', val: '$38.8M', delta: '+104.2%', status: 'up' },
+  { label: 'Credit Approval Conversion', val: '64.8%', delta: '-2.1 pp', status: 'warn' },
+  { label: 'First-Touch to Consultation', val: '41.2%', delta: '+3.5 pp', status: 'up' },
+  { label: 'Lost Deals / Abandonment', val: '14.2%', delta: '-1.8 pp', status: 'up' }
+];
+
+const funnelData = [
+  { stage: '1. Inbound Inquiries & Branch Walk-ins', count: '14,280 leads', vol: '$412M', pct: 100 },
+  { stage: '2. Branch Consultation & Scoring Initiated', count: '8,420 apps', vol: '$318M', pct: 77 },
+  { stage: '3. Underwriting & Risk Approval', count: '5,450 approved', vol: '$224M', pct: 54 },
+  { stage: '4. Offer Accepted & Contract Signed', count: '4,110 signed', vol: '$178M', pct: 43 },
+  { stage: '5. Booked & Disbursed Funds', count: '3,840 booked', vol: '$155.4M', pct: 37 }
+];
+
+function render() {
+  document.getElementById('kpiBox').innerHTML = kpisData.map(k => `
+    <div class="kpi-card">
+      <div class="kpi-title">${k.label}</div>
+      <div class="kpi-val">${k.val}</div>
+      <span class="kpi-badge ${k.status}">${k.delta} vs. target pace</span>
+    </div>
+  `).join('');
+
+  document.getElementById('funnelStepsBox').innerHTML = funnelData.map(f => `
+    <div class="funnel-step">
+      <div class="funnel-meta">
+        <span>${f.stage}</span>
+        <b>${f.vol} <small style="color:var(--text-muted); font-weight:400;">(${f.count})</small></b>
+      </div>
+      <div class="funnel-bar-bg">
+        <div class="funnel-bar-fill" style="width: ${f.pct}%;"></div>
+        <div class="funnel-bar-text">${f.pct}% Conversion Efficiency</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+document.querySelectorAll('.filter-pill').forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll('.filter-pill').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const toast = document.getElementById('toast');
+    toast.textContent = `Filtered by campaign: ${btn.textContent.trim()}`;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 2000);
+  }
+});
+
+document.getElementById('btnExport').onclick = () => {
+  alert('Exporting Apex Velocity Sprint Deck (.CSV)');
+};
+
+render();
+</script>
+</body>
+</html>

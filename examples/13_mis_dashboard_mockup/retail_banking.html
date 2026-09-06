@@ -1,0 +1,983 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VALENCE Retail Bank — Commercial Sales & Portfolio Intelligence (Executive MIS)</title>
+<style>
+:root {
+  --bg-core: #090d16;
+  --bg-card: #111726;
+  --bg-card-hover: #162033;
+  --border: #1e2a40;
+  --border-highlight: #33486a;
+  --text-main: #f8fafc;
+  --text-muted: #8494ab;
+  --text-sub: #546682;
+  
+  --accent-blue: #0284c7;
+  --accent-cyan: #06b6d4;
+  --accent-emerald: #10b981;
+  --accent-emerald-bg: rgba(16, 185, 129, 0.12);
+  --accent-amber: #f59e0b;
+  --accent-amber-bg: rgba(245, 158, 11, 0.12);
+  --accent-rose: #f43f5e;
+  --accent-rose-bg: rgba(244, 63, 94, 0.12);
+  --accent-purple: #a855f7;
+  --accent-indigo: #6366f1;
+
+  --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg-core);
+  color: var(--text-main);
+  font-family: var(--font-family);
+  font-size: 13px;
+  line-height: 1.5;
+  display: flex;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+/* SIDEBAR */
+aside {
+  width: 270px;
+  background: #060911;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  z-index: 20;
+}
+.brand-container {
+  padding: 22px 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.brand-mark {
+  width: 38px;
+  height: 38px;
+  background: linear-gradient(135deg, #0284c7, #6366f1);
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 20px;
+  color: #fff;
+  box-shadow: 0 4px 16px rgba(2, 132, 199, 0.4);
+}
+.brand-titles h2 { font-size: 15px; font-weight: 700; color: #fff; letter-spacing: 0.3px; }
+.brand-titles p { font-size: 10px; color: var(--accent-cyan); font-weight: 600; letter-spacing: 1px; }
+
+.side-group { padding: 18px 12px 6px; }
+.side-title { font-size: 10px; font-weight: 700; color: var(--text-sub); letter-spacing: 1.2px; padding: 0 10px 8px; }
+.side-nav { list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.side-nav button {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  padding: 10px 14px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+}
+.side-nav button:hover { background: rgba(255, 255, 255, 0.04); color: #fff; }
+.side-nav button.active {
+  background: linear-gradient(90deg, rgba(2, 132, 199, 0.18), rgba(99, 102, 241, 0.06));
+  color: #fff;
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--accent-cyan);
+}
+.nav-icon { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; flex-shrink: 0; }
+
+.campaign-summary {
+  margin: auto 14px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+}
+.campaign-meta { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 6px; }
+.campaign-progress { height: 6px; background: #1c283d; border-radius: 3px; overflow: hidden; margin: 6px 0; }
+.campaign-bar { height: 100%; width: 92.4%; background: linear-gradient(90deg, #0284c7, #10b981); border-radius: 3px; }
+
+.user-tag {
+  padding: 14px 18px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #04070d;
+}
+.user-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #1c2a42;
+  border: 1px solid #2d3f5e;
+  display: grid;
+  place-items: center;
+  font-weight: 600;
+  color: #38bdf8;
+  font-size: 12px;
+}
+
+/* MAIN VIEWPORT */
+main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  max-height: 100vh;
+}
+
+header {
+  height: 72px;
+  background: rgba(9, 13, 22, 0.88);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 32px;
+}
+.header-titles h1 { font-size: 18px; font-weight: 700; color: #fff; letter-spacing: -0.2px; }
+.header-titles p { font-size: 11px; color: var(--text-muted); }
+
+.controls-bar { display: flex; align-items: center; gap: 10px; }
+.control-select, .btn-action, .btn-primary {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-main);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.control-select:focus, .btn-action:focus { outline: 2px solid var(--accent-cyan); }
+.control-select:hover, .btn-action:hover { background: var(--bg-card-hover); border-color: var(--border-highlight); }
+.btn-primary {
+  background: linear-gradient(135deg, #0284c7, #2563eb);
+  border: 0;
+  color: #fff;
+  font-weight: 600;
+  box-shadow: 0 2px 10px rgba(2, 132, 199, 0.35);
+}
+.btn-primary:hover { opacity: 0.92; transform: translateY(-1px); }
+
+.content-body {
+  padding: 26px 32px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  max-width: 1680px;
+}
+
+/* QUICK FILTER CHIPS */
+.filter-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.chip-group { display: flex; align-items: center; gap: 6px; }
+.chip-label { font-size: 11px; font-weight: 700; color: var(--text-sub); text-transform: uppercase; margin-right: 4px; }
+.chip-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.chip-btn:hover { border-color: var(--accent-blue); color: #fff; }
+.chip-btn.active { background: #13243a; border-color: var(--accent-blue); color: #38bdf8; font-weight: 600; }
+
+/* 6 KPI TILES ROW */
+.kpis-row {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 14px;
+}
+.kpi-tile {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition: transform 0.15s, border-color 0.15s;
+}
+.kpi-tile:hover { transform: translateY(-2px); border-color: var(--border-highlight); }
+.kpi-meta { display: flex; justify-content: space-between; align-items: baseline; color: var(--text-muted); font-size: 11px; font-weight: 600; }
+.kpi-val { font-size: 24px; font-weight: 700; color: #fff; margin: 8px 0 3px; letter-spacing: -0.6px; }
+.kpi-val span { font-size: 14px; font-weight: 500; color: var(--text-muted); margin-left: 2px; }
+.kpi-foot { font-size: 11px; display: flex; align-items: center; justify-content: space-between; }
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+}
+.pill-good { background: var(--accent-emerald-bg); color: var(--accent-emerald); }
+.pill-warn { background: var(--accent-amber-bg); color: var(--accent-amber); }
+.pill-alert { background: var(--accent-rose-bg); color: var(--accent-rose); }
+
+/* GRID LAYOUTS */
+.grid-2col {
+  display: grid;
+  grid-template-columns: 1.85fr 1.15fr;
+  gap: 20px;
+}
+.grid-3col {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.card-header {
+  padding: 18px 22px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+.card-header h3 { font-size: 14px; font-weight: 600; color: #fff; }
+.card-header p { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.card-body { padding: 20px; }
+
+/* SVG CHARTS */
+.chart-box { width: 100%; height: 260px; }
+.chart-box svg { width: 100%; height: 100%; overflow: visible; }
+.chart-legend { display: flex; gap: 14px; font-size: 11px; color: var(--text-muted); }
+.legend-item { display: flex; align-items: center; gap: 6px; }
+.legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+/* PRODUCT MATRIX PROGRESS BARS */
+.product-matrix { display: flex; flex-direction: column; gap: 14px; }
+.prod-row { display: flex; flex-direction: column; gap: 5px; }
+.prod-meta { display: flex; justify-content: space-between; font-size: 12px; }
+.prod-meta b { color: #fff; }
+.prod-track { height: 7px; background: #192336; border-radius: 4px; overflow: hidden; }
+.prod-bar { height: 100%; border-radius: 4px; transition: width 0.3s ease; }
+.prod-sub { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--text-muted); }
+
+/* CUSTOMER DYNAMICS WATERFALL */
+.waterfall-flow { display: flex; flex-direction: column; gap: 12px; }
+.flow-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-radius: 7px; background: #0c121e; }
+.flow-lead { display: flex; align-items: center; gap: 10px; }
+.flow-icon { width: 28px; height: 28px; border-radius: 6px; display: grid; place-items: center; font-weight: 700; font-size: 12px; }
+.flow-lead h4 { font-size: 12px; font-weight: 600; color: #fff; }
+.flow-lead p { font-size: 10.5px; color: var(--text-muted); }
+.flow-val { font-size: 13px; font-weight: 700; text-align: right; }
+
+/* TABLES */
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
+th {
+  background: #0b111c;
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+}
+td {
+  padding: 13px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  color: #cbd5e1;
+}
+tr:last-child td { border-bottom: 0; }
+tr:hover td { background: rgba(255, 255, 255, 0.02); }
+td.bold { font-weight: 600; color: #fff; }
+
+/* MODAL DRILLDOWN */
+dialog {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text-main);
+  padding: 24px;
+  margin: auto;
+  max-width: 900px;
+  width: 92vw;
+  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.7);
+}
+dialog::backdrop { background: rgba(0, 0, 0, 0.75); backdrop-filter: blur(4px); }
+.modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+.modal-header h3 { font-size: 16px; font-weight: 700; color: #fff; }
+.modal-header p { font-size: 11px; color: var(--text-muted); }
+
+/* TOAST */
+#toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: var(--accent-blue);
+  color: #fff;
+  font-weight: 600;
+  padding: 10px 18px;
+  border-radius: 6px;
+  font-size: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  transform: translateY(100px);
+  opacity: 0;
+  transition: all 0.25s ease;
+  z-index: 100;
+}
+#toast.show { transform: translateY(0); opacity: 1; }
+
+@media (max-width: 1400px) {
+  .kpis-row { grid-template-columns: repeat(3, 1fr); }
+  .grid-2col, .grid-3col { grid-template-columns: 1fr; }
+}
+@media (max-width: 860px) {
+  body { flex-direction: column; overflow-y: auto; }
+  aside { width: 100%; border-right: 0; border-bottom: 1px solid var(--border); }
+  header { padding: 0 16px; }
+  .content-body { padding: 18px 16px 32px; }
+  .kpis-row { grid-template-columns: repeat(2, 1fr); }
+}
+</style>
+</head>
+<body>
+
+<!-- SIDEBAR NAVIGATION -->
+<aside>
+  <div class="brand-container">
+    <div class="brand-mark">V</div>
+    <div class="brand-titles">
+      <h2>VALENCE RETAIL</h2>
+      <p>SALES & PORTFOLIO MIS</p>
+    </div>
+  </div>
+
+  <div class="side-group">
+    <div class="side-title">INTELLIGENCE SUITE</div>
+    <ul class="side-nav">
+      <li>
+        <button class="active" data-view="sales_targets">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path d="M12 20V10M18 20V4M6 20v-4"/></svg>
+          Sales Target Attainment
+        </button>
+      </li>
+      <li>
+        <button data-view="balance_sheet">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+          Balances & Net Flows
+        </button>
+      </li>
+      <li>
+        <button data-view="customer_dynamics">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          Customer Base & Churn
+        </button>
+      </li>
+      <li>
+        <button data-view="network_ranking">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18M4 22h16M10 14.66V17c0 .55-.45 1-1 1H8c-.55 0-1-.45-1-1v-2.34M14 14.66V17c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-2.34M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>
+          Branch League Matrix
+        </button>
+      </li>
+    </ul>
+  </div>
+
+  <!-- Monthly Sales Run-rate Widget -->
+  <div class="campaign-summary">
+    <div class="campaign-meta">
+      <span style="font-weight:700; color:#fff;">August 2026 Close Pace</span>
+      <span style="color:var(--accent-emerald); font-weight:700;">104.8%</span>
+    </div>
+    <div class="campaign-progress">
+      <div class="campaign-bar"></div>
+    </div>
+    <div style="font-size:10px; color:var(--text-muted); display:flex; justify-content:space-between;">
+      <span>Lending Target: $725M</span>
+      <span>Actual: $760.4M</span>
+    </div>
+  </div>
+
+  <div class="user-tag">
+    <div class="user-avatar">EM</div>
+    <div>
+      <div style="font-weight:600; color:#fff; font-size:12px;">Emily Thornton</div>
+      <div style="font-size:10px; color:var(--text-muted);">Head of Retail Banking Products</div>
+    </div>
+  </div>
+</aside>
+
+<!-- MAIN CONTENT WORKSPACE -->
+<main>
+  <header>
+    <div class="header-titles">
+      <h1 id="headerViewTitle">Retail Sales Target Attainment & Production Run-Rate</h1>
+      <p id="headerTimestamp">Reporting Period: August 2026 (Month-End Close) · Consolidated Mass & Affluent Portfolios</p>
+    </div>
+    <div class="controls-bar">
+      <select class="control-select" id="periodSelector">
+        <option value="AUG_26" selected>August 2026 (Close)</option>
+        <option value="JUL_26">July 2026 (Audited)</option>
+        <option value="JUN_26">June 2026 (Q2 Close)</option>
+        <option value="YTD_26">FY 2026 Year-to-Date</option>
+      </select>
+      <select class="control-select" id="currencySelector">
+        <option value="USD" selected>Currency: USD ($)</option>
+        <option value="EUR">Currency: EUR (€)</option>
+        <option value="PLN">Currency: PLN (zł)</option>
+      </select>
+      <button class="btn-action" id="btnExportCSV">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+        Export CSV
+      </button>
+      <button class="btn-primary" id="btnDrilldown">
+        Deep-Dive Audit ↗
+      </button>
+    </div>
+  </header>
+
+  <div class="content-body">
+    <!-- FILTER CHIPS BAR -->
+    <div class="filter-strip">
+      <div class="chip-group">
+        <span class="chip-label">Customer Tier:</span>
+        <button class="chip-btn active" data-tier="ALL">All Retail (3.42M Clients)</button>
+        <button class="chip-btn" data-tier="MASS">Mass Retail</button>
+        <button class="chip-btn" data-tier="PREMIER">Affluent & Premier Banking</button>
+        <button class="chip-btn" data-tier="SME">Sole Traders / Micro-SME</button>
+      </div>
+      <div class="chip-group">
+        <span class="chip-label">Comparison Mode:</span>
+        <button class="chip-btn active" data-comp="BUDGET">vs. Budget Plan</button>
+        <button class="chip-btn" data-comp="MOM">vs. Prior Month (MoM)</button>
+        <button class="chip-btn" data-comp="YOY">vs. Prior Year (YoY)</button>
+      </div>
+    </div>
+
+    <!-- 6 KEY PERFORMANCE INDICATORS -->
+    <div class="kpis-row" id="kpisContainer">
+      <!-- Injected via JavaScript -->
+    </div>
+
+    <!-- MAIN TWO-COLUMN SECTION -->
+    <div class="grid-2col">
+      <!-- Chart Card -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h3 id="mainChartTitle">Retail Loan Disbursements vs. Term Deposit Bookings</h3>
+            <p id="mainChartSub">Monthly new production trajectory across branches & digital channels ($ Millions)</p>
+          </div>
+          <div class="chart-legend">
+            <div class="legend-item">
+              <span class="legend-dot" style="background:#0284c7;"></span>
+              <span id="legendSeriesA">Total Loans Disbursed</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-dot" style="background:#10b981;"></span>
+              <span id="legendSeriesB">New Term Deposit Volume</span>
+            </div>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="chart-box" id="svgMainChart"></div>
+        </div>
+      </div>
+
+      <!-- Right Card: Product Execution or Net Flow Matrix -->
+      <div class="card" id="rightPanelCard">
+        <div class="card-header">
+          <div id="rightPanelTitleBox">
+            <h3>Retail Product Matrix Attainment</h3>
+            <p>Monthly sales delivery against budgeted targets</p>
+          </div>
+          <span class="pill pill-good" id="rightPanelPill">Blended: 104.8%</span>
+        </div>
+        <div class="card-body">
+          <div class="product-matrix" id="rightPanelContent">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- BOTTOM SECTION: DETAILED TABLES & WATERFALL -->
+    <div class="grid-2col">
+      <!-- Data Table Card -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h3 id="tableCardTitle">Retail Product Line Performance Breakdown</h3>
+            <p id="tableCardSub">New volume, unit counts, margin spread, and monthly quota achievement</p>
+          </div>
+          <button class="control-select" style="padding: 4px 8px; font-size: 11px;">Product Filter ▼</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr id="tableHeadRow"></tr>
+            </thead>
+            <tbody id="tableBodyRow"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Customer Dynamics / Flow Waterfall Card -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h3>Customer Acquisition & Churn Waterfall</h3>
+            <p>Net active client growth and primary payroll penetration</p>
+          </div>
+          <span class="pill pill-good">+14,820 Net Active</span>
+        </div>
+        <div class="card-body">
+          <div class="waterfall-flow">
+            <div class="flow-row">
+              <div class="flow-lead">
+                <div class="flow-icon" style="background:rgba(2, 132, 199, 0.15); color:#38bdf8;">IN</div>
+                <div>
+                  <h4>Gross New-to-Bank (NTB) Clients</h4>
+                  <p>In-branch assisted (58%) & Digital mobile onboarding (42%)</p>
+                </div>
+              </div>
+              <div class="flow-val" style="color:var(--accent-emerald);">+24,640</div>
+            </div>
+
+            <div class="flow-row">
+              <div class="flow-lead">
+                <div class="flow-icon" style="background:rgba(168, 85, 247, 0.15); color:#c084fc;">RE</div>
+                <div>
+                  <h4>Reactivated Dormant Accounts</h4>
+                  <p>Triggered by automated targeted marketing campaigns</p>
+                </div>
+              </div>
+              <div class="flow-val" style="color:#c084fc;">+2,780</div>
+            </div>
+
+            <div class="flow-row">
+              <div class="flow-lead">
+                <div class="flow-icon" style="background:rgba(244, 63, 94, 0.15); color:#fb7185;">OUT</div>
+                <div>
+                  <h4>Customer Churn / Account Closures</h4>
+                  <p>Zero balance closures & annualized churn rate (0.68%)</p>
+                </div>
+              </div>
+              <div class="flow-val" style="color:var(--accent-rose);">-12,600</div>
+            </div>
+
+            <div class="flow-row" style="background:#131c2d; border:1px solid #233450;">
+              <div class="flow-lead">
+                <div class="flow-icon" style="background:#0284c7; color:#fff;">∑</div>
+                <div>
+                  <h4>Net Active Primary Client Base</h4>
+                  <p>Clients with monthly salary/payroll or >5 transactions</p>
+                </div>
+              </div>
+              <div class="flow-val" style="color:#fff; font-size:15px;">3,424,820</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- DRILLDOWN AUDIT DIALOG -->
+<dialog id="auditModal">
+  <div class="modal-header">
+    <div>
+      <h3 id="modalTitle">Retail Lending Sub-Portfolio & Production Audit</h3>
+      <p>Decomposition by branch channel, average ticket size, and underwriting approval rate</p>
+    </div>
+    <button class="btn-action" id="btnCloseModal">Close ✕</button>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Loan Sub-Category</th>
+          <th>Disbursed ($M)</th>
+          <th>Units</th>
+          <th>Avg Ticket</th>
+          <th>Avg Margin</th>
+          <th>Target %</th>
+          <th>MoM Diff</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td class="bold">Residential Mortgages (Fixed Rate)</td><td>$284.5M</td><td>1,120</td><td>$254,000</td><td>2.65%</td><td><span class="pill pill-good">112.4%</span></td><td>+14.2%</td></tr>
+        <tr><td class="bold">Residential Mortgages (Floating)</td><td>$142.0M</td><td>640</td><td>$221,800</td><td>2.95%</td><td><span class="pill pill-warn">98.2%</span></td><td>-4.1%</td></tr>
+        <tr><td class="bold">Unsecured Cash Personal Loans</td><td>$245.8M</td><td>18,450</td><td>$13,320</td><td>7.45%</td><td><span class="pill pill-good">106.8%</span></td><td>+8.5%</td></tr>
+        <tr><td class="bold">Auto & Green Mobility Loans</td><td>$54.2M</td><td>2,410</td><td>$22,480</td><td>5.10%</td><td><span class="pill pill-good">103.1%</span></td><td>+6.2%</td></tr>
+        <tr><td class="bold">Revolving Credit Cards & Overdrafts</td><td>$33.9M</td><td>8,200</td><td>$4,130</td><td>11.20%</td><td><span class="pill pill-good">101.4%</span></td><td>+2.1%</td></tr>
+      </tbody>
+    </table>
+  </div>
+</dialog>
+
+<div id="toast">Notification</div>
+
+<script>
+// --- APP STATE ---
+let currentView = 'sales_targets';
+let currentCurrency = 'USD';
+let currentTier = 'ALL';
+let currentCompMode = 'BUDGET';
+
+const FX_CONV = { USD: 1.0, EUR: 0.92, PLN: 3.96 };
+const FX_SYM = { USD: '$', EUR: '€', PLN: 'zł' };
+
+// --- DATA MODEL (RETAIL COMMERCIAL & BALANCE SHEET) ---
+const moduleConfigs = {
+  sales_targets: {
+    title: 'Retail Sales Target Attainment & Production Run-Rate',
+    chartTitle: 'Retail Loan Disbursements vs. Term Deposit Bookings',
+    chartSub: 'Monthly new production trajectory across branches & digital channels',
+    seriesA_Label: 'Total Loans Disbursed',
+    seriesB_Label: 'New Term Deposit Bookings',
+    kpis: [
+      { id: 'loans', label: 'New Loan Disbursements', baseVal: 760.4, unit: 'M', plan: '104.8%', mom: '+9.4%', status: 'good' },
+      { id: 'deposits', label: 'New Term Deposit Sales', baseVal: 642.0, unit: 'M', plan: '102.4%', mom: '+6.1%', status: 'good' },
+      { id: 'casa', label: 'New Primary CASA Accounts', baseVal: 38.4, unit: 'k', plan: '108.2%', mom: '+11.5%', status: 'good' },
+      { id: 'invest', label: 'Mutual Funds & AUM Net Sales', baseVal: 94.2, unit: 'M', plan: '96.8%', mom: '+4.2%', status: 'warn' },
+      { id: 'insurance', label: 'Bancassurance Premium (GWP)', baseVal: 34.8, unit: 'M', plan: '105.1%', mom: '+12.0%', status: 'good' },
+      { id: 'ntb', label: 'Gross New-to-Bank Clients', baseVal: 24.6, unit: 'k', plan: '106.9%', mom: '+8.7%', status: 'good' }
+    ],
+    seriesA: [540, 580, 610, 645, 680, 715, 740, 760.4],
+    seriesB: [460, 490, 510, 535, 570, 605, 620, 642.0],
+    tableHead: ['Product Pillar', 'Monthly Actual', 'Target Quota', 'Attainment %', 'MoM Growth', 'Active Units'],
+    tableRows: [
+      ['Residential Mortgages', 426.5, 395.0, '107.9%', '+10.4%', '1,760 loans'],
+      ['Consumer Cash Loans', 299.9, 285.0, '105.2%', '+8.2%', '20,860 contracts'],
+      ['Term Deposits (Retail Time)', 642.0, 626.0, '102.5%', '+6.1%', '14,200 deposits'],
+      ['CASA Current Checking Accounts', 38.4, 35.5, '108.2%', '+11.5%', '38,410 opened'],
+      ['Mutual Funds & Investment Notes', 94.2, 97.3, '96.8%', '+4.2%', '5,420 portfolios'],
+      ['Bancassurance & Loan PPI', 34.8, 33.1, '105.1%', '+12.0%', '24,100 policies']
+    ]
+  },
+  balance_sheet: {
+    title: 'Retail Balance Sheet Stock & Net Inflow/Outflow Dynamics',
+    chartTitle: 'Net Balance Growth: Net New Money (NNM) vs. Loan Book Expansion',
+    chartSub: 'Stock balance evolution and deposit portfolio re-pricing ($ Millions)',
+    seriesA_Label: 'Net Deposit Inflow (NNM)',
+    seriesB_Label: 'Net Loan Book Expansion',
+    kpis: [
+      { id: 'loans', label: 'Total Gross Loan Portfolio', baseVal: 18.42, unit: 'B', plan: '+0.8% MoM', mom: '+6.8% YoY', status: 'good' },
+      { id: 'deposits', label: 'Total Retail Deposit Stock', baseVal: 24.85, unit: 'B', plan: '+1.2% MoM', mom: '+8.4% YoY', status: 'good' },
+      { id: 'casa', label: 'CASA Ratio (% of deposits)', baseVal: 62.4, unit: '%', plan: '+42 bps', mom: '+1.4 pp', status: 'good' },
+      { id: 'invest', label: 'Total Wealth AUM Stock', baseVal: 4.82, unit: 'B', plan: '+2.1% MoM', mom: '+14.2% YoY', status: 'good' },
+      { id: 'insurance', label: 'Deposit Spread / Margin', baseVal: 2.38, unit: '%', plan: '-4 bps', mom: '-12 bps', status: 'warn' },
+      { id: 'ntb', label: 'Loan-to-Deposit Ratio (LDR)', baseVal: 74.1, unit: '%', plan: '-25 bps', mom: '-1.1 pp', status: 'good' }
+    ],
+    seriesA: [210, 240, 260, 280, 310, 345, 380, 412],
+    seriesB: [140, 165, 180, 195, 220, 245, 270, 295],
+    tableHead: ['Balance Sheet Category', 'Total Outstanding', 'Net Inflow / Run-off', 'Portfolio Yield', 'Average Duration'],
+    tableRows: [
+      ['Mortgage Loan Portfolio', 11.82, '+164.2M', '4.85%', '18.4 Years'],
+      ['Consumer Credit & Cards', 6.60, '+130.8M', '9.42%', '3.2 Years'],
+      ['Current Accounts (CASA)', 15.50, '+285.0M', '0.45%', 'On-Demand'],
+      ['Retail Term Deposits', 9.35, '+127.0M', '3.82%', '9.2 Months'],
+      ['Off-Balance Wealth AUM', 4.82, '+84.5M', '1.65% fee', 'Liquid']
+    ]
+  },
+  customer_dynamics: {
+    title: 'Customer Dynamics, Acquisition Funnel & Attrition Management',
+    chartTitle: 'Gross NTB Customer Inflow vs. Monthly Account Closures',
+    chartSub: 'Net additions to primary banked retail customer base',
+    seriesA_Label: 'Gross Acquired (NTB)',
+    seriesB_Label: 'Customer Churn / Closures',
+    kpis: [
+      { id: 'loans', label: 'Active Retail Customer Base', baseVal: 3.42, unit: 'M', plan: '+0.4% MoM', mom: '+5.8% YoY', status: 'good' },
+      { id: 'deposits', label: 'Gross NTB Clients (August)', baseVal: 24.64, unit: 'k', plan: '106.9%', mom: '+8.7%', status: 'good' },
+      { id: 'casa', label: 'Annualized Churn Rate', baseVal: 0.68, unit: '%', plan: '-8 bps', mom: '-14 bps', status: 'good' },
+      { id: 'invest', label: 'Salary / Payroll Domiciliation', baseVal: 68.4, unit: '%', plan: '+1.2 pp', mom: '+3.4 pp', status: 'good' },
+      { id: 'insurance', label: 'Digital Mobile Active Rate', baseVal: 84.2, unit: '%', plan: '+2.4 pp', mom: '+6.1 pp', status: 'good' },
+      { id: 'ntb', label: 'Cross-Sell Index (Prod/Client)', baseVal: 2.84, unit: 'x', plan: '+0.12x', mom: '+0.22x', status: 'good' }
+    ],
+    seriesA: [18.2, 19.5, 20.4, 21.8, 22.5, 23.4, 24.1, 24.64],
+    seriesB: [11.2, 11.5, 12.0, 11.8, 12.2, 12.4, 12.8, 12.60],
+    tableHead: ['Customer Segment', 'Total Clients', 'NTB Acquired', 'Churn Rate', 'Payroll Domiciled', 'Avg Products'],
+    tableRows: [
+      ['Mass Retail Core', '2,420,000', '+16,420', '0.74%', '64.2%', '2.35x'],
+      ['Affluent & Premier Banking', '485,000', '+4,120', '0.38%', '88.4%', '4.42x'],
+      ['Young Adults & Students', '340,000', '+3,240', '1.12%', '45.1%', '1.82x'],
+      ['Sole Traders & Micro-SME', '179,820', '+860', '0.62%', '78.2%', '3.65x']
+    ]
+  },
+  network_ranking: {
+    title: 'Territorial Branch Network Sales & Balance Scorecard',
+    chartTitle: 'Branch Target Fulfillment: Lending vs. Deposit Growth',
+    chartSub: 'Comparison across 5 Regional Operational Territories',
+    seriesA_Label: 'Lending Target Fulfilled',
+    seriesB_Label: 'Deposit Target Fulfilled',
+    kpis: [
+      { id: 'loans', label: 'Total Operating Branches', baseVal: 142, unit: '', plan: '100%', mom: 'Stable', status: 'good' },
+      { id: 'deposits', label: 'Branches Beating Budget', baseVal: 108, unit: '', plan: '76.1%', mom: '+4 br.', status: 'good' },
+      { id: 'casa', label: 'Avg Monthly Loan / Branch', baseVal: 5.35, unit: 'M', plan: '+8.4%', mom: '+$420k', status: 'good' },
+      { id: 'invest', label: 'Avg Monthly Deposit / Branch', baseVal: 4.52, unit: 'M', plan: '+5.2%', mom: '+$280k', status: 'good' },
+      { id: 'insurance', label: 'Branch Audit Compliance', baseVal: 97.4, unit: '%', plan: '+0.4 pp', mom: '+1.1 pp', status: 'good' },
+      { id: 'ntb', label: 'Branch Customer NPS Score', baseVal: 76.8, unit: 'pts', plan: '+3.2 pts', mom: '+4.5 pts', status: 'good' }
+    ],
+    seriesA: [102, 105, 104, 106, 108, 107, 109, 108.4],
+    seriesB: [98, 99, 101, 102, 103, 102, 104, 104.2],
+    tableHead: ['Region / Branch Cluster', 'Regional Director', 'Lending Sales', 'Deposit NNM', 'NTB Clients', 'Attainment %'],
+    tableRows: [
+      ['Central Metro Hub (42 br.)', 'Marcus Vance', '$312.4M', '+$182.0M', '10,420', '108.4%'],
+      ['Northern Corridor (34 br.)', 'Elena Rostova', '$214.2M', '+$118.5M', '6,840', '106.2%'],
+      ['Western Coast (28 br.)', 'David Chen', '$148.6M', '+$74.2M', '4,210', '102.8%'],
+      ['Eastern Hub (15 br.)', 'Robert Miller', '$84.2M', '+$36.8M', '2,150', '101.4%'],
+      ['Southern Heartland (23 br.)', 'Sarah Jenkins', '$118.0M', '+$48.5M', '3,020', '95.1%']
+    ]
+  }
+};
+
+const productMatrixBars = [
+  { name: 'Residential Mortgages', val: 107.9, actual: '$426.5M', target: '$395.0M', color: '#0284c7' },
+  { name: 'Consumer Cash Loans', val: 105.2, actual: '$299.9M', target: '$285.0M', color: '#38bdf8' },
+  { name: 'Retail Term Deposits', val: 102.5, actual: '$642.0M', target: '$626.0M', color: '#10b981' },
+  { name: 'Primary CASA Checking Accounts', val: 108.2, actual: '38,410 accts', target: '35,500', color: '#06b6d4' },
+  { name: 'Investment Funds & Notes', val: 96.8, actual: '$94.2M', target: '$97.3M', color: '#a855f7' },
+  { name: 'Bancassurance Gross Premium', val: 105.1, actual: '$34.8M', target: '$33.1M', color: '#f59e0b' }
+];
+
+// --- RENDER FUNCTIONS ---
+function renderApp() {
+  const cfg = moduleConfigs[currentView];
+  const fx = FX_CONV[currentCurrency];
+  const sym = FX_SYM[currentCurrency];
+
+  // Headings
+  document.getElementById('headerViewTitle').textContent = cfg.title;
+  document.getElementById('mainChartTitle').textContent = cfg.chartTitle;
+  document.getElementById('mainChartSub').textContent = cfg.chartSub;
+  document.getElementById('legendSeriesA').textContent = cfg.seriesA_Label;
+  document.getElementById('legendSeriesB').textContent = cfg.seriesB_Label;
+
+  // Segment multiplier
+  let segMult = currentTier === 'ALL' ? 1.0 :
+                currentTier === 'MASS' ? 0.65 :
+                currentTier === 'PREMIER' ? 0.25 : 0.10;
+
+  // Render KPIs
+  const kpisContainer = document.getElementById('kpisContainer');
+  kpisContainer.innerHTML = cfg.kpis.map(k => {
+    let displayVal = k.baseVal;
+    let unitLabel = k.unit;
+
+    if (['M', 'B'].includes(k.unit)) {
+      displayVal = (displayVal * fx * segMult).toFixed(k.unit === 'B' ? 2 : 1);
+      unitLabel = sym + ' ' + k.unit;
+    } else if (k.unit === 'k') {
+      displayVal = (displayVal * segMult).toFixed(1);
+    }
+
+    let comparisonBadge = currentCompMode === 'BUDGET' ? k.plan : currentCompMode === 'MOM' ? k.mom : '+8.2% YoY';
+    return `
+      <div class="kpi-tile">
+        <div class="kpi-meta">
+          <span>${k.label}</span>
+          <span style="color:var(--text-sub);">⊙</span>
+        </div>
+        <div class="kpi-val">${displayVal}<span>${unitLabel}</span></div>
+        <div class="kpi-foot">
+          <span class="pill ${k.status === 'good' ? 'pill-good' : 'pill-warn'}">
+            ${comparisonBadge}
+          </span>
+          <span style="font-size:10px; color:var(--text-muted);">
+            ${currentCompMode === 'BUDGET' ? 'vs. Plan' : currentCompMode === 'MOM' ? 'MoM' : 'YoY'}
+          </span>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // Render SVG Line Chart
+  renderSvgChart(cfg.seriesA.map(v => v * fx * segMult), cfg.seriesB.map(v => v * fx * segMult), sym);
+
+  // Render Right Panel (Product matrix or Balance Sheet matrix)
+  const rightBox = document.getElementById('rightPanelContent');
+  rightBox.innerHTML = productMatrixBars.map(p => {
+    let pct = Math.min(125, p.val);
+    let barWidth = Math.min(100, (pct / 120) * 100);
+    return `
+      <div class="prod-row">
+        <div class="prod-meta">
+          <span>${p.name}</span>
+          <b>${p.val}%</b>
+        </div>
+        <div class="prod-track">
+          <div class="prod-bar" style="width: ${barWidth}%; background: ${p.color};"></div>
+        </div>
+        <div class="prod-sub">
+          <span>Actual: ${p.actual}</span>
+          <span>Budget: ${p.target}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // Render Table
+  document.getElementById('tableHeadRow').innerHTML = cfg.tableHead.map(th => `<th>${th}</th>`).join('');
+  document.getElementById('tableBodyRow').innerHTML = cfg.tableRows.map((row, rIdx) => {
+    return `<tr>` + row.map((td, i) => {
+      let content = td;
+      if (typeof td === 'number') {
+        content = sym + ' ' + (td * fx * segMult).toFixed(1) + (currentView === 'balance_sheet' && i === 1 ? 'B' : 'M');
+      }
+      return `<td class="${i === 0 ? 'bold' : ''}">${content}</td>`;
+    }).join('') + `</tr>`;
+  }).join('');
+}
+
+function renderSvgChart(seriesA, seriesB, sym) {
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug'];
+  const maxVal = Math.max(...seriesA, ...seriesB) * 1.25;
+  const h = 230, w = 620, padL = 50, padB = 30;
+
+  const getPoints = (arr) => arr.map((v, i) => {
+    let x = padL + (i * (w - padL) / (arr.length - 1));
+    let y = h - padB - ((v / maxVal) * (h - padB - 20));
+    return `${x},${y}`;
+  }).join(' ');
+
+  let grid = '';
+  for (let i = 0; i <= 3; i++) {
+    let y = 20 + i * ((h - padB - 20) / 3);
+    let val = (maxVal * (3 - i) / 3).toFixed(0);
+    grid += `
+      <line x1="${padL}" y1="${y}" x2="${w}" y2="${y}" stroke="#1a2538" stroke-dasharray="3,3"/>
+      <text x="${padL - 10}" y="${y + 4}" fill="#64748b" font-size="10" text-anchor="end">${val}</text>
+    `;
+  }
+
+  let labels = months.map((m, i) => {
+    let x = padL + (i * (w - padL) / (months.length - 1));
+    return `<text x="${x}" y="${h - 8}" fill="#64748b" font-size="10" text-anchor="middle">${m}</text>`;
+  }).join('');
+
+  document.getElementById('svgMainChart').innerHTML = `
+    <svg viewBox="0 0 ${w} ${h}">
+      ${grid}
+      <polyline fill="none" stroke="#10b981" stroke-width="2.5" stroke-dasharray="5 3" points="${getPoints(seriesB)}"/>
+      <polyline fill="none" stroke="#0284c7" stroke-width="3" stroke-linecap="round" points="${getPoints(seriesA)}"/>
+      ${seriesA.map((v, i) => {
+        let x = padL + (i * (w - padL) / (seriesA.length - 1));
+        let y = h - padB - ((v / maxVal) * (h - padB - 20));
+        return `<circle cx="${x}" cy="${y}" r="4" fill="#111726" stroke="#0284c7" stroke-width="2.5"><title>${months[i]}: ${v.toFixed(1)}</title></circle>`;
+      }).join('')}
+      ${labels}
+    </svg>
+  `;
+}
+
+// --- EVENT HANDLERS ---
+document.querySelectorAll('[data-view]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-view]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentView = btn.dataset.view;
+    renderApp();
+  });
+});
+
+document.querySelectorAll('[data-tier]').forEach(chip => {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('[data-tier]').forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    currentTier = chip.dataset.tier;
+    renderApp();
+    showToast(`Segment filtered: ${chip.textContent.trim()}`);
+  });
+});
+
+document.querySelectorAll('[data-comp]').forEach(chip => {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('[data-comp]').forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    currentCompMode = chip.dataset.comp;
+    renderApp();
+    showToast(`Comparison mode: ${chip.textContent.trim()}`);
+  });
+});
+
+document.getElementById('currencySelector').addEventListener('change', (e) => {
+  currentCurrency = e.target.value;
+  renderApp();
+  showToast(`Currency updated to: ${currentCurrency}`);
+});
+
+document.getElementById('periodSelector').addEventListener('change', (e) => {
+  showToast(`Loaded reporting close: ${e.target.selectedOptions[0].text}`);
+  renderApp();
+});
+
+// Modal Dialog
+const modal = document.getElementById('auditModal');
+document.getElementById('btnDrilldown').onclick = () => modal.showModal();
+document.getElementById('btnCloseModal').onclick = () => modal.close();
+
+// CSV Export
+document.getElementById('btnExportCSV').onclick = () => {
+  const cfg = moduleConfigs[currentView];
+  let csv = `VALENCE Retail Banking MIS - ${cfg.title}\r\n`;
+  csv += `Reporting Period: August 2026 Close;Currency: ${currentCurrency};Customer Tier: ${currentTier}\r\n\r\n`;
+  csv += cfg.tableHead.join(';') + '\r\n';
+  cfg.tableRows.forEach(r => { csv += r.join(';') + '\r\n'; });
+
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `Valence_Retail_MIS_${currentView}_${currentCurrency}.csv`;
+  a.click();
+  showToast('Retail Report Exported to CSV');
+};
+
+function showToast(msg) {
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 2600);
+}
+
+// Initial Boot
+renderApp();
+</script>
+</body>
+</html>

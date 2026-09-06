@@ -1,0 +1,1014 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Retail Banking Distribution Network MIS - Executive Sales Cockpit">
+<title>Vanguard Bank — Retail Distribution & Branch Network MIS</title>
+<style>
+:root {
+  --bg-app: #0a0e17;
+  --bg-sidebar: #070a10;
+  --bg-surface: #111827;
+  --bg-surface-alt: #162032;
+  --border: #1f293d;
+  --border-focus: #3b82f6;
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --accent-blue: #3b82f6;
+  --accent-cyan: #06b6d4;
+  --accent-emerald: #10b981;
+  --accent-amber: #f59e0b;
+  --accent-rose: #f43f5e;
+  --accent-violet: #8b5cf6;
+  --font-main: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-main);
+  font-size: 13px;
+  line-height: 1.5;
+  display: flex;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+/* SIDEBAR */
+aside {
+  width: 260px;
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  z-index: 20;
+}
+.brand-box {
+  padding: 22px 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.brand-badge {
+  width: 38px;
+  height: 38px;
+  background: linear-gradient(135deg, #2563eb, #06b6d4);
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 19px;
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.4);
+}
+.brand-title { font-size: 15px; font-weight: 700; color: #fff; letter-spacing: 0.2px; }
+.brand-sub { font-size: 10px; color: var(--accent-cyan); font-weight: 600; letter-spacing: 1.2px; }
+
+.nav-section { padding: 20px 14px 8px; }
+.nav-caption {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 1.4px;
+  padding: 0 10px 8px;
+}
+.nav-list { list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.nav-item button {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  color: var(--text-secondary);
+  padding: 11px 12px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s, color 0.15s;
+}
+.nav-item button:hover { background: rgba(255, 255, 255, 0.04); color: #fff; }
+.nav-item button.active {
+  background: linear-gradient(90deg, rgba(59, 130, 246, 0.18), rgba(6, 182, 212, 0.05));
+  color: #fff;
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--accent-blue);
+}
+.nav-icon { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; flex-shrink: 0; }
+
+.campaign-pill {
+  margin: auto 14px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+}
+.campaign-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.campaign-title { font-size: 11px; font-weight: 700; color: #fff; }
+.campaign-days { font-size: 10px; color: var(--accent-amber); font-weight: 600; }
+.campaign-bar {
+  height: 6px;
+  background: #202b3e;
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 6px 0;
+}
+.campaign-fill { width: 78%; height: 100%; background: linear-gradient(90deg, #3b82f6, #10b981); border-radius: 3px; }
+.campaign-foot { font-size: 10px; color: var(--text-muted); display: flex; justify-content: space-between; }
+
+.user-box {
+  padding: 16px 18px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #090c14;
+}
+.user-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #1e293b;
+  border: 1px solid #334155;
+  display: grid;
+  place-items: center;
+  font-weight: 600;
+  color: #38bdf8;
+  font-size: 12px;
+}
+
+/* MAIN CONTENT */
+main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  height: 100vh;
+}
+header {
+  height: 70px;
+  background: rgba(10, 14, 23, 0.9);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 32px;
+}
+.header-info h1 { font-size: 18px; font-weight: 700; color: #fff; letter-spacing: -0.2px; }
+.header-info p { font-size: 11px; color: var(--text-muted); }
+
+.header-controls { display: flex; align-items: center; gap: 10px; }
+.select-input, .btn-sec, .btn-prim {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.select-input:focus, .btn-sec:focus { outline: 2px solid var(--border-focus); }
+.select-input:hover, .btn-sec:hover { background: var(--bg-surface-alt); border-color: #334155; }
+.btn-prim {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  border: 0;
+  color: #fff;
+  font-weight: 600;
+  box-shadow: 0 2px 10px rgba(37, 99, 235, 0.4);
+}
+.btn-prim:hover { opacity: 0.93; transform: translateY(-1px); }
+
+/* CONTENT WRAPPER */
+.workspace {
+  padding: 28px 32px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  max-width: 1680px;
+}
+
+/* REGIONAL QUICK FILTER CHIPS */
+.region-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.chip-label { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; margin-right: 4px; }
+.chip {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+.chip:hover { border-color: #3b82f6; color: #fff; }
+.chip.active { background: #1d3557; border-color: #3b82f6; color: #60a5fa; font-weight: 600; }
+
+/* KPI CARDS (6 GRID) */
+.kpis-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 16px;
+}
+.kpi-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 18px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition: border-color 0.2s, transform 0.15s;
+}
+.kpi-card:hover { border-color: #334155; transform: translateY(-2px); }
+.kpi-top { display: flex; justify-content: space-between; align-items: baseline; color: var(--text-muted); font-size: 11px; font-weight: 600; }
+.kpi-num { font-size: 25px; font-weight: 700; color: #fff; margin: 8px 0 4px; letter-spacing: -0.6px; }
+.kpi-num span { font-size: 15px; font-weight: 500; color: var(--text-muted); margin-left: 2px; }
+.kpi-bottom { font-size: 11px; display: flex; align-items: center; justify-content: space-between; }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+}
+.badge-good { background: rgba(16, 185, 129, 0.15); color: #10b981; }
+.badge-warn { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+.badge-alert { background: rgba(244, 63, 94, 0.15); color: #f43f5e; }
+
+/* 2-COLUMN SECTION */
+.grid-2col {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 20px;
+}
+.card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.card-head {
+  padding: 18px 22px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.card-head h3 { font-size: 14px; font-weight: 600; color: #fff; }
+.card-head p { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+.card-body { padding: 20px; }
+
+/* SVG CHART */
+.chart-box { width: 100%; height: 260px; }
+.chart-box svg { width: 100%; height: 100%; overflow: visible; }
+.chart-legend { display: flex; gap: 16px; font-size: 11px; color: var(--text-muted); }
+.legend-item { display: flex; align-items: center; gap: 6px; }
+.legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+/* REGIONAL SCORECARD METERS */
+.regional-scorecard { display: flex; flex-direction: column; gap: 14px; }
+.region-row { display: flex; flex-direction: column; gap: 5px; }
+.region-row-meta { display: flex; justify-content: space-between; font-size: 12px; }
+.region-row-meta b { color: #fff; }
+.region-row-track {
+  height: 7px;
+  background: #1a2333;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.region-row-fill { height: 100%; border-radius: 4px; transition: width 0.4s ease; }
+.region-row-foot { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--text-muted); }
+
+/* TABLES */
+.table-responsive { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
+th {
+  background: #0d131f;
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--border);
+}
+td {
+  padding: 13px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  color: #cbd5e1;
+}
+tr:last-child td { border-bottom: 0; }
+tr:hover td { background: rgba(255, 255, 255, 0.02); }
+td.bold-txt { font-weight: 600; color: #fff; }
+
+.rank-idx {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #1e293b;
+  color: #94a3b8;
+  text-align: center;
+  line-height: 22px;
+  font-size: 10px;
+  font-weight: 700;
+  margin-right: 8px;
+}
+.rank-1 { background: #f59e0b; color: #000; }
+.rank-2 { background: #94a3b8; color: #000; }
+.rank-3 { background: #d97706; color: #fff; }
+
+/* ADVISOR PRODUCTIVITY / ACTION RADAR */
+.coaching-alerts { display: flex; flex-direction: column; gap: 10px; }
+.alert-tile {
+  background: #0d131f;
+  border: 1px solid var(--border);
+  border-left: 3px solid;
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.alert-tile.warn { border-left-color: var(--accent-amber); }
+.alert-tile.good { border-left-color: var(--accent-emerald); }
+.alert-tile.crit { border-left-color: var(--accent-rose); }
+.alert-head { font-weight: 600; font-size: 12px; color: #fff; margin-bottom: 2px; }
+.alert-desc { font-size: 11px; color: var(--text-muted); line-height: 1.4; }
+
+/* MODAL DRILLDOWN */
+dialog {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text-primary);
+  padding: 24px;
+  margin: auto;
+  max-width: 860px;
+  width: 92vw;
+  box-shadow: 0 24px 50px rgba(0, 0, 0, 0.7);
+}
+dialog::backdrop { background: rgba(0, 0, 0, 0.75); backdrop-filter: blur(4px); }
+.modal-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; }
+.modal-head h2 { font-size: 17px; font-weight: 700; color: #fff; }
+.modal-head p { font-size: 11px; color: var(--text-muted); }
+
+/* TOAST */
+#toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: #2563eb;
+  color: #fff;
+  font-weight: 600;
+  padding: 11px 18px;
+  border-radius: 7px;
+  font-size: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  transform: translateY(100px);
+  opacity: 0;
+  transition: all 0.25s ease;
+  z-index: 100;
+}
+#toast.show { transform: translateY(0); opacity: 1; }
+
+@media (max-width: 1380px) {
+  .kpis-grid { grid-template-columns: repeat(3, 1fr); }
+  .grid-2col { grid-template-columns: 1fr; }
+}
+@media (max-width: 820px) {
+  body { flex-direction: column; overflow-y: auto; }
+  aside { width: 100%; border-right: none; border-bottom: 1px solid var(--border); }
+  header { padding: 0 16px; }
+  .workspace { padding: 18px 16px 32px; }
+  .kpis-grid { grid-template-columns: repeat(2, 1fr); }
+}
+</style>
+</head>
+<body>
+
+<!-- SIDEBAR NAVIGATION -->
+<aside>
+  <div class="brand-box">
+    <div class="brand-badge">V</div>
+    <div>
+      <div class="brand-title">VANGUARD RETAIL</div>
+      <div class="brand-sub">DISTRIBUTION MIS</div>
+    </div>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-caption">DISTRIBUTION HIERARCHY</div>
+    <ul class="nav-list">
+      <li class="nav-item">
+        <button class="active" data-view="network_overview">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg>
+          Network Overview
+        </button>
+      </li>
+      <li class="nav-item">
+        <button data-view="regional_directors">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          Regional Scorecards
+        </button>
+      </li>
+      <li class="nav-item">
+        <button data-view="branch_ranking">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+          Branch League Table
+        </button>
+      </li>
+      <li class="nav-item">
+        <button data-view="advisor_capacity">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+          Advisor Productivity (RMs)
+        </button>
+      </li>
+    </ul>
+  </div>
+
+  <!-- Q3 Sales Drive Progress Widget -->
+  <div class="campaign-pill">
+    <div class="campaign-head">
+      <span class="campaign-title">Q3 "Apex Lending" Drive</span>
+      <span class="campaign-days">18d left</span>
+    </div>
+    <div class="campaign-bar">
+      <div class="campaign-fill"></div>
+    </div>
+    <div class="campaign-foot">
+      <span>Quota Pace: 106.4%</span>
+      <span>Target: $1.85B</span>
+    </div>
+  </div>
+
+  <!-- User Profile Card -->
+  <div class="user-box">
+    <div class="user-avatar">DR</div>
+    <div>
+      <div style="font-weight: 600; color: #fff; font-size: 12px;">David Reynolds</div>
+      <div style="font-size: 10px; color: var(--text-muted);">Head of Retail Distribution</div>
+    </div>
+  </div>
+</aside>
+
+<!-- MAIN APP VIEWPORT -->
+<main>
+  <header>
+    <div class="header-info">
+      <h1 id="viewHeaderTitle">National Network Executive Cockpit</h1>
+      <p id="asOfTimestamp">Data current as of: August 31, 2026 · Consolidated Network Results</p>
+    </div>
+    <div class="header-controls">
+      <select class="select-input" id="campaignPeriod" title="Reporting Period">
+        <option value="M_AUG">August 2026 (Month-End)</option>
+        <option value="Q3_YTD" selected>Q3 2026 (Quarter to Date)</option>
+        <option value="YTD_26">FY 2026 Year-to-Date</option>
+      </select>
+      <button class="btn-sec" id="btnExport">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+        Export CSV
+      </button>
+      <button class="btn-prim" id="btnDrilldown">
+        Drill-down Inspector ↗
+      </button>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <!-- REGIONAL FILTER CHIPS -->
+    <div class="region-chips">
+      <span class="chip-label">Scope:</span>
+      <button class="chip active" data-region="ALL">Entire Network (142 Branches)</button>
+      <button class="chip" data-region="CENTRAL">Central Metro (42)</button>
+      <button class="chip" data-region="NORTH">Northern Corridor (34)</button>
+      <button class="chip" data-region="WEST">Western Coast (28)</button>
+      <button class="chip" data-region="SOUTH">Southern Heartland (23)</button>
+      <button class="chip" data-region="EAST">Eastern Hub (15)</button>
+    </div>
+
+    <!-- 6 KEY PERFORMANCE INDICATORS -->
+    <div class="kpis-grid" id="kpiContainer">
+      <!-- Injected via JavaScript -->
+    </div>
+
+    <!-- SECTION 1: SALES RUN-RATE CHART + REGIONAL QUOTA PROGRESS -->
+    <div class="grid-2col">
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h3 id="chartMainTitle">Lending & Investment Production Run-Rate</h3>
+            <p id="chartSubTitle">Cumulative monthly sales trajectory vs. Target Quota (in $ Millions)</p>
+          </div>
+          <div class="chart-legend">
+            <div class="legend-item">
+              <span class="legend-dot" style="background:#3b82f6;"></span>
+              <span id="seriesLabel1">Mortgage & Consumer Loans</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-dot" style="background:#10b981;"></span>
+              <span id="seriesLabel2">Wealth & Bancassurance</span>
+            </div>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="chart-box" id="svgChartBox"></div>
+        </div>
+      </div>
+
+      <!-- Regional Director Attainment Card -->
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h3>Regional Quota Achievement</h3>
+            <p>Scorecards for 5 Regional Directors</p>
+          </div>
+          <span class="badge badge-good">AVG: 104.8%</span>
+        </div>
+        <div class="card-body">
+          <div class="regional-scorecard" id="regionalScorecardBox">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SECTION 2: LEADERBOARD TABLE + ADVISOR COACHING ALERTS -->
+    <div class="grid-2col">
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h3 id="tableTitle">Top Performing Branches by Production Volume</h3>
+            <p id="tableSubtitle">Ranked by overall commercial score & quota attainment</p>
+          </div>
+          <button class="select-input" id="tableFilterBtn" style="padding: 4px 8px; font-size: 11px;">Filter Criteria ▼</button>
+        </div>
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr id="tableHeadRow">
+                <th>Rank & Branch Name</th>
+                <th>Region</th>
+                <th>New Lending</th>
+                <th>Deposit Net Inflow</th>
+                <th>Cross-Sell</th>
+                <th>Attainment</th>
+              </tr>
+            </thead>
+            <tbody id="tableBodyRow">
+              <!-- Rendered dynamically -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Action Radar / Advisor Coaching Alerts -->
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h3>Distribution Coaching Alerts</h3>
+            <p>Early warning signals for Regional Directors</p>
+          </div>
+          <span class="badge badge-warn">3 Requires Review</span>
+        </div>
+        <div class="card-body">
+          <div class="coaching-alerts">
+            <div class="alert-tile warn">
+              <div style="font-size: 16px;">⚠️</div>
+              <div>
+                <div class="alert-head">Capacity Gap: Western Coast SME Desks</div>
+                <div class="alert-desc">SME Loan Officer vacancy rate in Western branches reached 14.5%, leading to an 8% shortfall against Q3 pipeline commitments.</div>
+              </div>
+            </div>
+            <div class="alert-tile good">
+              <div style="font-size: 16px;">✓</div>
+              <div>
+                <div class="alert-head">Mortgage Blitz: Central Metro Exceeded Quota</div>
+                <div class="alert-desc">Digital pre-approvals via branches increased conversion by 22.4 bps, surpassing monthly plan by $34.5M.</div>
+              </div>
+            </div>
+            <div class="alert-tile crit">
+              <div style="font-size: 16px;">🛑</div>
+              <div>
+                <div class="alert-head">Cross-Sell Deficit: Southern Heartland</div>
+                <div class="alert-desc">Bancassurance attachment ratio on consumer loans dropped to 1.84x (Target: 2.60x). Immediate regional coaching required.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- DRILL-DOWN AUDIT DIALOG -->
+<dialog id="drilldownModal">
+  <div class="modal-head">
+    <div>
+      <h2 id="modalBranchTitle">Downtown Flagship (Branch #101) — Operational Audit</h2>
+      <p>Region: Central Metro · Branch Manager: Helena Mercer · 18 Licensed Advisors</p>
+    </div>
+    <button class="btn-sec" id="btnCloseModal">Close ✕</button>
+  </div>
+  <div class="table-responsive">
+    <table>
+      <thead>
+        <tr>
+          <th>Advisor (RM)</th>
+          <th>Specialization</th>
+          <th>New Loans</th>
+          <th>Wealth & PPI</th>
+          <th>NTB Customers</th>
+          <th>Quota Attainment</th>
+          <th>Incentive Tier</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="bold-txt">Sarah Lindqvist</td>
+          <td>Senior Mortgage RM</td>
+          <td>$14.2M</td>
+          <td>$3.4M</td>
+          <td>42</td>
+          <td><span class="badge badge-good">138.4%</span></td>
+          <td><b style="color:#f59e0b;">Tier 1 Elite</b></td>
+        </tr>
+        <tr>
+          <td class="bold-txt">Alex Tremblay</td>
+          <td>Affluent Wealth RM</td>
+          <td>$8.6M</td>
+          <td>$6.8M</td>
+          <td>38</td>
+          <td><span class="badge badge-good">124.2%</span></td>
+          <td><b style="color:#f59e0b;">Tier 1 Elite</b></td>
+        </tr>
+        <tr>
+          <td class="bold-txt">Julian Thorne</td>
+          <td>SME Loan Officer</td>
+          <td>$11.8M</td>
+          <td>$1.9M</td>
+          <td>29</td>
+          <td><span class="badge badge-good">112.0%</span></td>
+          <td><b>Tier 2 Senior</b></td>
+        </tr>
+        <tr>
+          <td class="bold-txt">Megan O'Connor</td>
+          <td>Consumer Loan Specialist</td>
+          <td>$4.1M</td>
+          <td>$0.8M</td>
+          <td>51</td>
+          <td><span class="badge badge-warn">91.4%</span></td>
+          <td><b>Tier 3 Qualified</b></td>
+        </tr>
+        <tr>
+          <td class="bold-txt">Liam Vance</td>
+          <td>Junior Personal Banker</td>
+          <td>$2.8M</td>
+          <td>$0.4M</td>
+          <td>33</td>
+          <td><span class="badge badge-alert">84.2%</span></td>
+          <td><span style="color:#f43f5e;">Under-Coaching</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</dialog>
+
+<div id="toast">Notification</div>
+
+<script>
+// --- GLOBAL APPLICATION STATE ---
+let activeView = 'network_overview';
+let activeRegion = 'ALL';
+
+// --- DATA STRUCTURES (DISTRIBUTION NETWORK HIERARCHY) ---
+const viewsConfig = {
+  network_overview: {
+    title: 'National Network Executive Cockpit',
+    chartTitle: 'Lending & Investment Production Run-Rate',
+    chartSub: 'Cumulative sales trajectory vs. Target Quota (in $ Millions)',
+    series1: 'New Lending (Mortgage & Consumer)',
+    series2: 'Wealth & Bancassurance Sales',
+    kpis: [
+      { label: 'New Lending Production', value: '1.42', unit: 'B', tag: '+106.4%', status: 'good', note: 'vs. Monthly Quota' },
+      { label: 'Net Deposit Growth', value: '840', unit: 'M', tag: '+102.1%', status: 'good', note: '+$84M over budget' },
+      { label: 'Bancassurance & Wealth', value: '118', unit: 'M', tag: '98.2%', status: 'warn', note: 'Shortfall in South' },
+      { label: 'Network Cross-Sell Ratio', value: '2.84', unit: 'x', tag: '+0.18x', status: 'good', note: 'Products / NTB Client' },
+      { label: 'Advisor Avg. Productivity', value: '412', unit: 'k', tag: '+7.4%', status: 'good', note: 'Volume / FTE / Mo.' },
+      { label: 'New-to-Bank (NTB) Clients', value: '18.4', unit: 'k', tag: '+11.2%', status: 'good', note: 'Branch on-boarded' }
+    ],
+    seriesA: [120, 138, 142, 168, 175, 192, 215, 238],
+    seriesB: [35, 41, 44, 48, 52, 59, 64, 71],
+    tableTitle: 'Top Performing Branches by Production Volume',
+    tableSubtitle: 'Ranked by overall commercial score & quota attainment'
+  },
+  regional_directors: {
+    title: 'Regional Directors Scorecard & Regional Comparison',
+    chartTitle: 'Regional Quota Delivery vs. Prior Year Comparison',
+    chartSub: 'Total volume by territory ($ Millions)',
+    series1: 'Current Period Actual',
+    series2: 'Prior Year Comparable',
+    kpis: [
+      { label: 'Total Operating Branches', value: '142', unit: '', tag: '100%', status: 'good', note: 'Across 5 Regions' },
+      { label: 'Regional Target Achievement', value: '104.8', unit: '%', tag: '+4.8 pp', status: 'good', note: 'Weighted Average' },
+      { label: 'FTE Capacity Utilization', value: '94.2', unit: '%', tag: '-1.4 pp', status: 'warn', note: '58 Open RM Vacancies' },
+      { label: 'Digital Onboarding Migration', value: '68.4', unit: '%', tag: '+8.6 pp', status: 'good', note: 'In-branch assisted' },
+      { label: 'Branch Audit Compliance', value: '97.2', unit: '%', tag: '+0.8 pp', status: 'good', note: 'Quality & Regulatory' },
+      { label: 'Branch Network OpEx', value: '42.8', unit: 'M', tag: '-2.4%', status: 'good', note: 'Under operating budget' }
+    ],
+    seriesA: [88, 92, 98, 105, 112, 118, 126, 134],
+    seriesB: [76, 80, 85, 91, 94, 98, 102, 109],
+    tableTitle: 'Regional Territories League Table',
+    tableSubtitle: 'Ranked by overall quota fulfillment and efficiency'
+  },
+  branch_ranking: {
+    title: 'Branch League Table & Performance Matrix',
+    chartTitle: 'Branch Target Distribution (Normal Curve)',
+    chartSub: 'Number of branch offices in achievement brackets',
+    series1: 'Actual Branch Count',
+    series2: 'Planned Benchmark',
+    kpis: [
+      { label: 'Tier 1 Flagship Branches', value: '24', unit: '', tag: '100%', status: 'good', note: 'Over $25M monthly vol' },
+      { label: 'Branches Above 100% Quota', value: '108', unit: '', tag: '76.1%', status: 'good', note: '108 of 142 locations' },
+      { label: 'Watchlist Branches (<90%)', value: '14', unit: '', tag: '9.8%', status: 'alert', note: 'Remediation initiated' },
+      { label: 'Average Branch Footfall', value: '1.45', unit: 'k', tag: '-3.1%', status: 'warn', note: 'Visitors / month / branch' },
+      { label: 'Branch Mystery Shopper NPS', value: '78.4', unit: 'pts', tag: '+4.1 pts', status: 'good', note: 'Customer experience' },
+      { label: 'Branch Operating Margin', value: '46.2', unit: '%', tag: '+2.1 pp', status: 'good', note: 'Revenue minus branch costs' }
+    ],
+    seriesA: [8, 14, 28, 48, 26, 12, 4, 2],
+    seriesB: [5, 12, 32, 50, 25, 12, 4, 2],
+    tableTitle: 'Branch Network Detailed League Table',
+    tableSubtitle: 'Complete listing sorted by new production performance'
+  },
+  advisor_capacity: {
+    title: 'Advisor (RM) Productivity, Pipeline & Incentives',
+    chartTitle: 'Production per FTE by Seniority Band',
+    chartSub: 'Monthly loan volume delivered per Relationship Manager ($k)',
+    series1: 'Top Quartile Bankers',
+    series2: 'Median Banker Average',
+    kpis: [
+      { label: 'Total Licensed Advisors', value: '1,120', unit: '', tag: 'FTE', status: 'good', note: 'Sales force headcount' },
+      { label: 'Avg Monthly Production / RM', value: '412', unit: 'k', tag: '+$28k', status: 'good', note: 'New disbursements' },
+      { label: 'Incentive Bonus Qualified', value: '71.2', unit: '%', tag: '+5.4 pp', status: 'good', note: 'Met minimum thresholds' },
+      { label: 'First-Year RM Retention', value: '88.6', unit: '%', tag: '+3.2 pp', status: 'good', note: 'Turnover stabilized' },
+      { label: 'Average Sales Pipeline Cycle', value: '14.2', unit: 'days', tag: '-2.8 d', status: 'good', note: 'Application to booking' },
+      { label: 'Cross-Sell Attachment Rate', value: '74.5', unit: '%', tag: '-1.8 pp', status: 'warn', note: 'Insurances with loans' }
+    ],
+    seriesA: [450, 480, 510, 560, 590, 620, 670, 710],
+    seriesB: [320, 335, 350, 370, 390, 405, 412, 425],
+    tableTitle: 'Top Performing Relationship Managers (National Leaderboard)',
+    tableSubtitle: 'Excellence in production, compliance and client portfolio expansion'
+  }
+};
+
+const regionalData = [
+  { region: 'Central Metro', dir: 'Marcus Vance', quota: 108.4, target: '$520M', actual: '$563.7M', branches: 42, color: 'var(--accent-blue)' },
+  { region: 'Northern Corridor', dir: 'Elena Rostova', quota: 106.2, target: '$390M', actual: '$414.2M', branches: 34, color: 'var(--accent-cyan)' },
+  { region: 'Western Coast', dir: 'David Chen', quota: 102.8, target: '$310M', actual: '$318.7M', branches: 28, color: 'var(--accent-emerald)' },
+  { region: 'Eastern Hub', dir: 'Robert Miller', quota: 101.4, target: '$180M', actual: '$182.5M', branches: 15, color: 'var(--accent-violet)' },
+  { region: 'Southern Heartland', dir: 'Sarah Jenkins', quota: 95.1, target: '$260M', actual: '$247.3M', branches: 23, color: 'var(--accent-amber)' }
+];
+
+const branchesTableData = [
+  { rank: 1, name: 'Downtown Flagship (#101)', region: 'Central Metro', lending: '$68.4M', deposits: '$42.1M', xSell: '3.42x', attainment: '124.6%' },
+  { rank: 2, name: 'Financial Wharf (#104)', region: 'Central Metro', lending: '$54.2M', deposits: '$38.6M', xSell: '3.18x', attainment: '118.2%' },
+  { rank: 3, name: 'Northgate Center (#208)', region: 'Northern Corridor', lending: '$48.1M', deposits: '$29.4M', xSell: '2.94x', attainment: '112.5%' },
+  { rank: 4, name: 'Silicon Galleria (#305)', region: 'Western Coast', lending: '$44.8M', deposits: '$31.2M', xSell: '2.88x', attainment: '109.1%' },
+  { rank: 5, name: 'Metro Gateway (#412)', region: 'Southern Heartland', lending: '$39.2M', deposits: '$22.0M', xSell: '2.45x', attainment: '98.4%' },
+  { rank: 6, name: 'Old Town Plaza (#502)', region: 'Eastern Hub', lending: '$32.6M', deposits: '$19.5M', xSell: '2.62x', attainment: '101.2%' }
+];
+
+// --- RENDER LOGIC ---
+function renderUI() {
+  const cfg = viewsConfig[activeView];
+
+  // Headings
+  document.getElementById('viewHeaderTitle').textContent = cfg.title;
+  document.getElementById('chartMainTitle').textContent = cfg.chartTitle;
+  document.getElementById('chartSubTitle').textContent = cfg.chartSub;
+  document.getElementById('seriesLabel1').textContent = cfg.series1;
+  document.getElementById('seriesLabel2').textContent = cfg.series2;
+  document.getElementById('tableTitle').textContent = cfg.tableTitle;
+  document.getElementById('tableSubtitle').textContent = cfg.tableSubtitle;
+
+  // Filter multiplier based on region chip
+  let regMultiplier = activeRegion === 'ALL' ? 1.0 :
+                      activeRegion === 'CENTRAL' ? 0.38 :
+                      activeRegion === 'NORTH' ? 0.28 :
+                      activeRegion === 'WEST' ? 0.21 :
+                      activeRegion === 'SOUTH' ? 0.16 : 0.12;
+
+  // Render KPIs
+  const kpiBox = document.getElementById('kpiContainer');
+  kpiBox.innerHTML = cfg.kpis.map(k => {
+    let rawVal = parseFloat(k.value);
+    let displayVal = k.value;
+    if (activeRegion !== 'ALL' && ['B', 'M', 'k'].includes(k.unit)) {
+      displayVal = (rawVal * regMultiplier).toFixed(rawVal > 50 ? 0 : 1);
+    }
+    return `
+      <div class="kpi-card">
+        <div class="kpi-top">
+          <span>${k.label}</span>
+          <span style="color:#475569;">⊙</span>
+        </div>
+        <div class="kpi-num">${displayVal}<span>${k.unit}</span></div>
+        <div class="kpi-bottom">
+          <span class="badge ${k.status === 'good' ? 'badge-good' : k.status === 'warn' ? 'badge-warn' : 'badge-alert'}">
+            ${k.tag}
+          </span>
+          <span style="color:var(--text-muted); font-size:10px;">${k.note}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // Render SVG Charts
+  drawSvgChart(cfg.seriesA.map(v => v * regMultiplier), cfg.seriesB.map(v => v * regMultiplier));
+
+  // Render Regional Scorecards
+  const scorecardBox = document.getElementById('regionalScorecardBox');
+  scorecardBox.innerHTML = regionalData.map(r => {
+    let isSelected = activeRegion === 'ALL' || activeRegion === r.region.split(' ')[0].toUpperCase();
+    return `
+      <div class="region-row" style="opacity: ${isSelected ? '1' : '0.35'};">
+        <div class="region-row-meta">
+          <span><b>${r.region}</b> (${r.dir} · ${r.branches} br.)</span>
+          <b style="color: ${r.quota >= 100 ? 'var(--accent-emerald)' : 'var(--accent-amber)'};">${r.quota}%</b>
+        </div>
+        <div class="region-row-track">
+          <div class="region-row-fill" style="width: ${Math.min(100, (r.quota / 120) * 100)}%; background: ${r.color};"></div>
+        </div>
+        <div class="region-row-foot">
+          <span>Production: ${r.actual}</span>
+          <span>Target: ${r.target}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // Render Table
+  renderTableData();
+}
+
+function drawSvgChart(sA, sB) {
+  const weeks = ['Week 1', 'Week 2', 'Week 3', 'Week 4', 'Week 5', 'Week 6', 'Week 7', 'Week 8'];
+  const maxVal = Math.max(...sA) * 1.25;
+  const h = 230, w = 620, padL = 45, padB = 30;
+
+  const getPoints = (arr) => arr.map((v, i) => {
+    let x = padL + (i * (w - padL) / (arr.length - 1));
+    let y = h - padB - ((v / maxVal) * (h - padB - 20));
+    return `${x},${y}`;
+  }).join(' ');
+
+  let grid = '';
+  for (let i = 0; i <= 3; i++) {
+    let y = 20 + i * ((h - padB - 20) / 3);
+    let val = ((maxVal * (3 - i) / 3)).toFixed(0);
+    grid += `
+      <line x1="${padL}" y1="${y}" x2="${w}" y2="${y}" stroke="#1e293b" stroke-dasharray="3,3"/>
+      <text x="${padL - 10}" y="${y + 4}" fill="#64748b" font-size="10" text-anchor="end">${val}</text>
+    `;
+  }
+
+  let labels = weeks.map((wk, i) => {
+    let x = padL + (i * (w - padL) / (weeks.length - 1));
+    return `<text x="${x}" y="${h - 8}" fill="#64748b" font-size="10" text-anchor="middle">${wk}</text>`;
+  }).join('');
+
+  document.getElementById('svgChartBox').innerHTML = `
+    <svg viewBox="0 0 ${w} ${h}">
+      ${grid}
+      <polyline fill="none" stroke="#10b981" stroke-width="2.5" stroke-dasharray="4 3" points="${getPoints(sB)}"/>
+      <polyline fill="none" stroke="#3b82f6" stroke-width="3" stroke-linecap="round" points="${getPoints(sA)}"/>
+      ${sA.map((v, i) => {
+        let x = padL + (i * (w - padL) / (sA.length - 1));
+        let y = h - padB - ((v / maxVal) * (h - padB - 20));
+        return `<circle cx="${x}" cy="${y}" r="4" fill="#111827" stroke="#3b82f6" stroke-width="2"><title>${weeks[i]}: ${v.toFixed(1)}M</title></circle>`;
+      }).join('')}
+      ${labels}
+    </svg>
+  `;
+}
+
+function renderTableData() {
+  const tbody = document.getElementById('tableBodyRow');
+  let rows = branchesTableData;
+  if (activeRegion !== 'ALL') {
+    rows = branchesTableData.filter(b => b.region.toUpperCase().includes(activeRegion));
+    if (rows.length === 0) rows = branchesTableData.slice(0, 3);
+  }
+
+  tbody.innerHTML = rows.map((b, idx) => {
+    let rankBadgeClass = idx === 0 ? 'rank-1' : idx === 1 ? 'rank-2' : idx === 2 ? 'rank-3' : '';
+    let attainmentNum = parseFloat(b.attainment);
+    let attBadge = attainmentNum >= 110 ? 'badge-good' : attainmentNum >= 100 ? 'badge-warn' : 'badge-alert';
+    return `
+      <tr style="cursor: pointer;" onclick="openBranchAudit('${b.name}')">
+        <td class="bold-txt">
+          <span class="rank-idx ${rankBadgeClass}">${b.rank}</span>
+          ${b.name}
+        </td>
+        <td>${b.region}</td>
+        <td>${b.lending}</td>
+        <td>${b.deposits}</td>
+        <td>${b.xSell}</td>
+        <td><span class="badge ${attBadge}">${b.attainment}</span></td>
+      </tr>
+    `;
+  }).join('');
+}
+
+// --- EVENT HANDLERS ---
+document.querySelectorAll('[data-view]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-view]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeView = btn.dataset.view;
+    renderUI();
+  });
+});
+
+document.querySelectorAll('[data-region]').forEach(chip => {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('[data-region]').forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    activeRegion = chip.dataset.region;
+    renderUI();
+    showToast(`Filtered distribution scope: ${chip.textContent.trim()}`);
+  });
+});
+
+document.getElementById('campaignPeriod').addEventListener('change', (e) => {
+  showToast(`Period set to: ${e.target.selectedOptions[0].text}`);
+  renderUI();
+});
+
+// Modal Logic
+const modal = document.getElementById('drilldownModal');
+function openBranchAudit(name) {
+  document.getElementById('modalBranchTitle').textContent = `${name} — Operational Performance Audit`;
+  modal.showModal();
+}
+document.getElementById('btnDrilldown').onclick = () => openBranchAudit('Downtown Flagship (#101)');
+document.getElementById('btnCloseModal').onclick = () => modal.close();
+
+// CSV Export
+document.getElementById('btnExport').onclick = () => {
+  const cfg = viewsConfig[activeView];
+  let csv = `Vanguard Bank Distribution MIS\r\nReport: ${cfg.title}\r\nRegion: ${activeRegion}\r\n\r\n`;
+  csv += 'Rank;Branch Name;Region;New Lending;Net Deposits;Cross-Sell;Attainment\r\n';
+  branchesTableData.forEach(b => {
+    csv += `${b.rank};${b.name};${b.region};${b.lending};${b.deposits};${b.xSell};${b.attainment}\r\n`;
+  });
+
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `Vanguard_Distribution_${activeView}_${activeRegion}.csv`;
+  a.click();
+  showToast('Distribution Report exported to CSV');
+};
+
+function showToast(msg) {
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 2600);
+}
+
+// Initial Boot
+renderUI();
+</script>
+</body>
+</html>
