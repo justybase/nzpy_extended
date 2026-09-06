@@ -4,6 +4,17 @@ import { api } from '../lib/api';
 import type { SchemaNode } from '../lib/types';
 import type { MenuItem } from './ContextMenu';
 
+function kindIcon(kind: string, objectType?: string): string {
+  if (kind === 'database') return '◉';
+  if (kind === 'schema') return '▤';
+  if (kind === 'column') return '⌁';
+  if (objectType === 'VIEW') return '👁';
+  if (objectType === 'PROCEDURE') return 'ƒ';
+  if (objectType === 'SYNONYM') return '⎋';
+  if (objectType === 'EXTERNAL TABLE') return '⧉';
+  return '▦';
+}
+
 function TreeNode({ node, onMenu, onSelect }: { node: SchemaNode; onMenu(node: SchemaNode, event: React.MouseEvent): void; onSelect(node: SchemaNode): void }): ReactElement {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -19,11 +30,12 @@ function TreeNode({ node, onMenu, onSelect }: { node: SchemaNode; onMenu(node: S
     }
   }
   return <div className="tree-node">
-    <div className="tree-row" onClick={() => void toggle()} onContextMenu={event => onMenu(node, event)} title={node.description || node.label}>
+    <div className={`tree-row ${open ? 'is-open' : ''}`} onClick={() => void toggle()} onContextMenu={event => onMenu(node, event)} title={node.description || node.label}>
       <span className="twisty">{node.has_children ? (open ? '▾' : '▸') : '·'}</span>
-      <span className={`node-icon node-${node.kind}`}>{node.kind === 'database' ? '◉' : node.kind === 'schema' ? '□' : node.kind === 'column' ? '⌁' : '▦'}</span>
+      <span className={`node-icon node-${node.kind}`} aria-hidden="true">{kindIcon(node.kind, node.object_type)}</span>
       <span className="tree-label">{node.label}</span>
       {node.object_type && <span className="badge">{node.object_type}</span>}
+      {node.column_type && <span className="badge is-type">{node.column_type}</span>}
       {loading && <span className="muted">…</span>}
     </div>
     {open && <div className="tree-children">{children.length ? children.map(child => <TreeNode key={child.id} node={child} onMenu={onMenu} onSelect={onSelect} />) : error ? <div className="error-banner">{error}</div> : !loading && <div className="empty-row">No objects</div>}</div>}
@@ -51,10 +63,17 @@ export function SchemaTree({ onMenu, onSelect, onRefresh, refreshKey = 0 }: { on
     }, 250);
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [search]);
+  const visible = search ? searchRows : nodes;
   return <section className="schema-panel">
-    <div className="panel-title"><span>Schema</span><button className="icon-button" onClick={onRefresh} title="Refresh schema">↻</button></div>
-    <div className="schema-search"><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search objects…" /><span>{loading ? '…' : ''}</span></div>
-    <div className="schema-scroll">{error && <div className="error-banner">{error}</div>}{(search ? searchRows : nodes).map(node => <TreeNode key={node.id} node={node} onMenu={onMenu} onSelect={onSelect} />)}{!loading && !error && !(search ? searchRows : nodes).length && <div className="empty-row">No schema objects</div>}</div>
+    <div className="panel-title"><span className="panel-title-text">Schema</span><span className="panel-count">{loading ? '…' : `${visible.length}`}</span><button className="icon-button" onClick={onRefresh} title="Refresh schema">↻</button></div>
+    <div className="schema-search">
+      <span className="schema-search-box">
+        <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.6" /><line x1="10.6" y1="10.6" x2="14" y2="14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+        <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search objects…" aria-label="Search schema objects" />
+        {search && <button type="button" className="schema-search-clear" onClick={() => setSearch('')} aria-label="Clear schema search">×</button>}
+      </span>
+    </div>
+    <div className="schema-scroll">{error && <div className="error-banner">{error}</div>}{visible.map(node => <TreeNode key={node.id} node={node} onMenu={onMenu} onSelect={onSelect} />)}{!loading && !error && !visible.length && <div className="empty-row">{search ? 'No matching objects' : 'No schema objects'}</div>}</div>
   </section>;
 }
 
