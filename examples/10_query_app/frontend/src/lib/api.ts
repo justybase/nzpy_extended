@@ -9,6 +9,7 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   preview: (sql: string, database?: string) => json<{ containsWrite: boolean; previewToken: string; statements: unknown[] }>('/api/v1/query/preview', { method: 'POST', body: JSON.stringify({ sql, database }) }),
+  execute: (body: unknown, signal?: AbortSignal) => json<{ queryId: string; status: string; error?: string; results: Array<{ resultSetId: string; sessionId: string; statementIndex: number; columns: Record<string, unknown>[]; status: string; totalRows: number; truncated?: boolean; message?: string }> }>('/api/v1/query/execute', { method: 'POST', body: JSON.stringify(body), signal }),
   tree: (parentId?: string, database?: string) => json<{ nodes: SchemaNode[] }>(`/api/v1/schema/tree?${new URLSearchParams({ ...(parentId ? { parent_id: parentId } : {}), ...(database ? { database } : {}) })}`),
   detail: (node: SchemaNode) => json<Record<string, unknown>>(`/api/v1/schema/detail?${new URLSearchParams({ table: node.object_name || node.label, ...(node.schema ? { schema: node.schema } : {}), ...(node.database ? { database: node.database } : {}) })}`),
   completion: (sql: string, offset: number, database?: string, schema?: string) => json<{ items: Array<Record<string, unknown>> }>('/api/v1/language/completion', { method: 'POST', body: JSON.stringify({ sql, offset, database, schema }) }),

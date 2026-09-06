@@ -62,7 +62,7 @@ npx playwright install chromium
 NZ_E2E=1 NZ_E2E_START_SERVER=1 npm run test:e2e
 ```
 
-Przed uruchomieniem doinstaluj zależności Pythona przez `python3 -m pip install -r ../requirements.txt`; extra `uvicorn[standard]` dostarcza backend WebSocket wymagany przez edytor. Jeśli używasz virtualenvu, wskaż jego interpreter przez `NZ_E2E_PYTHON=/ścieżka/venv/bin/python`. `python-multipart` jest potrzebny również dla legacy endpointów formularzowych import/export.
+Przed uruchomieniem doinstaluj zależności Pythona przez `python3 -m pip install -r ../requirements.txt`; extra `uvicorn[standard]` włącza streaming, cancel i progress przez WebSocket. Jeśli ten backend nie jest dostępny, edytor użyje synchronicznego fallbacku HTTP dla podstawowego wykonania i gridu. Jeśli używasz virtualenvu, wskaż jego interpreter przez `NZ_E2E_PYTHON=/ścieżka/venv/bin/python`. `python-multipart` jest potrzebny również dla legacy endpointów formularzowych import/export.
 
 Global setup tworzy tabelę `NZPY_E2E_*`, testuje completion, wiele zakładek i renderowanie wyniku, a teardown usuwa wyłącznie utworzony obiekt.
 
@@ -71,6 +71,7 @@ Global setup tworzy tabelę `NZPY_E2E_*`, testuje completion, wiele zakładek i 
 ```text
 WS  /api/v1/workspace/ws
 POST /api/v1/query/preview
+POST /api/v1/query/execute
 GET  /api/v1/schema/tree
 POST /api/v1/language/completion
 POST /api/v1/language/diagnostics

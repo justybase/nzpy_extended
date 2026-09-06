@@ -32,7 +32,101 @@ async def preview_query(payload: dict[str, Any], safety: SqlSafetyService = Depe
 async def start_query(payload: dict[str, Any]) -> dict[str, Any]:
     if not str(payload.get("sql", "")).strip():
         raise HTTPException(400, "SQL query is empty")
-    return {"queryId": payload.get("queryId") or os.urandom(12).hex(), "transport": "websocket"}
+    return {"queryId": payload.get("queryId") or os.urandom(12).hex(), "transport": "websocket", "fallbackTransport": "http"}
+
+
+@router.post("/api/v1/query/execute")
+async def execute_query(
+    request: Request,
+    payload: dict[str, Any],
+    service: QueryService = Depends(get_query_service),
+    safety: SqlSafetyService = Depends(get_sql_safety),
+) -> dict[str, Any]:
+    """Execute a query over HTTP when the optional WebSocket backend is unavailable.
+
+    The result still goes through QueryService and the disk-backed session
+    manager, so the grid has the same paging/filtering contract as the
+    streaming WebSocket transport.  This endpoint intentionally waits for
+    completion; progress and cancellation remain WebSocket-only features.
+    """
+    sql = str(payload.get("sql", ""))
+    if not sql.strip():
+        raise HTTPException(400, "SQL query is empty")
+    database = payload.get("database")
+    preview_token = payload.get("previewToken") or payload.get("preview_token")
+    raw_write_confirmed = payload.get("writeConfirmed") or payload.get("write_confirmed")
+    write_confirmed = raw_write_confirmed if isinstance(raw_write_confirmed, bool) else str(raw_write_confirmed).lower() in {"1", "true", "yes", "on"}
+    if not safety.validate(preview_token, sql, database, bool(write_confirmed)):
+        raise HTTPException(409, "Write statement requires a valid preview confirmation.")
+
+    query_id = str(payload.get("queryId") or os.urandom(12).hex())
+    events: list[dict[str, Any]] = []
+
+    async def collect(event: dict[str, Any]) -> None:
+        events.append(event)
+
+    task = await service.start(
+        query_id,
+        sql,
+        mode=str(payload.get("mode", "cursor")),
+        cursor_offset=payload.get("cursorOffset"),
+        selection=payload.get("selection"),
+        database=database,
+        timeout=float(payload.get("timeoutSeconds") or request.app.state.settings.default_query_timeout),
+        emit=collect,
+    )
+    while not task.done():
+        if await request.is_disconnected():
+            await service.cancel(query_id)
+            break
+        await asyncio.sleep(0.05)
+    await task
+
+    columns_by_statement: dict[int, list[dict[str, Any]]] = {}
+    results: dict[int, dict[str, Any]] = {}
+    error_message: str | None = None
+    terminal_status = "error"
+    for event in events:
+        statement_index = int(event.get("statementIndex") or 0)
+        event_type = event.get("type")
+        if event_type == "columns":
+            columns_by_statement[statement_index] = list(event.get("columns") or [])
+        elif event_type == "session-created":
+            results[statement_index] = {
+                "resultSetId": event.get("resultSetId"),
+                "sessionId": event.get("sessionId"),
+                "statementIndex": statement_index,
+                "columns": columns_by_statement.get(statement_index, []),
+                "status": "running",
+                "totalRows": 0,
+            }
+        elif event_type == "complete":
+            result = results.get(statement_index)
+            if result is not None:
+                result.update({
+                    "status": "complete",
+                    "totalRows": int(event.get("totalRows") or 0),
+                    "truncated": bool(event.get("limitReached")),
+                    "message": event.get("message"),
+                })
+        elif event_type == "error":
+            error_message = str(event.get("message") or "Query failed")
+            result = results.get(statement_index)
+            if result is not None:
+                result.update({"status": "error", "message": error_message})
+        elif event_type == "cancelled":
+            result = results.get(statement_index)
+            if result is not None:
+                result.update({"status": "cancelled", "message": "Query cancelled."})
+        elif event_type == "batch-complete":
+            terminal_status = str(event.get("status") or "error")
+
+    return {
+        "queryId": query_id,
+        "status": terminal_status,
+        "results": [results[index] for index in sorted(results)],
+        "error": error_message,
+    }
 
 
 @router.websocket("/api/v1/workspace/ws")

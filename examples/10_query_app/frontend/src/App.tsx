@@ -29,6 +29,7 @@ export function App(): ReactElement {
   const queryOwnersRef = useRef(new Map<string, string>());
   const columnsRef = useRef(new Map<string, Record<string, unknown>[]>());
   const resultRefs = useRef(new Map<string, string>());
+  const httpAbortersRef = useRef(new Map<string, AbortController>());
 
   useEffect(() => { localStorage.setItem('nz.query-workspace.v2', JSON.stringify({ tabs: state.tabs.map(item => ({ ...item, results: item.results.map(result => ({ ...result, columns: [] })) })), activeTabId: state.activeTabId })); }, [state.tabs, state.activeTabId]);
 
@@ -79,20 +80,43 @@ export function App(): ReactElement {
   }
 
   const run = async (mode: 'cursor' | 'selection' | 'script' = 'cursor'): Promise<void> => {
-    if (!tab || !socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) return;
+    if (!tab) return;
     const editor = editorRef.current; const model = editor?.getModel();
     const sql = tab.sql; if (!sql.trim()) return;
     const preview = await api.preview(sql, tab.database);
     let writeConfirmed = false;
     if (preview.containsWrite) { writeConfirmed = window.confirm('This script contains statements that change database state. Execute it?'); if (!writeConfirmed) return; }
     const queryId = crypto.randomUUID();
-    queryOwnersRef.current.set(queryId, tab.id);
     dispatch({ type: 'query.start', id: tab.id, queryId });
     const position = editor?.getPosition();
     const selection = editor?.getSelection();
-    socketRef.current.send(JSON.stringify({ type: 'query.start', queryId, tabId: tab.id, sql, mode, database: tab.database, schema: tab.schema, cursorOffset: position && model ? model.getOffsetAt(position) : undefined, selection: selection && model && !selection.isEmpty() ? { start: model.getOffsetAt({ lineNumber: selection.startLineNumber, column: selection.startColumn }), end: model.getOffsetAt({ lineNumber: selection.endLineNumber, column: selection.endColumn }) } : undefined, timeoutSeconds: 30, previewToken: preview.previewToken, writeConfirmed }));
+    const payload = { type: 'query.start', queryId, tabId: tab.id, sql, mode, database: tab.database, schema: tab.schema, cursorOffset: position && model ? model.getOffsetAt(position) : undefined, selection: selection && model && !selection.isEmpty() ? { start: model.getOffsetAt({ lineNumber: selection.startLineNumber, column: selection.startColumn }), end: model.getOffsetAt({ lineNumber: selection.endLineNumber, column: selection.endColumn }) } : undefined, timeoutSeconds: 30, previewToken: preview.previewToken, writeConfirmed };
+    const socket = socketRef.current;
+    if (socket?.readyState === WebSocket.OPEN) {
+      queryOwnersRef.current.set(queryId, tab.id);
+      socket.send(JSON.stringify(payload));
+      return;
+    }
+    const aborter = new AbortController();
+    httpAbortersRef.current.set(queryId, aborter);
+    try {
+      const response = await api.execute(payload, aborter.signal);
+      for (const item of response.results) {
+        const result: ResultSet = { id: item.resultSetId, sessionId: item.sessionId, queryId, statementIndex: item.statementIndex, label: `Statement ${item.statementIndex + 1}`, status: 'running', columns: item.columns || [], totalRows: 0, createdAt: new Date().toISOString() };
+        dispatch({ type: 'query.result', tabId: tab.id, result });
+        if (item.status === 'complete') dispatch({ type: 'query.complete', tabId: tab.id, resultId: result.id, totalRows: item.totalRows, truncated: item.truncated, message: item.message });
+        else dispatch({ type: 'query.resultStatus', tabId: tab.id, resultId: result.id, status: item.status === 'cancelled' ? 'cancelled' : 'error', message: item.message });
+      }
+      if (response.status === 'complete' || response.status === 'cancelled') dispatch({ type: 'query.batchComplete', tabId: tab.id, status: response.status });
+      else dispatch({ type: 'query.error', tabId: tab.id, message: response.error || 'Query failed' });
+    } catch (reason) {
+      if (aborter.signal.aborted) dispatch({ type: 'query.batchComplete', tabId: tab.id, status: 'cancelled' });
+      else dispatch({ type: 'query.error', tabId: tab.id, message: reason instanceof Error ? reason.message : 'Could not execute query.' });
+    } finally {
+      httpAbortersRef.current.delete(queryId);
+    }
   };
-  const cancel = (): void => { const id = tab?.runningQueryId; if (id && socketRef.current?.readyState === WebSocket.OPEN) socketRef.current.send(JSON.stringify({ type: 'query.cancel', queryId: id })); };
+  const cancel = (): void => { const id = tab?.runningQueryId; if (!id) return; if (socketRef.current?.readyState === WebSocket.OPEN) socketRef.current.send(JSON.stringify({ type: 'query.cancel', queryId: id })); else httpAbortersRef.current.get(id)?.abort(); };
   const insert = (value: string): void => { const editor = editorRef.current; const selection = editor?.getSelection(); if (editor && selection) { editor.executeEdits('schema-action', [{ range: selection, text: value, forceMoveMarkers: true }]); editor.focus(); } };
   const openQuery = (sql: string): void => { dispatch({ type: 'tab.add', sql, title: 'Preview' }); };
   const refreshSchema = async (database?: string, schema?: string): Promise<void> => { try { await api.refreshSchema(database, schema); } catch { /* the reload below renders the server error in the tree */ } finally { setSchemaRefreshKey(value => value + 1); } };
@@ -103,6 +127,7 @@ export function App(): ReactElement {
   const closeTab = (id: string): void => {
     const closing = stateRef.current.tabs.find(item => item.id === id);
     if (closing?.runningQueryId && socketRef.current?.readyState === WebSocket.OPEN) socketRef.current.send(JSON.stringify({ type: 'query.cancel', queryId: closing.runningQueryId }));
+    if (closing?.runningQueryId) httpAbortersRef.current.get(closing.runningQueryId)?.abort();
     dispatch({ type: 'tab.close', id });
   };
   const onMount: OnMount = (editor, monaco) => {
