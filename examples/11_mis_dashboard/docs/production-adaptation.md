@@ -34,7 +34,7 @@ Status values used in this document:
 | Late data | Demo has deterministic dates | Define backfill, restatement and re-publication policy | Reconciliation example and historical report acceptance test | Data engineering / Business owner |
 | RAM cache | Full eager table set in process memory | Determine allowed memory, masking and table-specific storage strategy | Capacity benchmark and memory limit alert | Platform / Architecture |
 | SQLite snapshot | Local unencrypted full snapshot, one host/process | Decide encrypted local cache, shared cache, Redis, warehouse mart or no persistence | Encryption, permissions, backup/restore and corruption test | Platform / Security |
-| SQLite I/O | Synchronous local operations behind async methods | Move blocking work to a bounded worker or choose a different store | Event-loop latency test under refresh load | Architecture |
+| SQLite I/O | Synchronous local operations delegated from async methods to worker threads | Use a bounded worker or choose a different store; keep measuring event-loop latency | Event-loop latency test under refresh load | Architecture |
 | Topology | One process/host assumption | Single instance, multi-worker or multi-host deployment | Locking, generation consistency and rolling restart test | Platform |
 | Availability | Last complete generation served when source is unavailable | Define fail-open/fail-closed policy for stale reporting | SLO, alert threshold, incident runbook and business approval | Business owner / Operations |
 | Recovery | SQLite can reduce restart reload time | Define RTO, RPO, snapshot backup and restore authority | Timed restore drill and documented evidence | Operations |

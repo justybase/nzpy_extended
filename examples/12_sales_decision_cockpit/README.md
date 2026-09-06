@@ -51,6 +51,30 @@ sum(contribution) = selected_scope_actual - selected_scope_target
 That makes the explanation auditable. The “next action” text is a deterministic
 playbook suggestion, not an AI-generated claim and not a persisted task.
 
+## Important async boundary warning
+
+`async def` only describes how a function may suspend; it does **not** turn
+synchronous work into non-blocking work. A synchronous file operation, Excel
+writer, database call, `time.sleep()` or large in-memory aggregation inside an
+`async def` route or service blocks the event loop and delays every concurrent
+request handled by that process.
+
+Await the asynchronous Netezza operations. For unavoidable synchronous I/O or
+CPU-heavy work, use a bounded worker pool (the export writer in this example
+uses `asyncio.to_thread`), or push the aggregation into the database. A minimal
+pattern is:
+
+```python
+async def make_export() -> str:
+    return await asyncio.to_thread(write_workbook_sync)
+```
+
+Do not replace `time.sleep()` with an `async def` wrapper; use
+`await asyncio.sleep(...)`. Keep created background tasks, cancel and await
+them at shutdown, and never assume that declaring an endpoint `async def`
+protects it from blocking code. See the full checklist in
+[`docs/async-boundaries.md`](docs/async-boundaries.md).
+
 ## Setup
 
 Use Python 3.12+ and install the example dependencies:
