@@ -6,10 +6,11 @@ import io
 import json
 
 import nzpy_extended as nzpy
-from fastapi import APIRouter, Depends, Form, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from app.api.deps import get_pool, get_settings
+from app.api.form import read_form
 from app.core.config import Settings
 from app.services.data_exchange import rows_to_csv
 from app.services.query_service import build_columns
@@ -20,11 +21,13 @@ router = APIRouter(tags=["export"])
 
 @router.post("/api/export")
 async def export_results(
-    sql: str = Form(...),
-    format: str = Form("csv"),
+    request: Request,
     settings: Settings = Depends(get_settings),
     pool=Depends(get_pool),  # type: ignore[no-untyped-def]
 ) -> StreamingResponse:
+    form = await read_form(request)
+    sql = str(form.get("sql", ""))
+    format = str(form.get("format", "csv"))
     if not sql.strip():
         raise HTTPException(400, "SQL query is empty")
     if format not in {"csv", "json"}:

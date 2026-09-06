@@ -62,6 +62,8 @@ npx playwright install chromium
 NZ_E2E=1 NZ_E2E_START_SERVER=1 npm run test:e2e
 ```
 
+Jeśli używasz virtualenvu, wskaż jego interpreter przez `NZ_E2E_PYTHON=/ścieżka/venv/bin/python`. `python-multipart` jest potrzebny tylko dla legacy endpointów formularzowych import/export; instalacja `python3 -m pip install -r ../requirements.txt` włącza również te endpointy.
+
 Global setup tworzy tabelę `NZPY_E2E_*`, testuje completion, wiele zakładek i renderowanie wyniku, a teardown usuwa wyłącznie utworzony obiekt.
 
 ## Główne kontrakty

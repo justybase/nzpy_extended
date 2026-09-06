@@ -5,9 +5,10 @@ from __future__ import annotations
 import re
 
 import nzpy_extended as nzpy
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.deps import get_pool, get_settings
+from app.api.form import read_form
 from app.core.config import Settings
 from app.schemas.models import ImportResponse
 from app.services.data_exchange import (
@@ -24,13 +25,15 @@ _TABLE_PATH_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*(?:\.[A-Za-z_][A-Za-z0-9_$
 
 @router.post("/api/import", response_model=ImportResponse)
 async def import_data(
-    file: UploadFile = File(...),
-    table: str = Form(...),
-    delimiter: str = Form(","),
+    request: Request,
     settings: Settings = Depends(get_settings),
     pool=Depends(get_pool),  # type: ignore[no-untyped-def]
 ) -> ImportResponse:
-    if not file.filename:
+    form = await read_form(request)
+    file = form.get("file")
+    table = str(form.get("table", ""))
+    delimiter = str(form.get("delimiter", ","))
+    if file is None or not getattr(file, "filename", None):
         raise HTTPException(400, "No file provided")
     if not _TABLE_PATH_RE.fullmatch(table.strip()):
         raise HTTPException(400, "table must be an unquoted database.schema.table identifier")
