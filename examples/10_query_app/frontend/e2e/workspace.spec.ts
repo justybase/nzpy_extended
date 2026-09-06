@@ -31,10 +31,11 @@ test.describe('Netezza SQL workspace', () => {
     await page.getByRole('button', { name: '▶ Run' }).click();
     await expect(page.locator('.result-grid-shell')).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText('3 rows')).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator('.data-grid')).toContainText('alpha');
-    await page.locator('.virtual-row').first().click({ button: 'right' });
-    await expect(page.getByRole('button', { name: 'Copy row as TSV' })).toBeVisible();
-    await page.getByRole('button', { name: 'Copy row as TSV' }).click();
+    await expect(page.locator('.tabulator')).toContainText('alpha');
+    await expect(page.locator('.tabulator-col[draggable="true"]').first()).toBeVisible();
+    await page.locator('.tabulator-row').first().click({ button: 'right' });
+    await expect(page.locator('.tabulator-menu')).toContainText('Copy row as TSV');
+    await page.locator('.tabulator-menu').getByText('Copy row as TSV').click();
     await expect(page.getByRole('button', { name: '▶ Run' })).toBeEnabled();
   });
 });

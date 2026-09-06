@@ -67,9 +67,9 @@ export function schemaMenu(node: SchemaNode, insert: (value: string) => void, op
     { label: 'Insert name into editor', action: () => insert(qualified) },
     { label: 'Refresh node', action: refresh },
   ];
-  if (node.kind === 'object' && ['TABLE', 'VIEW', 'EXTERNAL TABLE'].includes(node.object_type || '')) {
-    items.splice(2, 0, { label: 'New SELECT tab', action: () => openQuery(`SELECT *\nFROM ${qualified}\nLIMIT 100;`) });
-    items.push({ label: 'Show details', action: showDetail });
+  if (node.kind === 'object' && ['TABLE', 'VIEW', 'EXTERNAL TABLE', 'PROCEDURE', 'SYNONYM'].includes(node.object_type || '')) {
+    if (['TABLE', 'VIEW', 'EXTERNAL TABLE'].includes(node.object_type || '')) items.splice(2, 0, { label: 'New SELECT tab', action: () => openQuery(`SELECT *\nFROM ${qualified}\nLIMIT 100;`) });
+    items.push({ label: ['VIEW', 'PROCEDURE'].includes(node.object_type || '') ? 'Show definition' : 'Show details', action: showDetail });
   }
   return items;
 }

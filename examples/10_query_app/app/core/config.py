@@ -28,7 +28,7 @@ class Settings:
     max_import_rows: int = 50_000
     result_limit: int = 1_000_000
     result_chunk_size: int = 1_000
-    result_page_size: int = 200
+    result_page_size: int = 5_000
     result_session_ttl: int = 3_600
     result_storage_dir: Path = field(
         default_factory=lambda: Path("/tmp/nzpy_extended-query-sessions")
@@ -56,7 +56,7 @@ class Settings:
             default_query_timeout=float(os.environ.get("NZ_QUERY_TIMEOUT", "30")),
             result_limit=int(os.environ.get("NZ_RESULT_ROW_LIMIT", "1000000")),
             result_chunk_size=int(os.environ.get("NZ_RESULT_CHUNK_SIZE", "1000")),
-            result_page_size=int(os.environ.get("NZ_RESULT_PAGE_SIZE", "200")),
+            result_page_size=int(os.environ.get("NZ_RESULT_PAGE_SIZE", "5000")),
             result_session_ttl=int(os.environ.get("NZ_RESULT_SESSION_TTL", "3600")),
             result_storage_dir=Path(
                 os.environ.get("NZ_RESULT_STORAGE_DIR", "/tmp/nzpy_extended-query-sessions")
