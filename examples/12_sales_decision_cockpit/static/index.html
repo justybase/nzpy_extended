@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sales Decision Cockpit</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div id="app">
+  <aside id="sidebar">
+    <div class="brand">
+      <div class="brand-mark">SDC</div>
+      <div>
+        <div class="brand-title">Sales Decision</div>
+        <div class="brand-sub">Weekly operating cockpit</div>
+      </div>
+      <button id="menu-toggle" class="menu-toggle" type="button" aria-expanded="false" aria-controls="menu">Menu</button>
+    </div>
+    <nav id="menu" aria-label="Main navigation">
+      <div class="menu-kicker">Operating review</div>
+      <button class="menu-item active" data-page="cockpit" type="button"><span class="menu-icon">◈</span>Control tower</button>
+      <button class="menu-item" data-page="drivers" type="button"><span class="menu-icon">↗</span>Driver analysis</button>
+      <button class="menu-item" data-page="review" type="button"><span class="menu-icon">▤</span>Review pack</button>
+      <div class="menu-kicker">Reference</div>
+      <div class="sidebar-note">Exception-first reporting starts with the question “where should we intervene?” and keeps the evidence beside the decision.</div>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="cache-title">Data status</div>
+      <div id="cache-info" class="cache-info">Loading…</div>
+      <button id="refresh-button" class="btn btn-small" type="button">Reload data</button>
+    </div>
+  </aside>
+
+  <main id="main" tabindex="-1">
+    <header id="topbar">
+      <div class="title-block">
+        <div class="eyebrow">Sales network <span>/</span> Decision reporting</div>
+        <h1 id="page-title">Control tower</h1>
+        <div id="page-subtitle" class="page-subtitle">Loading reporting context…</div>
+      </div>
+      <div class="toolbar" aria-label="Report context">
+        <label>Review week <select id="select-week"></select></label>
+        <label>Lookback <select id="select-lookback">
+          <option value="4">4 weeks</option>
+          <option value="8">8 weeks</option>
+          <option value="12" selected>12 weeks</option>
+          <option value="16">16 weeks</option>
+        </select></label>
+        <label>View <select id="select-scope">
+          <option value="network">Network</option>
+          <option value="region">Region</option>
+          <option value="unit">Sales unit</option>
+        </select></label>
+        <label id="region-control" hidden>Region <select id="select-region"></select></label>
+        <label id="unit-control" hidden>Unit <select id="select-unit"></select></label>
+        <label>Metric <select id="select-metric"></select></label>
+        <button id="apply-button" class="btn primary" type="button">Apply</button>
+      </div>
+    </header>
+
+    <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+    <section id="page-content" aria-live="polite">
+      <div class="loading">Loading cockpit…</div>
+    </section>
+  </main>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<script defer src="/static/app.js"></script>
+</body>
+</html>
