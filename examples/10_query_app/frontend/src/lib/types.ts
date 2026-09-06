@@ -33,6 +33,7 @@ export type SchemaNode = {
   database?: string;
   schema?: string;
   object_name?: string;
+  column_name?: string;
   object_type?: string;
   column_type?: string;
   has_children: boolean;

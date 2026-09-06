@@ -44,12 +44,16 @@ export function App(): ReactElement {
   function handleEvent(event: Record<string, unknown>): void {
     const queryId = String(event.queryId || '');
     const ownerId = queryOwnersRef.current.get(queryId);
-    if (event.type === 'batch-complete') {
+    const isBatchComplete = event.type === 'batch-complete';
+    const cleanupQuery = (): void => {
       queryOwnersRef.current.delete(queryId);
-      for (const key of resultRefs.current.keys()) if (key.startsWith(`${queryId}:`)) resultRefs.current.delete(key);
-    }
+      resultRefs.current.forEach((_value, key) => { if (key.startsWith(`${queryId}:`)) resultRefs.current.delete(key); });
+    };
     const owner = stateRef.current.tabs.find(item => item.id === ownerId);
-    if (!owner) return;
+    if (!owner) {
+      if (isBatchComplete) cleanupQuery();
+      return;
+    }
     const statementIndex = Number(event.statementIndex || 0);
     if (event.type === 'columns') columnsRef.current.set(`${queryId}:${statementIndex}`, (event.columns as Record<string, unknown>[]) || []);
     if (event.type === 'session-created') {
@@ -70,6 +74,7 @@ export function App(): ReactElement {
       if (resultId) dispatch({ type: 'query.resultStatus', tabId: owner.id, resultId, status: 'cancelled', message: 'Query cancelled.' });
     } else if (event.type === 'batch-complete') {
       dispatch({ type: 'query.batchComplete', tabId: owner.id, status: String(event.status || 'error') });
+      cleanupQuery();
     }
   }
 
@@ -131,7 +136,7 @@ export function App(): ReactElement {
   return <div className="app-shell" onClick={() => setContext(null)}>
     <header className="topbar"><div className="brand">Netezza SQL Workspace</div><button className="primary" onClick={() => void run('cursor')} disabled={Boolean(tab?.runningQueryId)}>▶ Run</button><button onClick={() => void run('selection')} disabled={Boolean(tab?.runningQueryId)}>Run selection</button><button onClick={() => void run('script')} disabled={Boolean(tab?.runningQueryId)}>Run script</button><button className="danger" onClick={cancel} disabled={!tab?.runningQueryId}>■ Cancel</button><span className="toolbar-spacer" /><span className="status-dot" /><span>{state.status}</span></header>
     <div className="sql-tabs">{state.tabs.map(item => <div key={item.id} className={`sql-tab ${item.id === tab.id ? 'active' : ''}`} onClick={() => dispatch({ type: 'tab.activate', id: item.id })}><span onDoubleClick={() => { const title = window.prompt('Tab name', item.title); if (title) dispatch({ type: 'tab.rename', id: item.id, title }); }}>{item.title}{item.dirty ? ' •' : ''}</span><button onClick={event => { event.stopPropagation(); closeTab(item.id); }}>×</button></div>)}<button className="new-tab" onClick={() => dispatch({ type: 'tab.add' })}>＋</button></div>
-    <main className="workspace"><aside><SchemaTree refreshKey={schemaRefreshKey} onMenu={(node, event) => { event.preventDefault(); setContext({ x: event.clientX, y: event.clientY, items: schemaMenu(node, insert, openQuery, () => void refreshSchema(node.database, node.schema), () => void showDetail(node)) }); }} onSelect={node => { if (node.kind === 'object' || node.kind === 'column') insert([node.schema, node.object_name || node.label].filter(Boolean).join('.')); }} onRefresh={() => void refreshSchema()} /></aside><section className="editor-results"><div className="editor-head"><span>{tab.database || 'Configured database'}</span><span>{tab.schema || 'All schemas'}</span><button onClick={() => insert('SELECT ')}>Insert SELECT</button></div><div className="editor"><Editor height="100%" language="sql" theme="vs-dark" path={tab.id} value={tab.sql} onChange={value => dispatch({ type: 'tab.sql', id: tab.id, sql: value || '' })} onMount={onMount} options={{ minimap: { enabled: false }, automaticLayout: true, fontSize: 14, wordWrap: 'on', bracketPairColorization: { enabled: true }, scrollBeyondLastLine: false }} /></div><ResultTabs results={tab.results} activeId={tab.activeResultId} onSelect={id => dispatch({ type: 'result.activate', tabId: tab.id, resultId: id })} onClose={id => dispatch({ type: 'result.close', tabId: tab.id, resultId: id })} /></section></main>
+    <main className="workspace"><aside><SchemaTree refreshKey={schemaRefreshKey} onMenu={(node, event) => { event.preventDefault(); setContext({ x: event.clientX, y: event.clientY, items: schemaMenu(node, insert, openQuery, () => void refreshSchema(node.database, node.schema), () => void showDetail(node)) }); }} onSelect={node => { if (node.kind === 'object' || node.kind === 'column') { const name = node.kind === 'column' ? [node.database, node.schema, node.object_name, node.column_name || node.label] : [node.database, node.schema, node.object_name || node.label]; insert(name.filter(Boolean).join('.')); } }} onRefresh={() => void refreshSchema()} /></aside><section className="editor-results"><div className="editor-head"><span>{tab.database || 'Configured database'}</span><span>{tab.schema || 'All schemas'}</span><button onClick={() => insert('SELECT ')}>Insert SELECT</button></div><div className="editor"><Editor height="100%" language="sql" theme="vs-dark" path={tab.id} value={tab.sql} onChange={value => dispatch({ type: 'tab.sql', id: tab.id, sql: value || '' })} onMount={onMount} options={{ minimap: { enabled: false }, automaticLayout: true, fontSize: 14, wordWrap: 'on', bracketPairColorization: { enabled: true }, scrollBeyondLastLine: false }} /></div><ResultTabs results={tab.results} activeId={tab.activeResultId} onSelect={id => dispatch({ type: 'result.activate', tabId: tab.id, resultId: id })} onClose={id => dispatch({ type: 'result.close', tabId: tab.id, resultId: id })} /></section></main>
     {context && <ContextMenu x={context.x} y={context.y} items={context.items} onClose={() => setContext(null)} />}
     {detail && <div className="detail-overlay" onClick={() => setDetail(null)}><section className="detail-dialog" onClick={event => event.stopPropagation()}><div className="detail-head"><strong>Object details</strong><button onClick={() => setDetail(null)}>×</button></div><pre>{JSON.stringify(detail, null, 2)}</pre></section></div>}
     {activeResult?.message && <div className="toast">{activeResult.message}</div>}
