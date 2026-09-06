@@ -19,6 +19,18 @@ class MISRepository(ABC):
         """Return (column_names, rows) for a table, normalized to plain
         Python types (dates -> ISO strings, Decimal -> float)."""
 
+    async def get_table_slice(self, name: str, column: str,
+                              value: Any) -> tuple[list[str], list[list[Any]]]:
+        """Return an equality-filtered table slice.
+
+        In-memory repositories inherit this safe reference implementation;
+        database repositories can push the predicate down to Netezza.
+        """
+        columns, rows = await self.get_table(name)
+        idx = columns.index(column)
+        expected = str(value)[:10]
+        return columns, [row for row in rows if str(row[idx])[:10] == expected]
+
     @abstractmethod
     async def refresh_all(self) -> dict[str, Any]:
         """Reload every table. Failed tables keep their previous contents;

@@ -326,7 +326,9 @@ def make_sales_analytic(group: str | None = None, top: int | None = None) -> Cal
                     order.append(key)
                 d[0] += ar.get("cnt") or 0
                 d[1] += ar.get("amount") or 0.0
-                d[2] += ar.get("avg_ticket") or 0.0
+                # Aggregate the underlying amount, not branch-level averages;
+                # the regional average must be weighted by sale count.
+                d[2] += ar.get("amount") or 0.0
                 d[3] += ar.get("commission") or 0.0
             agg = [{"__key": k, "cnt": v[0], "amount": v[1],
                     "avg_ticket": round(v[2] / v[0], 2) if v[0] else None,
@@ -419,24 +421,32 @@ def make_balances_analytic(groups: list[str]) -> Callable:
             change = bal - pbal if pbal else None
             change_pct = round(change / pbal * 100, 2) if pbal else None
             data.append(key_row + [cnt, round(bal, 2), round(pbal, 2),
-                                   round(change, 2), change_pct])
+                                   round(change, 2) if change is not None else None,
+                                   change_pct])
         if dim == "region":
             # merge branches of the same region
             merged: dict[str, list[Any]] = {}
             for row in data:
                 k = row[0]
                 if k not in merged:
-                    merged[k] = [row[0], row[1], row[2], 0, 0.0, 0.0, 0.0, 0.0]
+                    # The last flag records whether at least one branch has a
+                    # comparable prior snapshot.  The first available month
+                    # legitimately has no MoM delta; it must remain NULL,
+                    # rather than crashing on ``None`` or displaying 0.00%.
+                    merged[k] = [row[0], row[1], row[2], 0, 0.0, 0.0, 0.0, False]
                 m = merged[k]
                 m[3] += row[3]
                 m[4] += row[4]
                 m[5] += row[5]
-                m[6] += row[6]
+                if row[6] is not None:
+                    m[6] += row[6]
+                    m[7] = True
             data = []
             for m in merged.values():
-                change_pct = round(m[6] / m[5] * 100, 2) if m[5] else None
+                change = round(m[6], 2) if m[7] else None
+                change_pct = round(change / m[5] * 100, 2) if change is not None and m[5] else None
                 data.append([m[0], m[1], m[2], m[3], round(m[4], 2), round(m[5], 2),
-                             round(m[6], 2), change_pct])
+                             change, change_pct])
         data.sort(key=lambda row: row[4], reverse=True)
         head = ([col("region_code", "Code"), col("region_name", "Region"), col("area_name", "Area")]
                 if dim == "region" else

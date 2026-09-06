@@ -8,6 +8,7 @@
 const MENU = [
   { sep: "Reports" },
   { id: "overview", label: "Overview", type: "report" },
+  { id: "daily_performance", label: "Daily performance", type: "performance" },
   { id: "loans", label: "Loans", type: "report" },
   { id: "investments", label: "Investments", type: "report" },
   { id: "insurance", label: "Insurance", type: "report" },
@@ -20,12 +21,17 @@ const MENU = [
   { id: "campaigns", label: "Campaign effectiveness", type: "report" },
   { sep: "Sales force" },
   { id: "advisors", label: "Advisor performance", type: "advisors" },
+  { id: "champions", label: "Champions League", type: "league" },
+  { sep: "Organization" },
+  { id: "org_history", label: "Organization history", type: "hierarchy" },
   { sep: "My views" },
   { id: "my_branch", label: "My branch", type: "personal", scope: "branch" },
   { id: "my_results", label: "My results", type: "personal", scope: "advisor" },
   { id: "daily_brief", label: "Daily brief", type: "brief" },
   { sep: "Detail" },
   { id: "ledger", label: "Sales ledger", type: "ledger" },
+  { sep: "Governance" },
+  { id: "data_quality", label: "Data quality", type: "quality" },
 ];
 
 const PALETTE = ["#167d8d", "#6775c5", "#d9a44a", "#c86c73", "#6d9b85",
@@ -35,7 +41,8 @@ const PALETTE = ["#167d8d", "#6775c5", "#d9a44a", "#c86c73", "#6d9b85",
 const MONTHS = ["January", "February", "March", "April", "May", "June",
                 "July", "August", "September", "October", "November", "December"];
 
-const state = { page: "overview", from: null, to: null, dim: null };
+const state = { page: "overview", from: null, to: null, dim: null,
+                asOf: null, attribution: "historical" };
 const charts = [];      // active Chart.js instances
 window.addEventListener("beforeprint", () => {
   for (const chart of charts) chart.resize();
@@ -46,6 +53,7 @@ window.addEventListener("afterprint", () => {
 const sortState = {};   // tableId -> {col, dir}
 let pageRequestId = 0;  // prevents an older response replacing a newer view
 let ALL_MONTHS = [];    // available months from /api/meta
+let ALL_SNAPSHOTS = []; // exact reporting cut-offs from the audit ledger
 let currentUser = null; // simulated session ({code, name, role, role_label})
 const USER_ROLES = ["ANALYST", "AREA_MANAGER", "BRANCH_MANAGER", "ADVISOR"];
 
@@ -151,6 +159,8 @@ function syncUrl() {
   if (state.from) params.set("from", state.from);
   if (state.to) params.set("to", state.to);
   if (state.dim) params.set("dim", state.dim);
+  if (state.asOf) params.set("as_of", state.asOf);
+  params.set("attribution", state.attribution);
   history.replaceState(null, "", window.location.pathname + "?" + params.toString());
 }
 
@@ -161,6 +171,8 @@ function restoreUrlState() {
   state.from = params.get("from") || state.from;
   state.to = params.get("to") || state.to;
   state.dim = params.get("dim") || state.dim;
+  state.asOf = params.get("as_of") || state.asOf;
+  state.attribution = params.get("attribution") || state.attribution;
 }
 
 function selectPage(id) {
@@ -175,6 +187,10 @@ function selectPage(id) {
   showNotice(null);
   if (item.type === "ledger") loadLedgerPage();
   else if (item.type === "advisors") loadAdvisorsPage();
+  else if (item.type === "performance") loadPerformancePage();
+  else if (item.type === "hierarchy") loadHierarchyPage();
+  else if (item.type === "league") loadLeaguePage();
+  else if (item.type === "quality") loadQualityPage();
   else if (item.type === "personal") loadPersonalPage(item.scope);
   else if (item.type === "brief") loadBriefPage();
   else loadReportPage();
@@ -227,6 +243,8 @@ async function loadReportPage() {
   if (state.from) params.set("from", state.from);
   if (state.to) params.set("to", state.to);
   if (state.dim) params.set("dim", state.dim);
+  if (state.asOf) params.set("as_of", state.asOf);
+  params.set("attribution", state.attribution);
   try {
     const payload = await fetchJSON(`/api/report/${state.page}?${params}`);
     if (requestId !== pageRequestId) return;
@@ -258,6 +276,10 @@ function renderReport(payload) {
   if (payload.freshness && payload.freshness.loaded_at) {
     const stale = payload.freshness.stale ? " · stale data" : "";
     $("page-subtitle").textContent += ` · refreshed ${new Date(payload.freshness.loaded_at).toLocaleTimeString("en-IE")}${stale}`;
+  }
+  if (payload.reporting_context && payload.reporting_context.as_of) {
+    $("page-subtitle").textContent +=
+      ` · as of ${payload.reporting_context.as_of} · ${payload.reporting_context.attribution} structure`;
   }
   renderTableCard("synthetic", payload.synthetic, payload);
   if (payload.dims && payload.dims.length && payload.analytic &&
@@ -581,6 +603,8 @@ function renderTableCard(kind, tableDef, payload, drill) {
     if (state.from) params.set("from", state.from);
     if (state.to) params.set("to", state.to);
     if (dim) params.set("dim", dim);
+    if (state.asOf) params.set("as_of", state.asOf);
+    params.set("attribution", state.attribution);
     const a = document.createElement("a");
     a.className = "btn small primary";
     a.href = `/api/export/${payload.id}/${kind}/${fmt}?${params}`;
@@ -664,6 +688,8 @@ async function openDrill(drill, code, label) {
   const params = new URLSearchParams({ key: code });
   if (state.from) params.set("from", state.from);
   if (state.to) params.set("to", state.to);
+  if (state.asOf) params.set("as_of", state.asOf);
+  params.set("attribution", state.attribution);
   try {
     const payload = await fetchJSON(`/api/drill/${drill.page}/${drill.target}?${params}`);
     renderDrill(payload);
@@ -678,14 +704,19 @@ function renderDrill(payload) {
   $("drill-title").textContent = `${DRILL_LABELS[payload.target]} — ${payload.key}`;
   $("drill-sub").innerHTML =
     `<span class="drill-breadcrumb">${pageLabel} → ${payload.key}</span>` +
-    ` · ${payload.rows.length} rows · ${monthLabel(payload.period.from)} – ${monthLabel(payload.period.to)}`;
+    ` · ${payload.rows.length} rows · ${monthLabel(payload.period.from)} – ${monthLabel(payload.period.to)}`
+    + (payload.reporting_context?.as_of
+      ? ` · as of ${payload.reporting_context.as_of} · ${payload.reporting_context.attribution} structure`
+      : "");
   const actions = $("drill-actions");
   actions.innerHTML = "";
   for (const fmt of ["xlsx", "xlsb"]) {
     const params = new URLSearchParams({
-      key: drillState.key, fmt,
-      from: state.from || "", to: state.to || "",
+      key: drillState.key, fmt, attribution: state.attribution,
     });
+    if (state.from) params.set("from", state.from);
+    if (state.to) params.set("to", state.to);
+    if (state.asOf) params.set("as_of", state.asOf);
     const a = document.createElement("a");
     a.className = "btn small primary";
     a.href = `/api/drill/${drillState.page}/${drillState.target}?${params}`;
@@ -704,12 +735,148 @@ function closeDrill() {
   $("drill-table").innerHTML = "";
 }
 
+/* --------------------------------------------- point-in-time MIS pages */
+
+function temporalParams(extra) {
+  return new URLSearchParams({
+    as_of: state.asOf || "",
+    attribution: state.attribution,
+    ...(extra || {}),
+  });
+}
+
+function contextText(context) {
+  const stateText = context.complete ? "reconciled" : "incomplete";
+  const attribution = context.attribution
+    ? ` · ${context.attribution} structure` : "";
+  return `As of ${context.as_of} · data through ${context.data_through}`
+    + `${attribution} · load ${context.load_id} · ${stateText}`;
+}
+
+function monthsThroughAsOf() {
+  const snapshotMonth = state.asOf ? state.asOf.slice(0, 7) : null;
+  return ALL_MONTHS.filter((ym) => !snapshotMonth || ym <= snapshotMonth);
+}
+
+async function loadPerformancePage(dim = "branch") {
+  setLayout({ kpis: true, charts: true, custom: true, fromTo: false });
+  const page = $("custom-page");
+  page.innerHTML = `<div class="person-picker card">
+    <label>Breakdown <select id="performance-dim">
+      <option value="region">Region</option><option value="branch">Branch</option>
+      <option value="advisor">Advisor</option></select></label>
+  </div><section id="comparison-grid" class="comparison-grid"></section>
+  <section class="card"><div class="card-head"><div><h2>Point-in-time breakdown</h2>
+    <div class="card-sub">MTD actual and business-day paced plan</div></div></div>
+    <div id="performance-table" class="table-wrap"></div></section>`;
+  $("performance-dim").value = dim;
+  $("performance-dim").onchange = () => loadPerformancePage($("performance-dim").value);
+  try {
+    const payload = await fetchJSON(`/api/performance?${temporalParams({ dim })}`);
+    $("page-subtitle").textContent = contextText(payload.reporting_context) + scopeNote();
+    renderKpis($("kpis"), payload.kpis || []);
+    renderCharts(payload.charts || []);
+    const comparisons = $("comparison-grid");
+    comparisons.innerHTML = "";
+    for (const code of ["DTD", "MTD", "MoM", "YTD", "YoY"]) {
+      const value = payload.comparisons[code];
+      if (!value) continue;
+      const card = document.createElement("article");
+      card.className = "comparison-card card";
+      const delta = value.delta_pct === null ? "—"
+        : `${value.delta_pct >= 0 ? "+" : ""}${value.delta_pct.toFixed(2)}%`;
+      card.innerHTML = `<div class="comparison-code">${code}</div>
+        <div class="comparison-value">${formatValue(value.current, "eur")}</div>
+        <div class="comparison-delta ${value.delta_pct >= 0 ? "good" : "negative"}">${delta}</div>
+        <div class="card-sub">vs ${value.reference_period.from} – ${value.reference_period.to}</div>`;
+      card.title = value.label;
+      comparisons.appendChild(card);
+    }
+    renderTable($("performance-table"), payload.columns, payload.rows, `performance:${dim}`);
+  } catch (err) {
+    showNotice(`Could not load point-in-time performance: ${err.message}`);
+  }
+}
+
+async function loadHierarchyPage() {
+  setLayout({ custom: true, fromTo: false });
+  try {
+    const payload = await fetchJSON(`/api/hierarchy?${temporalParams()}`);
+    $("page-subtitle").textContent = contextText(payload.reporting_context) + scopeNote();
+    const regions = payload.regions.map((region) => `<details class="org-region" open>
+      <summary>${escAttr(region.name)} <span>${region.branches.length} branches</span></summary>
+      ${region.branches.map((branch) => `<details class="org-branch">
+        <summary>${escAttr(branch.name)} <span>${branch.advisors.length} advisors</span></summary>
+        <div class="org-advisors">${branch.advisors.map((advisor) =>
+          `<span><b>${escAttr(advisor.name)}</b><small>${escAttr(advisor.role)} · since ${advisor.valid_from}</small></span>`
+        ).join("")}</div></details>`).join("")}</details>`).join("");
+    const changeColumns = [
+      { key: "effective_date", label: "Effective date" }, { key: "advisor_code", label: "Code" },
+      { key: "advisor_name", label: "Advisor" }, { key: "to_branch", label: "New branch" },
+      { key: "reason", label: "Reason" },
+    ];
+    const changeRows = payload.changes.map((row) => changeColumns.map((column) => row[column.key]));
+    $("custom-page").innerHTML = `<div class="org-grid"><section class="card org-tree">
+      <div class="card-head"><div><h2>Hierarchy at snapshot</h2><div class="card-sub">Region → branch → advisor</div></div></div>
+      ${regions || '<div class="empty">No entities in your scope.</div>'}</section>
+      <section class="card"><div class="card-head"><div><h2>Assignment changes</h2>
+      <div class="card-sub">SCD type 2 history effective by the selected date</div></div></div>
+      <div id="org-change-table" class="table-wrap"></div></section></div>`;
+    renderTable($("org-change-table"), changeColumns, changeRows, "org-changes");
+  } catch (err) {
+    showNotice(`Could not load organization history: ${err.message}`);
+  }
+}
+
+async function loadLeaguePage(level = "advisor") {
+  setLayout({ custom: true, fromTo: false });
+  $("custom-page").innerHTML = `<div class="person-picker card"><label>League
+    <select id="league-level"><option value="advisor">Advisors</option>
+    <option value="branch">Branches</option></select></label></div>
+    <div class="league-rules card" id="league-rules"></div>
+    <section class="card"><div class="card-head"><div><h2>Champions League</h2>
+    <div class="card-sub">Qualified leaders first; non-qualified entries remain explainable</div></div></div>
+    <div id="league-table" class="table-wrap"></div></section>`;
+  $("league-level").value = level;
+  $("league-level").onchange = () => loadLeaguePage($("league-level").value);
+  try {
+    const payload = await fetchJSON(`/api/league?${temporalParams({ level })}`);
+    $("page-subtitle").textContent = contextText(payload.reporting_context) + scopeNote();
+    const rules = payload.rules;
+    $("league-rules").innerHTML = `<b>Transparent score:</b> attainment ${rules.weights.attainment}% · `
+      + `PMTD growth ${rules.weights["PMTD growth"]}% · quality ${rules.weights.quality}% · `
+      + `activity ${rules.weights.activity}% &nbsp; <b>Eligibility:</b> ≥${rules.minimum_sales} sales, `
+      + `quality ≥${rules.minimum_quality}, attainment capped at ${rules.attainment_cap}%.`;
+    renderTable($("league-table"), payload.columns, payload.rows, `league:${level}`);
+  } catch (err) {
+    showNotice(`Could not load Champions League: ${err.message}`);
+  }
+}
+
+async function loadQualityPage() {
+  setLayout({ custom: true, fromTo: false });
+  try {
+    const payload = await fetchJSON(`/api/quality?${temporalParams()}`);
+    $("page-subtitle").textContent = contextText(payload.reporting_context);
+    $("custom-page").innerHTML = `<div class="quality-banner status-${payload.overall_status.toLowerCase()}">
+      Reporting gate: ${payload.overall_status}</div><div class="quality-grid">${payload.checks.map((check) =>
+        `<article class="card quality-check status-${check.status.toLowerCase()}">
+          <div class="quality-status">${check.status}</div><h2>${escAttr(check.label)}</h2>
+          <div class="quality-value">${escAttr(String(check.value))}</div>
+          <div class="card-sub">${escAttr(check.detail)}</div></article>`).join("")}</div>`;
+  } catch (err) {
+    showNotice(`Could not load data quality: ${err.message}`);
+  }
+}
+
 /* ------------------------------------------------------- sales ledger */
 
 function ledgerParams(extra) {
   const p = new URLSearchParams(extra || {});
   if (state.from) p.set("from", state.from);
   if (state.to) p.set("to", state.to);
+  if (state.asOf) p.set("as_of", state.asOf);
+  p.set("attribution", state.attribution);
   if (ledgerState.q) p.set("q", ledgerState.q);
   if (ledgerState.group) p.set("group", ledgerState.group);
   if (ledgerState.channel) p.set("channel", ledgerState.channel);
@@ -945,7 +1112,8 @@ async function loadAdvisorPanel() {
   const panel = $("advisor-panel");
   panel.innerHTML = `<div class="empty">Loading…</div>`;
   try {
-    const payload = await fetchJSON(`/api/people/advisors/${personState.code}`);
+    const params = state.asOf ? `?as_of=${encodeURIComponent(state.asOf)}` : "";
+    const payload = await fetchJSON(`/api/people/advisors/${personState.code}${params}`);
     renderAdvisorPanel(payload);
   } catch (err) {
     panel.innerHTML = `<div class="empty">Could not load advisor: ${err.message}</div>`;
@@ -957,6 +1125,9 @@ function renderAdvisorPanel(payload) {
   const s = payload.summary;
   const initials = (info.first_name || "?").charAt(0) + (info.last_name || "").charAt(0);
   const panel = $("advisor-panel");
+  if (payload.reporting_context?.as_of) {
+    $("page-subtitle").textContent = `Advisor performance · ${contextText(payload.reporting_context)}`;
+  }
   panel.innerHTML = `
     <div class="profile card">
       <div class="avatar">${escAttr(initials)}</div>
@@ -1024,7 +1195,8 @@ function renderAdvisorPanel(payload) {
   for (const fmt of ["xlsx", "xlsb"]) {
     const a = document.createElement("a");
     a.className = "btn small primary";
-    a.href = `/api/people/advisors/${encodeURIComponent(payload.code)}/export/${fmt}`;
+    const asOf = state.asOf ? `?as_of=${encodeURIComponent(state.asOf)}` : "";
+    a.href = `/api/people/advisors/${encodeURIComponent(payload.code)}/export/${fmt}${asOf}`;
     a.textContent = fmt === "xlsx" ? "XLSX" : "XLSB";
     actions.appendChild(a);
   }
@@ -1064,14 +1236,15 @@ async function loadPersonalPage(scope) {
 
   const monthSel = $("entity-month");
   monthSel.innerHTML = "";
-  for (const ym of ALL_MONTHS) {
+  const selectableMonths = monthsThroughAsOf();
+  for (const ym of selectableMonths) {
     const opt = document.createElement("option");
     opt.value = ym;
     opt.textContent = monthLabel(ym);
     monthSel.appendChild(opt);
   }
-  if (!personState.month || !ALL_MONTHS.includes(personState.month)) {
-    personState.month = ALL_MONTHS[ALL_MONTHS.length - 1];
+  if (!personState.month || !selectableMonths.includes(personState.month)) {
+    personState.month = selectableMonths[selectableMonths.length - 1];
   }
   monthSel.value = personState.month;
   monthSel.onchange = () => { personState.month = monthSel.value; loadCumulative(scope); };
@@ -1106,7 +1279,8 @@ async function loadCumulative(scope) {
   try {
     const payload = await fetchJSON(
       `/api/people/cumulative?scope=${scope}&code=${encodeURIComponent(personState.code)}`
-      + `&month=${personState.month}`);
+      + `&month=${personState.month}`
+      + (state.asOf && state.asOf.startsWith(personState.month) ? `&as_of=${state.asOf}` : ""));
     renderCumulative(payload);
   } catch (err) {
     showNotice(`Could not load the cumulative view: ${err.message}`);
@@ -1127,7 +1301,8 @@ function renderCumulative(payload) {
     const a = document.createElement("a");
     a.className = "btn small primary";
     a.href = `/api/people/cumulative/export/${fmt}?scope=${payload.scope}`
-      + `&code=${encodeURIComponent(personState.code)}&month=${personState.month}`;
+      + `&code=${encodeURIComponent(personState.code)}&month=${personState.month}`
+      + (state.asOf && state.asOf.startsWith(personState.month) ? `&as_of=${state.asOf}` : "");
     a.textContent = fmt === "xlsx" ? "XLSX" : "XLSB";
     actions.appendChild(a);
   }
@@ -1216,14 +1391,15 @@ async function loadBriefPage() {
 
   const monthSel = $("brief-month");
   monthSel.innerHTML = "";
-  for (const ym of ALL_MONTHS) {
+  const selectableMonths = monthsThroughAsOf();
+  for (const ym of selectableMonths) {
     const opt = document.createElement("option");
     opt.value = ym;
     opt.textContent = monthLabel(ym);
     monthSel.appendChild(opt);
   }
-  if (!briefState.month || !ALL_MONTHS.includes(briefState.month)) {
-    briefState.month = ALL_MONTHS[ALL_MONTHS.length - 1];
+  if (!briefState.month || !selectableMonths.includes(briefState.month)) {
+    briefState.month = selectableMonths[selectableMonths.length - 1];
   }
   monthSel.value = briefState.month;
   monthSel.onchange = () => { briefState.month = monthSel.value; loadBrief(); };
@@ -1272,8 +1448,11 @@ async function loadBrief() {
     const overviewParams = new URLSearchParams({ from: briefState.month, to: briefState.month });
     const [cum, overview] = await Promise.all([
       fetchJSON(`/api/people/cumulative?scope=${briefState.scope}`
-        + `&code=${encodeURIComponent(briefState.code)}&month=${briefState.month}`),
-      fetchJSON(`/api/report/overview?${overviewParams}`),
+        + `&code=${encodeURIComponent(briefState.code)}&month=${briefState.month}`
+        + (state.asOf && state.asOf.startsWith(briefState.month) ? `&as_of=${state.asOf}` : "")),
+      fetchJSON(`/api/report/overview?${overviewParams}`
+        + (state.asOf ? `&as_of=${encodeURIComponent(state.asOf)}` : "")
+        + `&attribution=${encodeURIComponent(state.attribution)}`),
     ]);
     renderBrief(cum, overview);
   } catch (err) {
@@ -1292,8 +1471,10 @@ function renderBrief(cum, overview) {
 
   const days = rows.length;
   const latestDay = last ? last[1] : days;
-  const dailyAvg = days ? round2(kpis.mtd / days) : null;
-  const daysLeft = days - latestDay;
+  const elapsedPacing = cum.reporting_context?.elapsed_pacing_days || days;
+  const totalPacing = cum.reporting_context?.total_pacing_days || days;
+  const dailyAvg = elapsedPacing ? round2(kpis.mtd / elapsedPacing) : null;
+  const daysLeft = Math.max(0, totalPacing - elapsedPacing);
   const runRate = daysLeft > 0 && kpis.plan ? round2((kpis.plan - kpis.mtd) / daysLeft) : null;
 
   const root = $("brief-root");
@@ -1434,6 +1615,32 @@ function detectPeriodPreset() {
 async function initMeta() {
   const meta = await fetchJSON("/api/meta");
   ALL_MONTHS = meta.months || [];
+  ALL_SNAPSHOTS = meta.snapshot_dates || [];
+  if (!state.asOf || !ALL_SNAPSHOTS.includes(state.asOf)) {
+    state.asOf = meta.latest_snapshot || null;
+  }
+  const asOfSel = $("select-as-of");
+  asOfSel.innerHTML = "";
+  for (const value of ALL_SNAPSHOTS) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    asOfSel.appendChild(option);
+  }
+  asOfSel.value = state.asOf;
+  asOfSel.onchange = () => {
+    state.asOf = asOfSel.value;
+    const month = state.asOf.slice(0, 7);
+    if (ALL_MONTHS.includes(month)) state.to = month;
+    syncUrl();
+    selectPage(state.page);
+  };
+  $("select-attribution").value = state.attribution;
+  $("select-attribution").onchange = () => {
+    state.attribution = $("select-attribution").value;
+    syncUrl();
+    selectPage(state.page);
+  };
   const fromSel = $("select-from");
   const toSel = $("select-to");
   fromSel.innerHTML = "";

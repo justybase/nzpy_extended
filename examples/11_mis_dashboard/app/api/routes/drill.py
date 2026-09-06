@@ -36,6 +36,8 @@ async def drill(
     from_: str | None = Query(default=None, alias="from"),
     to: str | None = Query(default=None),
     fmt: str | None = Query(default=None, description="optional xlsx|xlsb download"),
+    as_of: str | None = Query(default=None),
+    attribution: str = Query(default="historical"),
     report_service: ReportService = Depends(get_report_service),
     export_service: ExportService = Depends(get_export_service),
     user: SessionUser = Depends(get_current_user),
@@ -45,14 +47,16 @@ async def drill(
     try:
         if fmt is not None:
             result = await export_service.export_drill(report_id, target, key, fmt,
-                                                       from_, to, user)
+                                                       from_, to, user, as_of,
+                                                       attribution)
             return FileResponse(
                 result.path,
                 media_type=result.media_type,
                 filename=result.filename,
                 background=BackgroundTask(os.remove, result.path),
             )
-        return await report_service.drill(report_id, target, key, from_, to, user)
+        return await report_service.drill(report_id, target, key, from_, to, user,
+                                          as_of, attribution)
     except reporting.UnknownReport:
         raise HTTPException(404, f"Unknown report: {report_id}") from None
     except reporting.DrillNotAvailable as exc:

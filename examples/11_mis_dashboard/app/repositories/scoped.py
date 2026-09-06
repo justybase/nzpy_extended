@@ -86,6 +86,19 @@ class ScopedMISRepository(MISRepository):
     async def refresh_all(self) -> dict[str, Any]:
         return await self._inner.refresh_all()
 
+    async def get_table_slice(self, name: str, column: str, value: Any):
+        # Slice first, then reuse the same row-level masking rules.
+        cols, rows = await self._inner.get_table_slice(name, column, value)
+        if name == "MIS_FACT_PERFORMANCE_SNAPSHOT":
+            branch_ids, advisor_ids = await self._scope()
+            if advisor_ids is not None and self._user is not None and self._user.role == "ADVISOR":
+                ai = cols.index("advisor_id")
+                return cols, [row for row in rows if row[ai] in advisor_ids]
+            if branch_ids is not None:
+                bi = cols.index("historical_branch_id")
+                return cols, [row for row in rows if row[bi] in branch_ids]
+        return cols, rows
+
     def snapshot(self) -> dict[str, Any]:
         return self._inner.snapshot()
 

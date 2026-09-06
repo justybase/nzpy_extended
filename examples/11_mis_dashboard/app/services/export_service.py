@@ -40,9 +40,12 @@ class ExportService:
 
     async def _report_table(self, report_id: str, kind: str, from_: str | None,
                             to: str | None, dim: str | None,
-                            user: SessionUser | None = None) -> dict[str, Any]:
+                            user: SessionUser | None = None,
+                            as_of: str | None = None,
+                            attribution: str = "historical") -> dict[str, Any]:
         """Payload table prepared for Excel (internal 'ym' key column dropped)."""
-        payload = await self._report_service.build(report_id, from_, to, dim, user)
+        payload = await self._report_service.build(report_id, from_, to, dim, user,
+                                                   as_of, attribution)
         table_def = payload.get(kind)
         # 'None' or empty columns mark a table that is not part of this report
         # (e.g. overview has no analytic); a real table keeps its columns even
@@ -64,18 +67,22 @@ class ExportService:
             "columns": columns,
             "rows": rows,
             "period": payload["period"],
+            "reporting_context": payload.get("reporting_context", {}),
         }
 
     async def export_report(self, report_id: str, kind: str, fmt: str,
                             from_: str | None, to: str | None,
                             dim: str | None,
-                            user: SessionUser | None = None) -> ExportResult:
+                            user: SessionUser | None = None,
+                            as_of: str | None = None,
+                            attribution: str = "historical") -> ExportResult:
         if kind not in ("synthetic", "analytic"):
             raise ValueError("kind must be 'synthetic' or 'analytic'")
         if fmt not in MEDIA_TYPES:
             raise ValueError("fmt must be 'xlsx' or 'xlsb'")
 
-        export = await self._report_table(report_id, kind, from_, to, dim, user)
+        export = await self._report_table(report_id, kind, from_, to, dim, user,
+                                          as_of, attribution)
         period = export["period"]
         sheet_name = self._safe_sheet_name(f"{export['kind']} - {export['title']}")
         if export["dim"] and kind == "analytic":
@@ -93,6 +100,15 @@ class ExportService:
             ["Generated", dt.datetime.now().isoformat(timespec="seconds")],
             ["Data source", "cached MIS_* tables (TTLCache)"],
         ]
+        context = export["reporting_context"]
+        if context:
+            meta_lines[6:6] = [
+                ["As of", context.get("as_of")],
+                ["Data through", context.get("data_through")],
+                ["Load ID", context.get("load_id")],
+                ["Attribution", context.get("attribution")],
+                ["Reconciled", context.get("complete")],
+            ]
         path = self.write_workbook(fmt, sheet_name, export["columns"],
                                    export["rows"], meta_lines)
         filename = f"{report_id}_{kind}_{period['from']}_{period['to']}.{fmt}"
@@ -104,11 +120,13 @@ class ExportService:
 
     async def export_drill(self, report_id: str, target: str, key: str, fmt: str,
                            from_: str | None, to: str | None,
-                           user: SessionUser | None = None) -> ExportResult:
+                           user: SessionUser | None = None,
+                           as_of: str | None = None,
+                           attribution: str = "historical") -> ExportResult:
         if fmt not in MEDIA_TYPES:
             raise ValueError("fmt must be 'xlsx' or 'xlsb'")
         payload = await self._report_service.drill(report_id, target, key,
-                                                   from_, to, user)
+                                                   from_, to, user, as_of, attribution)
         period = payload["period"]
         sheet_name = self._safe_sheet_name(f"Drill - {payload['title']}")[:31]
         meta_lines: list[list[Any]] = [
@@ -120,6 +138,15 @@ class ExportService:
             ["Rows", len(payload["rows"])],
             ["Generated", dt.datetime.now().isoformat(timespec="seconds")],
         ]
+        context = payload.get("reporting_context", {})
+        if context:
+            meta_lines[5:5] = [
+                ["As of", context.get("as_of")],
+                ["Data through", context.get("data_through")],
+                ["Load ID", context.get("load_id")],
+                ["Attribution", context.get("attribution")],
+                ["Reconciled", context.get("complete")],
+            ]
         path = self.write_workbook(fmt, sheet_name, payload["columns"],
                                    payload["rows"], meta_lines)
         filename = f"drill_{report_id}_{target}_{key}_{period['from']}_{period['to']}.{fmt}"

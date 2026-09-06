@@ -96,7 +96,41 @@ def main() -> int:
         check("overview has plan KPI",
               page.locator("#kpis .kpi-label").all_text_contents()
               and any("plan" in text.lower() for text in page.locator("#kpis .kpi-label").all_text_contents()))
+        check("latest exact snapshot selected",
+              page.locator("#select-as-of").input_value() == "2026-08-15",
+              page.locator("#select-as-of").input_value())
         page.screenshot(path=str(out_dir / "01_overview.png"))
+
+        # --------------------------------------------- point-in-time reporting
+        print("Point-in-time MIS")
+        open_menu(page, "Daily performance")
+        check("comparison cards render", wait_for(page, "#comparison-grid .comparison-card")
+              and page.locator("#comparison-grid .comparison-card").count() == 5)
+        check("performance breakdown renders",
+              page.locator("#performance-table tbody tr").count() > 0)
+        check("as-of context visible", "2026-08-15" in (page.text_content("#page-subtitle") or ""))
+        page.screenshot(path=str(out_dir / "01b_daily_performance.png"))
+
+        open_menu(page, "Organization history")
+        check("SCD2 hierarchy renders", wait_for(page, ".org-region"))
+        check("transfer history renders", page.locator("#org-change-table tbody tr").count() > 0)
+
+        open_menu(page, "Champions League")
+        try:
+            page.wait_for_function("document.querySelector('#league-rules')?.textContent.includes('Eligibility')",
+                                   timeout=15000)
+        except Exception:
+            pass
+        check("league rules visible", "Eligibility" in (page.text_content("#league-rules") or ""))
+        try:
+            page.wait_for_selector("#league-table tbody tr", state="attached", timeout=15000)
+        except Exception:
+            pass
+        check("league table renders", page.locator("#league-table tbody tr").count() > 0)
+
+        open_menu(page, "Data quality")
+        check("quality gate passes", wait_for(page, ".quality-banner.status-pass"))
+        check("quality checks render", page.locator(".quality-check").count() >= 6)
 
         # ------------------------------------------------------------ brief
         print("Daily brief page")
@@ -112,8 +146,8 @@ def main() -> int:
         cbox = canvas.bounding_box() if canvas else None
         check("brief chart canvas rendered",
               cbox is not None and cbox["width"] > 100 and cbox["height"] > 50)
-        check("brief day table has rows",
-              page.locator("#brief-table tbody tr").count() >= 28,
+        check("brief stops at exact snapshot day",
+              page.locator("#brief-table tbody tr").count() == 15,
               f"rows={page.locator('#brief-table tbody tr').count()}")
         check("brief no horizontal overflow", no_horizontal_overflow(page))
         page.screenshot(path=str(out_dir / "02_brief.png"))

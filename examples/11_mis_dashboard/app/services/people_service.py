@@ -3,12 +3,12 @@ PeopleService — advisor performance panels and the personal "my branch" /
 "my results" cumulative views.
 
 Everything is computed from the cached MIS_* tables; computed payloads are
-cached in a TTLCache keyed by (scope, code, month), so repeated requests never
-re-aggregate the sales detail and never touch Netezza.
+cached in a TTLCache keyed by the entity, snapshot and view parameters, so
+repeated requests never re-aggregate the sales detail and never touch Netezza.
 
     GET /api/people/advisors                  -> picker list
     GET /api/people/advisors/{code}           -> vertical info + ratings panel
-    GET /api/people/cumulative?scope=&code=&month=
+    GET /api/people/cumulative?scope=&code=&month=&as_of=
 """
 
 from __future__ import annotations
@@ -53,6 +53,35 @@ class PeopleService:
     def clear_cache(self) -> None:
         """Drop derived people payloads after the table snapshot changes."""
         self._cache.clear()
+
+    async def _reporting_context(self, as_of: str | None) -> dict[str, Any]:
+        """Validate an exact audit snapshot for temporal people views."""
+        if as_of is None:
+            return {}
+        try:
+            dt.date.fromisoformat(as_of)
+        except ValueError:
+            raise ValueError(f"as_of must be YYYY-MM-DD, got: {as_of}") from None
+        try:
+            cols, rows = await self._repository.get_table("MIS_AUDIT_SNAPSHOT_LOAD")
+        except (KeyError, ValueError) as exc:
+            raise ValueError("Snapshot metadata is unavailable") from exc
+        snapshot_idx = cols.index("snapshot_date")
+        record = next((dict(zip(cols, row)) for row in rows
+                       if str(row[snapshot_idx])[:10] == as_of), None)
+        if record is None:
+            raise ValueError(f"Snapshot {as_of} is unavailable")
+        if (record["status"] != "PASS"
+                or str(record["source_max_date"])[:10] != as_of):
+            raise ValueError(f"Snapshot {as_of} failed the reporting quality gate")
+        data_through = str(record["source_max_date"])[:10]
+        return {
+            "as_of": as_of,
+            "data_through": data_through,
+            "load_id": record["load_id"],
+            "loaded_at": record["loaded_at"],
+            "complete": data_through == as_of,
+        }
 
     def _snapshot_token(self) -> tuple[tuple[str, str], ...]:
         tables = self._repository.snapshot().get("tables", {})
@@ -151,14 +180,16 @@ class PeopleService:
     # -- advisor panel -------------------------------------------------------
 
     async def advisor_panel(self, code: str,
-                            user: SessionUser | None = None) -> dict[str, Any]:
+                            user: SessionUser | None = None,
+                            as_of: str | None = None) -> dict[str, Any]:
         # authorize before serving (cached) payloads
         await self._authorize_advisor(code, user)
-        key = ("panel", self._snapshot_token(), code)
+        context = await self._reporting_context(as_of)
+        key = ("panel", self._snapshot_token(), code, as_of)
         cached = self._cache.get(key)
         if cached is not None:
             return cached
-        payload = await self._build_panel(code)
+        payload = await self._build_panel(code, as_of, context)
         self._cache[key] = payload
         return payload
 
@@ -179,7 +210,8 @@ class PeopleService:
             ctx.update(self._branch_ctx(branch, bcols))
         self._authorize(user, "advisor", ctx)
 
-    async def _build_panel(self, code: str) -> dict[str, Any]:
+    async def _build_panel(self, code: str, as_of: str | None = None,
+                           context: dict[str, Any] | None = None) -> dict[str, Any]:
         repo = self._repository
         acols, arows = await repo.get_table("MIS_DIM_ADVISOR")
         bcols, brows = await repo.get_table("MIS_DIM_BRANCH")
@@ -206,7 +238,8 @@ class PeopleService:
                            scols.index("sale_date"), scols.index("amount"))
         actual: dict[str, float] = {}
         for r in srows:
-            if r[si] == "BOOKED" and r[ai] == advisor_id:
+            if (r[si] == "BOOKED" and r[ai] == advisor_id
+                    and (as_of is None or r[di] <= as_of)):
                 m = r[di][:7]
                 actual[m] = actual.get(m, 0.0) + r[ami]
 
@@ -215,6 +248,8 @@ class PeopleService:
             if r[pcols.index("advisor_id")] != advisor_id:
                 continue
             m = r[pcols.index("perf_month")][:7]
+            if as_of is not None and m > as_of[:7]:
+                continue
             perf[m] = {
                 "plan": r[pcols.index("plan_amount")],
                 "sales_score": r[pcols.index("sales_score")],
@@ -315,19 +350,22 @@ class PeopleService:
                     ],
                 },
             ],
+            "reporting_context": context or {},
         }
 
     # -- cumulative (my branch / my results) ---------------------------------
 
     async def cumulative(self, scope: str, code: str, month: str,
-                         user: SessionUser | None = None) -> dict[str, Any]:
+                         user: SessionUser | None = None,
+                         as_of: str | None = None) -> dict[str, Any]:
         # authorize before serving (cached) payloads
         await self._authorize_entity(scope, code, user)
-        key = ("cumulative", self._snapshot_token(), scope, code, month)
+        context = await self._reporting_context(as_of)
+        key = ("cumulative", self._snapshot_token(), scope, code, month, as_of)
         cached = self._cache.get(key)
         if cached is not None:
             return cached
-        payload = await self._build_cumulative(scope, code, month)
+        payload = await self._build_cumulative(scope, code, month, as_of, context)
         self._cache[key] = payload
         return payload
 
@@ -347,7 +385,8 @@ class PeopleService:
             await self._authorize_advisor(code, user)
 
     async def _build_cumulative(self, scope: str, code: str,
-                                month: str) -> dict[str, Any]:
+                                month: str, as_of: str | None = None,
+                                context: dict[str, Any] | None = None) -> dict[str, Any]:
         repo = self._repository
         if scope not in ("branch", "advisor"):
             raise ValueError("scope must be 'branch' or 'advisor'")
@@ -355,6 +394,15 @@ class PeopleService:
             dt.date.fromisoformat(month + "-01")
         except ValueError:
             raise ValueError(f"month must be YYYY-MM, got: {month}") from None
+        cutoff_day = _days_in_month(month)
+        if as_of is not None:
+            try:
+                cutoff = dt.date.fromisoformat(as_of)
+            except ValueError:
+                raise ValueError(f"as_of must be YYYY-MM-DD, got: {as_of}") from None
+            if as_of[:7] != month:
+                raise ValueError("as_of must belong to the selected month")
+            cutoff_day = cutoff.day
 
         # entity info
         if scope == "branch":
@@ -429,24 +477,37 @@ class PeopleService:
 
         cur = daily_totals(month)
         prev = daily_totals(prev_month)
-        days = _days_in_month(month)
+        month_days = _days_in_month(month)
         prev_days = _days_in_month(prev_month)
+
+        # Production MIS plans are paced over business days while MTD remains
+        # a calendar-day range.  Legacy month-only calls retain calendar pacing
+        # for backwards compatibility with earlier versions of the example.
+        def business_days_through(ym: str, day: int) -> int:
+            year, month_number = int(ym[:4]), int(ym[5:7])
+            return sum(1 for n in range(1, day + 1)
+                       if dt.date(year, month_number, n).weekday() < 5)
+
+        total_pacing_days = (business_days_through(month, month_days)
+                             if as_of else month_days)
 
         rows: list[list[Any]] = []
         run = 0.0
         prev_run = 0.0
-        for day in range(1, days + 1):
+        for day in range(1, cutoff_day + 1):
             daily = round(cur.get(day, 0.0), 2)
             run = round(run + daily, 2)
-            prev_run = round(prev_run + prev.get(day, 0.0), 2)
-            plan_cum = round(plan * day / days, 2)
+            if day <= prev_days:
+                prev_run = round(prev_run + prev.get(day, 0.0), 2)
+            elapsed_pacing_days = business_days_through(month, day) if as_of else day
+            plan_cum = round(plan * elapsed_pacing_days / total_pacing_days, 2)
             attainment = round(run / plan_cum * 100, 2) if plan_cum else None
             vs_prev = round((run - prev_run) / prev_run * 100, 2) if prev_run else None
             rows.append([f"{month}-{day:02d}", day, daily, run, plan_cum,
                          attainment, prev_run, vs_prev])
 
         last = rows[-1]
-        attainment_total = (round(last[3] / plan * 100, 2) if plan else None)
+        attainment_total = (round(last[3] / last[4] * 100, 2) if last[4] else None)
         vs_prev_total = (round((last[3] - prev_run) / prev_run * 100, 2)
                          if prev_run else None)
 
@@ -457,11 +518,12 @@ class PeopleService:
             "kpis": [
                 {"key": "mtd", "label": "Month to date", "value": last[3], "fmt": "eur"},
                 {"key": "plan", "label": "Monthly plan", "value": plan, "fmt": "eur"},
-                {"key": "attainment", "label": "Plan attainment",
+                {"key": "plan_mtd", "label": "MTD paced plan", "value": last[4], "fmt": "eur"},
+                {"key": "attainment", "label": "MTD plan attainment",
                  "value": attainment_total, "fmt": "pct"},
                 {"key": "vs_prev", "label": "vs previous month",
                  "value": vs_prev_total, "fmt": "pct"},
-                {"key": "days", "label": "Days elapsed", "value": days, "fmt": "int"},
+                {"key": "days", "label": "Days elapsed", "value": cutoff_day, "fmt": "int"},
             ],
             "columns": [
                 {"key": "date", "label": "Date", "fmt": "str"},
@@ -479,7 +541,7 @@ class PeopleService:
                     "id": "cumulative",
                     "type": "line",
                     "title": "Cumulative sales within the month",
-                    "labels": [f"{month}-{day:02d}" for day in range(1, days + 1)],
+                    "labels": [f"{month}-{day:02d}" for day in range(1, cutoff_day + 1)],
                     "series": [
                         {"name": "Actual", "data": [r[3] for r in rows]},
                         {"name": "Plan", "data": [r[4] for r in rows]},
@@ -487,6 +549,16 @@ class PeopleService:
                     ],
                 },
             ],
+            "reporting_context": {
+                **(context or {}),
+                "as_of": (context or {}).get("as_of") or as_of or f"{month}-{month_days:02d}",
+                "data_through": (context or {}).get("data_through") or as_of or f"{month}-{month_days:02d}",
+                "comparison_through_day": min(cutoff_day, prev_days),
+                "plan_pacing": "business_days" if as_of else "calendar_days",
+                "elapsed_pacing_days": (business_days_through(month, cutoff_day)
+                                         if as_of else cutoff_day),
+                "total_pacing_days": total_pacing_days,
+            },
         }
 
 

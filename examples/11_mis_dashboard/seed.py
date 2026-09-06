@@ -16,6 +16,10 @@ Tables created / recreated:
     MIS_FACT_BRANCH_PLAN        - monthly sales plans per branch (sum of advisor plans)
     MIS_FACT_ADVISOR_PERF       - monthly advisor plans, KPI scores and ratings
     MIS_DIM_USER                - simulated users (analyst, area/branch managers, advisors)
+    MIS_DIM_DATE                - reporting calendar (calendar and business-day attributes)
+    MIS_DIM_ORG_ASSIGNMENT      - advisor -> branch -> region history (SCD type 2)
+    MIS_FACT_PERFORMANCE_SNAPSHOT - daily and accumulating MTD reporting mart
+    MIS_AUDIT_SNAPSHOT_LOAD     - freshness and reconciliation evidence
 
 Usage:
     python seed.py             # full dataset (~180k sales rows)
@@ -55,7 +59,10 @@ NZ = dict(
 )
 
 START = dt.date(2024, 1, 1)
-END = dt.date(2026, 8, 31)
+# The final month is intentionally incomplete.  2026-08-15 is the canonical
+# example used throughout the dashboard: an August snapshot may only contain
+# activity from 1 through 15 August.
+END = dt.date(2026, 8, 15)
 FIRST_MONTH = dt.date(2024, 1, 1)
 
 SEASON = [0.85, 0.90, 1.05, 1.00, 1.10, 1.00, 0.90, 0.80, 1.10, 1.05, 1.00, 1.15]
@@ -67,6 +74,8 @@ TABLES = [
     "MIS_DIM_PRODUCT",
     "MIS_DIM_CHANNEL",
     "MIS_DIM_CAMPAIGN",
+    "MIS_DIM_DATE",
+    "MIS_DIM_ORG_ASSIGNMENT",
     "MIS_FACT_SALES",
     "MIS_FACT_BALANCES",
     "MIS_FACT_CUSTOMER_MOVEMENT",
@@ -74,6 +83,8 @@ TABLES = [
     "MIS_FACT_BRANCH_PLAN",
     "MIS_FACT_ADVISOR_PERF",
     "MIS_DIM_USER",
+    "MIS_FACT_PERFORMANCE_SNAPSHOT",
+    "MIS_AUDIT_SNAPSHOT_LOAD",
 ]
 
 TABLE_DDL = {
@@ -136,6 +147,27 @@ TABLE_DDL = {
             end_date       DATE,
             budget         NUMERIC(14, 2)
         ) DISTRIBUTE ON (campaign_id)""",
+    "MIS_DIM_DATE": """
+        CREATE TABLE MIS_DIM_DATE (
+            calendar_date          DATE NOT NULL,
+            month_start            DATE NOT NULL,
+            month_end              DATE NOT NULL,
+            day_of_month           SMALLINT NOT NULL,
+            is_business_day        SMALLINT NOT NULL,
+            business_day_of_month  SMALLINT NOT NULL,
+            business_days_in_month SMALLINT NOT NULL
+        ) DISTRIBUTE ON (calendar_date)""",
+    "MIS_DIM_ORG_ASSIGNMENT": """
+        CREATE TABLE MIS_DIM_ORG_ASSIGNMENT (
+            org_assignment_sk INTEGER NOT NULL,
+            advisor_id        INTEGER NOT NULL,
+            branch_id         INTEGER NOT NULL,
+            region_id         INTEGER NOT NULL,
+            valid_from        DATE NOT NULL,
+            valid_to          DATE NOT NULL,
+            is_current        SMALLINT NOT NULL,
+            change_reason     NVARCHAR(60)
+        ) DISTRIBUTE ON (advisor_id)""",
     "MIS_FACT_SALES": """
         CREATE TABLE MIS_FACT_SALES (
             sale_id      INTEGER NOT NULL,
@@ -208,6 +240,41 @@ TABLE_DDL = {
             branch_id    INTEGER,
             region_id    INTEGER
         ) DISTRIBUTE ON (user_id)""",
+    "MIS_FACT_PERFORMANCE_SNAPSHOT": """
+        CREATE TABLE MIS_FACT_PERFORMANCE_SNAPSHOT (
+            snapshot_date        DATE NOT NULL,
+            month_start          DATE NOT NULL,
+            advisor_id           INTEGER NOT NULL,
+            historical_branch_id INTEGER NOT NULL,
+            historical_region_id INTEGER NOT NULL,
+            sales_count_day      INTEGER,
+            sales_amount_day     NUMERIC(16, 2),
+            commission_day       NUMERIC(14, 2),
+            cancellations_day    INTEGER,
+            cancellation_amount_day NUMERIC(16, 2),
+            customers_day        INTEGER,
+            sales_count_mtd      INTEGER,
+            sales_amount_mtd     NUMERIC(16, 2),
+            commission_mtd       NUMERIC(14, 2),
+            cancellations_mtd    INTEGER,
+            cancellation_amount_mtd NUMERIC(16, 2),
+            customers_mtd        INTEGER,
+            plan_amount          NUMERIC(16, 2),
+            quality_score        INTEGER,
+            activity_score       INTEGER
+        ) DISTRIBUTE ON (snapshot_date)""",
+    "MIS_AUDIT_SNAPSHOT_LOAD": """
+        CREATE TABLE MIS_AUDIT_SNAPSHOT_LOAD (
+            load_id             NVARCHAR(30) NOT NULL,
+            snapshot_date       DATE NOT NULL,
+            loaded_at           NVARCHAR(30) NOT NULL,
+            source_max_date     DATE NOT NULL,
+            snapshot_rows       INTEGER NOT NULL,
+            source_booked_amount NUMERIC(18, 2),
+            mart_booked_amount   NUMERIC(18, 2),
+            difference_amount    NUMERIC(18, 2),
+            status              NVARCHAR(10) NOT NULL
+        ) DISTRIBUTE ON (snapshot_date)""",
 }
 
 LOAD_COLUMNS = {
@@ -232,6 +299,16 @@ LOAD_COLUMNS = {
                          ("campaign_name", "NVARCHAR(120)"), ("campaign_type", "NVARCHAR(40)"),
                          ("target_segment", "NVARCHAR(60)"), ("product_id", "INTEGER"),
                          ("start_date", "DATE"), ("end_date", "DATE"), ("budget", "NUMERIC(14, 2)")],
+    "MIS_DIM_DATE": [("calendar_date", "DATE"), ("month_start", "DATE"),
+                     ("month_end", "DATE"), ("day_of_month", "SMALLINT"),
+                     ("is_business_day", "SMALLINT"),
+                     ("business_day_of_month", "SMALLINT"),
+                     ("business_days_in_month", "SMALLINT")],
+    "MIS_DIM_ORG_ASSIGNMENT": [("org_assignment_sk", "INTEGER"),
+                               ("advisor_id", "INTEGER"), ("branch_id", "INTEGER"),
+                               ("region_id", "INTEGER"), ("valid_from", "DATE"),
+                               ("valid_to", "DATE"), ("is_current", "SMALLINT"),
+                               ("change_reason", "NVARCHAR(60)")],
     "MIS_FACT_SALES": [("sale_id", "INTEGER"), ("sale_date", "DATE"), ("branch_id", "INTEGER"),
                        ("advisor_id", "INTEGER"), ("product_id", "INTEGER"),
                        ("channel_id", "INTEGER"), ("customer_id", "INTEGER"),
@@ -260,6 +337,24 @@ LOAD_COLUMNS = {
                      ("display_name", "NVARCHAR(80)"), ("role", "NVARCHAR(20)"),
                      ("advisor_id", "INTEGER"), ("branch_id", "INTEGER"),
                      ("region_id", "INTEGER")],
+    "MIS_FACT_PERFORMANCE_SNAPSHOT": [
+        ("snapshot_date", "DATE"), ("month_start", "DATE"),
+        ("advisor_id", "INTEGER"), ("historical_branch_id", "INTEGER"),
+        ("historical_region_id", "INTEGER"), ("sales_count_day", "INTEGER"),
+        ("sales_amount_day", "NUMERIC(16, 2)"),
+        ("commission_day", "NUMERIC(14, 2)"), ("cancellations_day", "INTEGER"),
+        ("cancellation_amount_day", "NUMERIC(16, 2)"), ("customers_day", "INTEGER"),
+        ("sales_count_mtd", "INTEGER"), ("sales_amount_mtd", "NUMERIC(16, 2)"),
+        ("commission_mtd", "NUMERIC(14, 2)"), ("cancellations_mtd", "INTEGER"),
+        ("cancellation_amount_mtd", "NUMERIC(16, 2)"), ("customers_mtd", "INTEGER"),
+        ("plan_amount", "NUMERIC(16, 2)"), ("quality_score", "INTEGER"),
+        ("activity_score", "INTEGER")],
+    "MIS_AUDIT_SNAPSHOT_LOAD": [
+        ("load_id", "NVARCHAR(30)"), ("snapshot_date", "DATE"),
+        ("loaded_at", "NVARCHAR(30)"), ("source_max_date", "DATE"),
+        ("snapshot_rows", "INTEGER"), ("source_booked_amount", "NUMERIC(18, 2)"),
+        ("mart_booked_amount", "NUMERIC(18, 2)"),
+        ("difference_amount", "NUMERIC(18, 2)"), ("status", "NVARCHAR(10)")],
 }
 
 # ---------------------------------------------------------------------------
@@ -522,6 +617,12 @@ def gen_sales(rng: random.Random, scale: int,
         for branch_id, _code, _city, _district, weight in branches:
             for day in range(1, days_in_month(month) + 1):
                 d = dt.date(month.year, month.month, day)
+                if d > END:
+                    continue
+                eligible_advisors = [advisor for advisor in advisors_by_branch[branch_id]
+                                     if advisor[6] <= d.isoformat()]
+                if not eligible_advisors:
+                    continue
                 weekend = d.weekday() >= 5
                 rate = weight * 5.3 * season * growth * factor * (0.15 if weekend else 1.0)
                 n = poisson(rng, rate)
@@ -540,7 +641,7 @@ def gen_sales(rng: random.Random, scale: int,
                     else:
                         commission = round(amount * product.commission_rate, 2)
                     status = "CANCELLED" if rng.random() < 0.03 else "BOOKED"
-                    advisor = rng.choice(advisors_by_branch[branch_id])
+                    advisor = rng.choice(eligible_advisors)
                     yield [sale_id, d.isoformat(), branch_id, advisor[0],
                            product_by_code[product.code][0], channel_by_name[channel_name],
                            rng.randint(100000, 149999), amount, commission, status]
@@ -610,9 +711,11 @@ def gen_advisor_perf(rng: random.Random,
     """
     Monthly plans, KPI scores and a 1-5 rating per advisor.
 
-    The monthly plan is the booked sales total for that month perturbed by
-    noise, so attainment hovers around 85%-120% (realistic spread). Scores
-    (0-100) correlate with attainment; the rating is a weighted blend.
+    Plans are deliberately independent of the result they measure.  Each plan
+    uses up to three *preceding* months (plus seasonality); this avoids the
+    common demo-data anti-pattern where a target leaks the current actual.
+    Scores (0-100) may use the completed/current outcome because they are
+    observations, not targets.
     """
     def hire_month(hire: str) -> dt.date:
         d = dt.date.fromisoformat(hire)
@@ -622,12 +725,20 @@ def gen_advisor_perf(rng: random.Random,
         advisor_id, branch_id, hire = adv[0], adv[4], adv[6]
         # per-advisor talent: some are consistently stronger, some weaker
         talent = rng.uniform(0.85, 1.20)
+        fallback_capacity = rng.uniform(18000, 65000)
         for month in months(max(hire_month(hire), START), END):
             actual = booked_by_advisor.get((advisor_id, month), 0.0)
-            if actual:
-                plan = round(actual * rng.uniform(0.80, 1.25), 2)
-            else:
-                plan = round(rng.uniform(15000, 60000), 2)
+            history = []
+            cursor = month
+            for _ in range(3):
+                cursor = (cursor.replace(day=1) - dt.timedelta(days=1)).replace(day=1)
+                previous = booked_by_advisor.get((advisor_id, cursor))
+                if previous:
+                    history.append(previous)
+            baseline = sum(history) / len(history) if history else fallback_capacity
+            previous_season = SEASON[(month.month - 2) % 12]
+            season_adjustment = SEASON[month.month - 1] / previous_season
+            plan = round(baseline * season_adjustment * rng.uniform(0.96, 1.06), 2)
             attainment = (actual / plan * 100) if plan else 100.0
             def score(base: float, lo: float, hi: float) -> int:
                 return int(round(min(hi, max(lo, base * talent))))
@@ -678,6 +789,160 @@ def gen_users(advisors: list[list[Any]]) -> Iterator[list[Any]]:
         yield [user_id, f"ADV_{adv[1]}", f"{adv[2]} {adv[3]}", "ADVISOR",
                adv[0], adv[4], None]
         user_id += 1
+
+
+def gen_dates() -> Iterator[list[Any]]:
+    """Calendar rows through the true data cut-off, including weekends."""
+    day = START
+    while day <= END:
+        month_start = day.replace(day=1)
+        month_end = (month_start.replace(day=28) + dt.timedelta(days=4)).replace(day=1) \
+            - dt.timedelta(days=1)
+        elapsed = sum(1 for n in range(1, day.day + 1)
+                      if dt.date(day.year, day.month, n).weekday() < 5)
+        total = sum(1 for n in range(1, month_end.day + 1)
+                    if dt.date(day.year, day.month, n).weekday() < 5)
+        yield [day.isoformat(), month_start.isoformat(), month_end.isoformat(),
+               day.day, 1 if day.weekday() < 5 else 0, elapsed, total]
+        day += dt.timedelta(days=1)
+
+
+def gen_org_assignments(advisors: list[list[Any]]) -> list[list[Any]]:
+    """Small but visible SCD2 history used to teach point-in-time joins."""
+    region_by_branch = {i: row[0] for i, row in enumerate(BRANCHES, start=1)}
+    rows: list[list[Any]] = []
+    sk = 1
+    for advisor in advisors:
+        advisor_id, current_branch = advisor[0], advisor[4]
+        if advisor_id % 37 == 0:
+            change = dt.date(2026, 8, 8) if advisor_id == 37 else dt.date(2026, 4, 1)
+            previous_branch = current_branch - 1 if current_branch > 1 else 2
+            rows.append([sk, advisor_id, previous_branch, region_by_branch[previous_branch],
+                         START.isoformat(), (change - dt.timedelta(days=1)).isoformat(),
+                         0, "Internal transfer"])
+            sk += 1
+            rows.append([sk, advisor_id, current_branch, region_by_branch[current_branch],
+                         change.isoformat(), "9999-12-31", 1, "Internal transfer"])
+        else:
+            rows.append([sk, advisor_id, current_branch, region_by_branch[current_branch],
+                         START.isoformat(), "9999-12-31", 1, "Initial assignment"])
+        sk += 1
+    return rows
+
+
+def apply_historical_assignments(sales_rows: list[list[Any]],
+                                 assignments: list[list[Any]]) -> None:
+    """Stamp the event with the branch valid on its transaction date."""
+    by_advisor: dict[int, list[list[Any]]] = {}
+    for row in assignments:
+        by_advisor.setdefault(row[1], []).append(row)
+    for sale in sales_rows:
+        sale_date = sale[1]
+        for assignment in by_advisor[sale[3]]:
+            if assignment[4] <= sale_date <= assignment[5]:
+                sale[2] = assignment[2]
+                break
+
+
+def ensure_current_mtd_coverage(sales_rows: list[list[Any]],
+                                advisors_by_branch: dict[int, list[list[Any]]]) -> None:
+    """Keep even the smallest fixture useful on the 15-Aug dashboard."""
+    current_month = END.isoformat()[:7]
+    covered = {row[2] for row in sales_rows
+               if row[9] == "BOOKED" and row[1].startswith(current_month)}
+    next_id = max((row[0] for row in sales_rows), default=0) + 1
+    for branch_id in range(1, len(BRANCHES) + 1):
+        if branch_id in covered:
+            continue
+        advisor = advisors_by_branch[branch_id][0]
+        amount = round(1000 + branch_id * 37.5, 2)
+        # Use the canonical cut-off date so a transfer during the month is
+        # stamped to the advisor's assignment valid at the selected snapshot.
+        sales_rows.append([next_id, END.isoformat(), branch_id, advisor[0],
+                           1, 1, 140000 + branch_id, amount,
+                           round(amount * PRODUCTS[0].commission_rate, 2), "BOOKED"])
+        next_id += 1
+
+
+def gen_performance_snapshots(
+    sales_rows: list[list[Any]],
+    perf_rows: list[list[Any]],
+) -> tuple[list[list[Any]], list[list[Any]]]:
+    """Reference implementation of the SQL accumulating-snapshot mart.
+
+    Production-style SQL is kept in ``sql/reporting_mart.sql``.  This Python
+    equivalent makes the seeded database and database-free tests identical.
+    """
+    region_by_branch = {i: row[0] for i, row in enumerate(BRANCHES, start=1)}
+    perf = {(r[0], r[1][:7]): r for r in perf_rows}
+    daily: dict[tuple[str, int, int], dict[str, Any]] = {}
+    for sale in sales_rows:
+        key = (sale[1], sale[3], sale[2])
+        item = daily.setdefault(key, {"count": 0, "amount": 0.0, "commission": 0.0,
+                                      "cancel_count": 0, "cancel_amount": 0.0,
+                                      "customers": set()})
+        if sale[9] == "BOOKED":
+            item["count"] += 1
+            item["amount"] += sale[7]
+            item["commission"] += sale[8]
+            item["customers"].add(sale[6])
+        else:
+            item["cancel_count"] += 1
+            item["cancel_amount"] += sale[7]
+
+    daily_by_date: dict[str, list[tuple[int, int, dict[str, Any]]]] = {}
+    for (sale_date, advisor_id, branch_id), values in daily.items():
+        daily_by_date.setdefault(sale_date, []).append((advisor_id, branch_id, values))
+
+    out: list[list[Any]] = []
+    audit: list[list[Any]] = []
+    running: dict[tuple[int, int], dict[str, Any]] = {}
+    source_running = 0.0
+    day = START
+    active_month = ""
+    while day <= END:
+        iso, ym = day.isoformat(), day.isoformat()[:7]
+        if ym != active_month:
+            running = {}
+            source_running = 0.0
+            active_month = ym
+        for advisor_id, branch_id, values in daily_by_date.get(iso, []):
+            item = running.setdefault((advisor_id, branch_id), {
+                "count": 0, "amount": 0.0, "commission": 0.0,
+                "cancel_count": 0, "cancel_amount": 0.0, "customers": set()})
+            item["count"] += values["count"]
+            item["amount"] += values["amount"]
+            item["commission"] += values["commission"]
+            item["cancel_count"] += values["cancel_count"]
+            item["cancel_amount"] += values["cancel_amount"]
+            item["customers"].update(values["customers"])
+            source_running += values["amount"]
+
+        day_rows: list[list[Any]] = []
+        for (advisor_id, branch_id), accumulated in sorted(running.items()):
+            today = daily.get((iso, advisor_id, branch_id), {})
+            performance = perf.get((advisor_id, ym), [None] * 9)
+            day_rows.append([
+                iso, f"{ym}-01", advisor_id, branch_id, region_by_branch[branch_id],
+                today.get("count", 0), round(today.get("amount", 0.0), 2),
+                round(today.get("commission", 0.0), 2), today.get("cancel_count", 0),
+                round(today.get("cancel_amount", 0.0), 2), len(today.get("customers", set())),
+                accumulated["count"], round(accumulated["amount"], 2),
+                round(accumulated["commission"], 2), accumulated["cancel_count"],
+                round(accumulated["cancel_amount"], 2), len(accumulated["customers"]),
+                performance[2], performance[5], performance[6],
+            ])
+        out.extend(day_rows)
+        source_amount = round(source_running, 2)
+        mart_amount = round(sum(r[12] for r in day_rows), 2)
+        difference = round(mart_amount - source_amount, 2)
+        audit.append([
+            f"SNAP-{day.strftime('%Y%m%d')}", iso, f"{iso}T06:00:00", iso,
+            len(day_rows), source_amount, mart_amount, difference,
+            "PASS" if difference == 0 else "FAIL",
+        ])
+        day += dt.timedelta(days=1)
+    return out, audit
 
 
 def gen_campaigns(rng: random.Random) -> tuple[Iterator[list[Any]], list[dict[str, Any]]]:
@@ -807,7 +1072,11 @@ def build_dataset(scale: int = 1) -> dict[str, tuple[list[str], list[list[Any]]]
                             list(gen_advisors(rng, advisors_by_branch))),
         "MIS_DIM_PRODUCT": (cols("MIS_DIM_PRODUCT"), list(gen_products())),
         "MIS_DIM_CHANNEL": (cols("MIS_DIM_CHANNEL"), list(gen_channels())),
+        "MIS_DIM_DATE": (cols("MIS_DIM_DATE"), list(gen_dates())),
     }
+    org_rows = gen_org_assignments(tables["MIS_DIM_ADVISOR"][1])
+    tables["MIS_DIM_ORG_ASSIGNMENT"] = (
+        cols("MIS_DIM_ORG_ASSIGNMENT"), org_rows)
 
     # campaigns first (their generator also yields the campaign list), then the
     # results which compute per-campaign budgets, then bake budgets into rows
@@ -824,6 +1093,11 @@ def build_dataset(scale: int = 1) -> dict[str, tuple[list[str], list[list[Any]]]
         products_by_group.setdefault(p.group, []).append(p)
     sales_rows = list(gen_sales(random.Random(7), scale, products_by_group,
                                 advisors_by_branch))
+    # Stamp generated events before checking branch coverage.  Otherwise a
+    # pre-transfer event could make the current branch appear covered even
+    # though temporal attribution correctly moves it to the old branch.
+    apply_historical_assignments(sales_rows, org_rows)
+    ensure_current_mtd_coverage(sales_rows, advisors_by_branch)
     tables["MIS_FACT_SALES"] = (cols("MIS_FACT_SALES"), sales_rows)
 
     # booked monthly totals per branch and per advisor -> plans + performance
@@ -854,6 +1128,11 @@ def build_dataset(scale: int = 1) -> dict[str, tuple[list[str], list[list[Any]]]
     tables["MIS_FACT_CUSTOMER_MOVEMENT"] = (
         cols("MIS_FACT_CUSTOMER_MOVEMENT"), list(gen_movement(random.Random(23))))
     tables["MIS_DIM_USER"] = (cols("MIS_DIM_USER"), list(gen_users(advisor_rows)))
+    snapshot_rows, audit_rows = gen_performance_snapshots(sales_rows, perf_rows)
+    tables["MIS_FACT_PERFORMANCE_SNAPSHOT"] = (
+        cols("MIS_FACT_PERFORMANCE_SNAPSHOT"), snapshot_rows)
+    tables["MIS_AUDIT_SNAPSHOT_LOAD"] = (
+        cols("MIS_AUDIT_SNAPSHOT_LOAD"), audit_rows)
     return tables
 
 

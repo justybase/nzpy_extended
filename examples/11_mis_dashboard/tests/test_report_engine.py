@@ -73,7 +73,8 @@ def test_dataset_is_well_formed(dataset) -> None:
                 "MIS_FACT_SALES", "MIS_FACT_BALANCES",
                 "MIS_FACT_CUSTOMER_MOVEMENT", "MIS_FACT_CAMPAIGN_RESULTS",
                 "MIS_FACT_BRANCH_PLAN", "MIS_FACT_ADVISOR_PERF",
-                "MIS_DIM_USER"}
+                "MIS_DIM_USER", "MIS_DIM_DATE", "MIS_DIM_ORG_ASSIGNMENT",
+                "MIS_FACT_PERFORMANCE_SNAPSHOT", "MIS_AUDIT_SNAPSHOT_LOAD"}
     assert set(dataset) == expected
     for name, (cols, rows) in dataset.items():
         assert cols, name
@@ -213,6 +214,17 @@ async def test_ror_balances_are_exact(dataset, service: ReportService) -> None:
     assert last_row[3] == pytest.approx(_balance_total(dataset, "Current accounts (ROR)", to_ym))
     assert last_row[2] > 0
     assert last_row[4] == pytest.approx(last_row[3] / last_row[2])
+
+
+async def test_balance_region_first_month_has_no_fake_mom_delta(
+        service: ReportService) -> None:
+    payload = await service.build("ror_balances", "2024-01", "2024-01", "region")
+    rows = payload["analytic"]["rows"]
+    assert rows
+    # There is no December 2023 balance in the demo mart, so a regional
+    # comparison is unavailable and must remain NULL rather than erroring or
+    # displaying a synthetic zero.
+    assert all(row[-2] is None and row[-1] is None for row in rows)
 
 
 async def test_movement_metrics_in_bounds(service: ReportService) -> None:

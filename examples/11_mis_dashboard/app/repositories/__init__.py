@@ -8,5 +8,7 @@ without touching business logic.
 from app.repositories.base import MISRepository
 from app.repositories.cached import CachedMISRepository
 from app.repositories.scoped import ScopedMISRepository
+from app.repositories.temporal import AsOfMISRepository
 
-__all__ = ["MISRepository", "CachedMISRepository", "ScopedMISRepository"]
+__all__ = ["MISRepository", "CachedMISRepository", "ScopedMISRepository",
+           "AsOfMISRepository"]
