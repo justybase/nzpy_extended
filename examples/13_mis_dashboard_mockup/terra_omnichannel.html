@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Terra Omnichannel — Branch Footprint & Territory MIS</title>
+<style>
+:root {
+  --bg-deep: #080c14;
+  --bg-panel: #0e1524;
+  --bg-panel-hover: #141f35;
+  --border-line: #1c2a44;
+  --text-main: #f1f5f9;
+  --text-dim: #7f92b0;
+  --copper: #f59e0b;
+  --mint: #10b981;
+  --cyan: #06b6d4;
+  --indigo: #6366f1;
+  --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg-deep); color: var(--text-main); font-family: var(--font-family); font-size: 13px; line-height: 1.5; display: flex; min-height: 100vh; }
+
+aside { width: 260px; background: #05080e; border-right: 1px solid var(--border-line); display: flex; flex-direction: column; flex-shrink: 0; }
+.brand { padding: 22px 20px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border-line); }
+.brand-gem { width: 34px; height: 34px; border-radius: 8px; background: linear-gradient(135deg, var(--copper), #d97706); display: grid; place-items: center; font-weight: 800; font-size: 18px; color: #000; }
+.brand-name { font-size: 15px; font-weight: 700; color: #fff; }
+.brand-tag { font-size: 10px; color: var(--copper); font-weight: 600; letter-spacing: 1.2px; }
+
+.nav-box { padding: 18px 12px; display: flex; flex-direction: column; gap: 4px; }
+.nav-heading { font-size: 10px; font-weight: 700; color: #475a77; padding: 0 10px 8px; letter-spacing: 1.2px; }
+.nav-link { width: 100%; border: 0; background: none; color: var(--text-dim); padding: 10px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; display: flex; align-items: center; gap: 12px; cursor: pointer; text-align: left; transition: .15s; }
+.nav-link:hover { background: rgba(255,255,255,0.03); color: #fff; }
+.nav-link.active { background: rgba(245, 158, 11, 0.12); color: var(--copper); font-weight: 600; box-shadow: inset 3px 0 0 var(--copper); }
+
+.format-stat-box { margin: auto 14px 14px; background: var(--bg-panel); border: 1px solid var(--border-line); border-radius: 8px; padding: 14px; }
+.format-row { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 6px; }
+
+main { flex: 1; display: flex; flex-direction: column; overflow-y: auto; max-height: 100vh; }
+header { height: 70px; background: rgba(8, 12, 20, 0.9); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border-line); display: flex; align-items: center; justify-content: space-between; padding: 0 32px; position: sticky; top: 0; z-index: 10; }
+.header-titles h1 { font-size: 18px; font-weight: 700; color: #fff; }
+.header-titles p { font-size: 11px; color: var(--text-dim); }
+
+.controls { display: flex; align-items: center; gap: 10px; }
+.control-btn { background: var(--bg-panel); border: 1px solid var(--border-line); color: #fff; padding: 7px 14px; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.control-btn:hover { background: var(--bg-panel-hover); }
+
+.page { padding: 26px 32px 40px; display: flex; flex-direction: column; gap: 22px; }
+
+/* 4 Formats Cards */
+.formats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.format-card { background: var(--bg-panel); border: 1px solid var(--border-line); border-radius: 10px; padding: 16px; position: relative; }
+.format-badge { font-size: 9.5px; font-weight: 700; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; }
+.format-card h4 { font-size: 14px; font-weight: 600; color: #fff; margin: 8px 0 2px; }
+.format-num { font-size: 22px; font-weight: 700; color: var(--copper); margin: 6px 0; }
+.format-desc { font-size: 11px; color: var(--text-dim); }
+
+/* Main Split: Territory Map Matrix vs Omnichannel Migration */
+.grid-territory { display: grid; grid-template-columns: 1.7fr 1.3fr; gap: 20px; }
+.panel { background: var(--bg-panel); border: 1px solid var(--border-line); border-radius: 10px; overflow: hidden; }
+.panel-head { padding: 18px 20px; border-bottom: 1px solid var(--border-line); display: flex; justify-content: space-between; align-items: center; }
+.panel-head h3 { font-size: 14px; font-weight: 600; color: #fff; }
+.panel-body { padding: 20px; }
+
+/* Catchment Table */
+table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
+th { background: #060910; color: var(--text-dim); font-weight: 600; font-size: 10px; text-transform: uppercase; letter-spacing: 0.8px; padding: 10px 14px; border-bottom: 1px solid var(--border-line); }
+td { padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,0.03); color: #cbd5e1; }
+tr:hover td { background: rgba(255,255,255,0.02); }
+
+.tag-good { color: var(--mint); background: rgba(16, 185, 129, 0.12); padding: 2px 6px; border-radius: 4px; font-weight: 600; font-size: 10px; }
+.tag-warn { color: var(--copper); background: rgba(245, 158, 11, 0.12); padding: 2px 6px; border-radius: 4px; font-weight: 600; font-size: 10px; }
+
+/* Digital Migration Trackers */
+.migration-stat { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+.migration-meta { display: flex; justify-content: space-between; font-size: 12px; }
+.migration-track { height: 7px; background: #162033; border-radius: 4px; overflow: hidden; }
+.migration-fill { height: 100%; border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<aside>
+  <div class="brand">
+    <div class="brand-gem">T</div>
+    <div>
+      <div class="brand-name">TERRA OMNI</div>
+      <div class="brand-tag">FOOTPRINT INTELLIGENCE</div>
+    </div>
+  </div>
+
+  <div class="nav-box">
+    <div class="nav-heading">NETWORK TOPOLOGY</div>
+    <button class="nav-link active">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+      Footprint & Formats
+    </button>
+    <button class="nav-link">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 12 8 12s8-6.75 8-12a8 8 0 0 0-8-8z"/><circle cx="12" cy="10" r="3"/></svg>
+      Micro-Market Catchment
+    </button>
+    <button class="nav-link">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11a9 9 0 0 1 9 9M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>
+      Omnichannel Migration
+    </button>
+    <button class="nav-link">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+      Cost-to-Serve (Branch P&L)
+    </button>
+  </div>
+
+  <div class="format-stat-box">
+    <div style="font-size:11px; font-weight:700; color:#fff; margin-bottom:8px;">NETWORK TRANSFORMATION</div>
+    <div class="format-row"><span>Flagship Hubs</span><b>18 (12%)</b></div>
+    <div class="format-row"><span>Advisory Lounges</span><b>64 (45%)</b></div>
+    <div class="format-row"><span>Cashless Smart Pods</span><b>42 (30%)</b></div>
+    <div class="format-row"><span>Express Kiosks</span><b>18 (13%)</b></div>
+  </div>
+</aside>
+
+<main>
+  <header>
+    <div class="header-titles">
+      <h1>Branch Footprint Optimization & Territory Catchment</h1>
+      <p>142 active physical locations · Assisted digital shift · Micro-market penetration analysis</p>
+    </div>
+    <div class="controls">
+      <button class="control-btn">Quarterly Review (Q3 2026) ▼</button>
+      <button class="control-btn" style="background:var(--copper); color:#000; font-weight:600; border:none;">Download Strategy PDF</button>
+    </div>
+  </header>
+
+  <div class="page">
+    <!-- 4 FORMAT TYPES -->
+    <div class="formats-grid">
+      <div class="format-card">
+        <span class="format-badge" style="background:rgba(245,158,11,0.2); color:var(--copper);">Format Tier 1</span>
+        <h4>Flagship Advisory Hubs</h4>
+        <div class="format-num">18 Branches</div>
+        <div class="format-desc">Avg. 14 Advisors · Wealth & Corporate Lending Center · High Footfall</div>
+      </div>
+      <div class="format-card">
+        <span class="format-badge" style="background:rgba(6,182,212,0.2); color:var(--cyan);">Format Tier 2</span>
+        <h4>Smart Advisory Lounges</h4>
+        <div class="format-num">64 Branches</div>
+        <div class="format-desc">Avg. 6 Advisors · Mortgage & Retail Credit Hub · Cashless Counter</div>
+      </div>
+      <div class="format-card">
+        <span class="format-badge" style="background:rgba(16,185,129,0.2); color:var(--mint);">Format Tier 3</span>
+        <h4>Self-Service Smart Pods</h4>
+        <div class="format-num">42 Branches</div>
+        <div class="format-desc">2 Advisors + Video Banking ATM Pods · Transit & Mall locations</div>
+      </div>
+      <div class="format-card">
+        <span class="format-badge" style="background:rgba(99,102,241,0.2); color:var(--indigo);">Format Tier 4</span>
+        <h4>Express Automated Kiosks</h4>
+        <div class="format-num">18 Branches</div>
+        <div class="format-desc">0 Staff (Automated) · Deposit machine + Tablet Assisted Onboarding</div>
+      </div>
+    </div>
+
+    <!-- MAIN TWO PANELS -->
+    <div class="grid-territory">
+      <!-- Territory Catchment Table -->
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h3>Micro-Market Catchment Penetration</h3>
+            <p style="font-size:11px; color:var(--text-dim);">Market share in local commercial demographic zones</p>
+          </div>
+          <span class="tag-good">142 Catchment Zones</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Metro Territory</th>
+              <th>Local Market Share</th>
+              <th>Branch Count</th>
+              <th>Cost-to-Serve</th>
+              <th>Efficiency</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><b>Central Financial District</b><br><small style="color:var(--text-dim);">Catchment Pop: 420k</small></td>
+              <td><b>24.8%</b></td>
+              <td>12 Hubs</td>
+              <td>$142 / customer</td>
+              <td><span class="tag-good">Optimal</span></td>
+            </tr>
+            <tr>
+              <td><b>Northern Industrial Corridor</b><br><small style="color:var(--text-dim);">Catchment Pop: 310k</small></td>
+              <td><b>18.2%</b></td>
+              <td>9 Hubs</td>
+              <td>$184 / customer</td>
+              <td><span class="tag-good">Profitable</span></td>
+            </tr>
+            <tr>
+              <td><b>Western Tech Suburban Zone</b><br><small style="color:var(--text-dim);">Catchment Pop: 280k</small></td>
+              <td><b>21.4%</b></td>
+              <td>8 Hubs</td>
+              <td>$128 / customer</td>
+              <td><span class="tag-good">High Growth</span></td>
+            </tr>
+            <tr>
+              <td><b>South Commercial Center</b><br><small style="color:var(--text-dim);">Catchment Pop: 190k</small></td>
+              <td><b>12.6%</b></td>
+              <td>6 Hubs</td>
+              <td>$224 / customer</td>
+              <td><span class="tag-warn">High Cost</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Omnichannel Migration Breakdown -->
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h3>In-Branch vs. Digital Shift</h3>
+            <p style="font-size:11px; color:var(--text-dim);">Migration of transactional traffic to digital channels</p>
+          </div>
+          <span class="tag-good">84.2% Digitalized</span>
+        </div>
+        <div class="panel-body">
+          <div class="migration-stat">
+            <div class="migration-meta">
+              <span>Cash Withdrawals / Counter Deposits Migrated</span>
+              <b>91.4%</b>
+            </div>
+            <div class="migration-track">
+              <div class="migration-fill" style="width:91.4%; background:var(--mint);"></div>
+            </div>
+          </div>
+
+          <div class="migration-stat">
+            <div class="migration-meta">
+              <span>Mortgage Applications In-Branch Assisted</span>
+              <b>68.2%</b>
+            </div>
+            <div class="migration-track">
+              <div class="migration-fill" style="width:68.2%; background:var(--cyan);"></div>
+            </div>
+          </div>
+
+          <div class="migration-stat">
+            <div class="migration-meta">
+              <span>Branch Consultations Booked via Mobile App</span>
+              <b>74.5%</b>
+            </div>
+            <div class="migration-track">
+              <div class="migration-fill" style="width:74.5%; background:var(--copper);"></div>
+            </div>
+          </div>
+
+          <div class="migration-stat">
+            <div class="migration-meta">
+              <span>Paperless In-Branch Signature Rate</span>
+              <b>96.8%</b>
+            </div>
+            <div class="migration-track">
+              <div class="migration-fill" style="width:96.8%; background:var(--indigo);"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+</body>
+</html>
