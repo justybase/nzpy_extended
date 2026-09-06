@@ -9,9 +9,9 @@ Layered architecture:
     app/repositories/*          data access (cached Netezza tables, fake for tests)
     app/schemas/*               Pydantic response models
 
-All report data is computed in memory from the fully cached MIS_* tables
-(cachetools.TTLCache) — Netezza is only queried when the cache is cold,
-expires, or is explicitly refreshed.
+Existing reports use cached MIS_* tables. The larger point-in-time mart is
+read through parameterized snapshot slices and those slices are cached too —
+Netezza is queried only on a cold/expired cache or explicit refresh.
 
 Usage:
     python seed.py   # create & populate the MIS_* tables first
@@ -42,6 +42,7 @@ from app.services.ledger_service import LedgerService
 from app.services.people_service import PeopleService
 from app.services.report_service import ReportService
 from app.services.session_service import SessionService
+from app.services.temporal_service import TemporalMISService
 
 logger = logging.getLogger("mis.main")
 
@@ -63,6 +64,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             pool,
             list(settings.table_names),
             ttl_seconds=settings.cache_ttl_tables,
+            lazy_table_names={"MIS_FACT_PERFORMANCE_SNAPSHOT"},
         )
         app.state.repository = repository
         app.state.report_service = ReportService(
@@ -72,11 +74,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.people_service = PeopleService(
             repository, ttl=settings.cache_ttl_reports)
         app.state.session_service = SessionService(repository)
+        app.state.temporal_service = TemporalMISService(
+            repository, ttl=settings.cache_ttl_reports)
 
         refresh_task: asyncio.Task[None] | None = None
         try:
-            # Preload the full tables into memory so the first user request is
-            # served from the cache, not from Netezza.
+            # Preload eager dimensions/facts. The large performance mart is
+            # intentionally fetched and cached as date slices on demand.
             result = await repository.refresh_all()
             logger.info("initial table load: %s", result)
             refresh_task = asyncio.create_task(

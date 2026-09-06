@@ -1,12 +1,12 @@
 """
-CachedMISRepository — complete Netezza MIS_* tables held in memory.
+CachedMISRepository — eager small-table cache plus lazy Netezza table slices.
 
 Implements the MISRepository interface on top of a cachetools.TTLCache.
 Netezza is queried only when the cache is cold, when an entry expires (TTL),
 or on an explicit refresh (`/api/cache/refresh` / background warm-refresh).
 
-Values are normalized at load time (dates -> ISO strings, Decimal -> float)
-so the service layer never touches driver-specific types.
+Large tables can be marked lazy and queried with an equality predicate; both
+full tables and slices normalize driver values before reaching services.
 """
 
 from __future__ import annotations
@@ -40,11 +40,14 @@ class CachedMISRepository(MISRepository):
         pool: Any,
         table_names: list[str],
         ttl_seconds: int = 900,
+        lazy_table_names: set[str] | None = None,
     ) -> None:
         self._pool = pool
         self._table_names = list(table_names)
+        self._lazy_table_names = set(lazy_table_names or ())
         self._ttl = ttl_seconds
         self._cache: TTLCache = TTLCache(maxsize=64, ttl=ttl_seconds)
+        self._slice_cache: TTLCache = TTLCache(maxsize=2048, ttl=ttl_seconds)
         self._lock = asyncio.Lock()
         self._meta: dict[str, dict[str, Any]] = {}
         self._last_error: str | None = None
@@ -67,7 +70,8 @@ class CachedMISRepository(MISRepository):
         }
 
     def is_ready(self) -> bool:
-        return len(self._meta) == len(self._table_names)
+        eager = set(self._table_names) - self._lazy_table_names
+        return eager <= set(self._meta)
 
     # -- loading ------------------------------------------------------------
 
@@ -101,10 +105,35 @@ class CachedMISRepository(MISRepository):
             logger.info("cache miss: loaded %s (%d rows)", name, len(rows))
             return columns, rows
 
+    async def get_table_slice(self, name: str, column: str,
+                              value: Any) -> tuple[list[str], list[list[Any]]]:
+        if name not in self._lazy_table_names:
+            return await super().get_table_slice(name, column, value)
+        key = (name, column, str(value))
+        hit = self._slice_cache.get(key)
+        if hit is not None:
+            self._hits += 1
+            return hit
+        self._misses += 1
+        async with self._lock:
+            hit = self._slice_cache.get(key)
+            if hit is not None:
+                return hit
+            async with self._pool.connection() as conn:
+                cur = conn.cursor()
+                await cur.execute(f"SELECT * FROM {name} WHERE {column} = ?", (value,))
+                rows = await cur.fetchall()
+                columns = [description[0].lower() for description in cur.description]
+            result = (columns, [[_normalize(cell) for cell in row] for row in rows])
+            self._slice_cache[key] = result
+            return result
+
     async def refresh_all(self) -> dict[str, Any]:
         fresh: dict[str, tuple[list[str], list[list[Any]]]] = {}
         errors: list[str] = []
         for name in self._table_names:
+            if name in self._lazy_table_names:
+                continue
             try:
                 fresh[name] = await self._load_table(name)
             except Exception as exc:  # noqa: BLE001 - keep serving stale data
@@ -112,6 +141,7 @@ class CachedMISRepository(MISRepository):
                 logger.warning("cache refresh failed for %s: %s", name, exc)
         if fresh:
             async with self._lock:
+                self._slice_cache.clear()
                 for name, (columns, rows) in fresh.items():
                     self._store(name, columns, rows)
         self._last_error = "; ".join(errors) if errors else None

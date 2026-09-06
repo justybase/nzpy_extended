@@ -44,6 +44,8 @@ class Settings:
         "MIS_DIM_PRODUCT",
         "MIS_DIM_CHANNEL",
         "MIS_DIM_CAMPAIGN",
+        "MIS_DIM_DATE",
+        "MIS_DIM_ORG_ASSIGNMENT",
         "MIS_FACT_SALES",
         "MIS_FACT_BALANCES",
         "MIS_FACT_CUSTOMER_MOVEMENT",
@@ -51,6 +53,8 @@ class Settings:
         "MIS_FACT_BRANCH_PLAN",
         "MIS_FACT_ADVISOR_PERF",
         "MIS_DIM_USER",
+        "MIS_FACT_PERFORMANCE_SNAPSHOT",
+        "MIS_AUDIT_SNAPSHOT_LOAD",
     )
 
     @classmethod

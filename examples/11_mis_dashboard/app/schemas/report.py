@@ -72,6 +72,7 @@ class ReportResponse(BaseModel):
     kpis: list[KpiValue] = Field(default_factory=list)
     insights: list[Insight] = Field(default_factory=list)
     freshness: dict[str, Any] = Field(default_factory=dict)
+    reporting_context: dict[str, Any] = Field(default_factory=dict)
     synthetic: TableData
     dims: list[DimSpec] = Field(default_factory=list)
     dim: str | None = None
@@ -85,6 +86,7 @@ class DrillResponse(BaseModel):
     key: str
     period: PeriodInfo
     title: str
+    reporting_context: dict[str, Any] = Field(default_factory=dict)
     columns: list[ColumnSpec] = Field(default_factory=list)
     rows: list[list[Any]] = Field(default_factory=list)
 
@@ -111,6 +113,8 @@ class ReportMeta(BaseModel):
 
 class MetaResponse(BaseModel):
     months: list[str] = Field(default_factory=list)
+    snapshot_dates: list[str] = Field(default_factory=list)
+    latest_snapshot: str | None = None
     cache: CacheInfo
     reports: list[ReportMeta] = Field(default_factory=list)
 

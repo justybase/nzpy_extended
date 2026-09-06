@@ -21,6 +21,7 @@ app/
 │       ├── pages.py           GET / (frontend)
 │       ├── meta.py            GET /api/meta
 │       ├── reports.py         GET /api/report/{id}
+│       ├── temporal.py        point-in-time, hierarchy, league, quality APIs
 │       ├── drill.py           GET /api/drill/{id}/{target} (row drill-down)
 │       ├── exports.py         GET /api/export/... (xlsx/xlsb)
 │       ├── cache.py           POST /api/cache/refresh
@@ -30,11 +31,13 @@ app/
 │   ├── report_service.py      orchestration + report payload TTLCache
 │   ├── ledger_service.py      sales ledger: server-side pagination/filtering
 │   ├── people_service.py      advisor panels + cumulative personal views
+│   ├── temporal_service.py    DTD/MTD/PMTD/MoM/YTD/YoY + temporal hierarchy
 │   ├── session_service.py     simulated sign-in + role-based scope rules
 │   └── export_service.py      xlspy workbook generation
 ├── repositories/              data access
 │   ├── base.py                MISRepository interface (ABC)
-│   ├── cached.py              full MIS_* tables in a TTLCache
+│   ├── cached.py              eager tables + lazy Netezza slices in TTLCache
+│   ├── temporal.py            as-of cut-off + current/historical attribution
 │   └── scoped.py              row-level role masking (ScopedMISRepository)
 ├── schemas/                   Pydantic response models
 ├── core/                      settings, logging, role model (roles.py)
@@ -56,6 +59,10 @@ never touch a database (`tests/test_report_service.py`).
 | Clients | Acquisition & churn, product penetration (cross-sell) |
 | Marketing | Campaign effectiveness (reach, response, conversion, ROI) |
 | Sales force | Advisor performance panels (person picker + vertical profile, scores, ratings) |
+| Daily MIS | **Point-in-time performance** with DTD, MTD, PMTD, MoM, YTD and YoY |
+| Organization | SCD2 hierarchy browser and historical/current attribution switch |
+| Motivation | Guardrailed **Champions League** for advisors and branches |
+| Governance | Data freshness, reconciliation, continuity, uniqueness and integrity checks |
 | Personal | **My branch** (branch manager) and **My results** (advisor) — cumulative sales within the month vs plan and vs previous month |
 | Personal | **Daily brief** — your results + top network KPIs on one print-ready A4 page |
 | Access | **Role-based scope** — simulated sign-in (analyst / area manager / branch manager / advisor) enforced on the backend |
@@ -81,6 +88,51 @@ deterministic action-oriented insight list. The period toolbar supports
 presets (last 3 months, last 12 months and year to date) and report context is
 kept in the URL.
 
+## Point-in-time reporting: what `as_of` means
+
+The canonical open-period example is **2026-08-15**. It contains activity from
+1–15 August and never silently includes 16–31 August. The exact snapshot,
+source watermark, load id, reconciliation status and hierarchy attribution are
+visible in the UI and returned by the API.
+
+| Code | Definition |
+|---|---|
+| DTD | selected day's activity versus the immediately preceding snapshot day |
+| MTD | 1st calendar day of the month through `as_of` |
+| PMTD | the matching day range in the preceding month |
+| MoM | last fully closed month versus the preceding fully closed month |
+| YTD | 1 January through `as_of` versus the matching prior-year range |
+| YoY | current MTD versus the matching month/day one year earlier |
+
+Monthly plans are independent of the result they measure: demo targets use
+preceding-month history, seasonality and deterministic noise. Plan pacing and
+the month-end forecast use business days; MTD itself remains a calendar range.
+
+### Temporal organization
+
+`MIS_DIM_ORG_ASSIGNMENT` is a type-2 slowly changing dimension at advisor
+assignment grain. The seed includes several transfers, including `P0037` on
+2026-08-08. The structure switch demonstrates two legitimate reporting views:
+
+- **Historical** keeps an event in the branch/region valid on its activity date.
+- **Current at snapshot** restates the selected history to the assignment valid
+  on `as_of`.
+
+Attribution happens before row-level authorization. A manager therefore sees
+only the reporting units in their permitted scope after the chosen attribution.
+Network totals remain equal between the two modes; organizational subtotals may
+differ.
+
+### Champions League with guardrails
+
+The league score is deliberately explainable: plan attainment 50%, PMTD
+momentum 20%, quality 15% and activity 15%. Attainment is capped at 120% for
+scoring. Qualification requires at least 10 booked sales and quality of at
+least 80/100. The UI exposes the formula, qualification and badges rather than
+turning a single large transaction into an opaque contest. Advisors see their
+scoped rows and position; managers and analysts can inspect their full
+authorized table. No public "worst performer" board is produced.
+
 ### Sales ledger — very large analytics with pagination
 
 `Sales ledger` (menu → Detail) pages through the **full sales list** (192k+
@@ -98,8 +150,9 @@ downloadable as XLSX/XLSB.
 initials, role, branch/region/city, hire date, tenure, status), a rating badge
 (1–5), score cards (sales, conversion, quality, activity), plan-attainment
 and score trend charts, and a monthly ratings table (plan vs achieved,
-attendance %, rating, note) — downloadable as XLSX/XLSB. Data comes from the
-new `MIS_FACT_ADVISOR_PERF` table.
+attendance %, rating, note) — downloadable as XLSX/XLSB. The selected
+`as_of` snapshot cuts current-month achieved sales and hides future rating
+months. Data comes from the new `MIS_FACT_ADVISOR_PERF` table.
 
 ### Daily brief — one printable A4 page
 
@@ -143,7 +196,7 @@ active.
 Two role-oriented views (menu → My views) for a branch manager and an
 individual advisor. Pick your branch/advisor and a month: day-by-day
 **cumulative** sales within the month, a prorated cumulative **plan** line
-(plan × day / days-in-month) and the **previous month's** cumulative at the
+(business-day pacing when `as_of` is supplied) and the **previous month's** cumulative at the
 same point — as KPIs (MTD, plan, attainment %, vs previous month), a three-
 series line chart and a day table. Plans come from `MIS_FACT_BRANCH_PLAN`
 (branch plan = sum of its advisors' plans) and `MIS_FACT_ADVISOR_PERF`.
@@ -153,17 +206,17 @@ series line chart and a day table. Plans come from `MIS_FACT_BRANCH_PLAN`
 The user-facing requirement: *do not hit Netezza on every click*. This app
 implements a two-level cache:
 
-1. **Table cache** (`cachetools.TTLCache`, TTL 15 min by default) — all 13
-   MIS_* tables (including plans, advisor performance and the demo user
-   directory) are loaded **completely into memory** at startup and kept warm
-   by a background refresh loop. All report computations run in pure Python
-   over these in-memory rows.
+1. **Table/query cache** (`cachetools.TTLCache`, TTL 15 min by default) — small
+   dimensions and existing facts are loaded at startup. The larger
+   `MIS_FACT_PERFORMANCE_SNAPSHOT` is intentionally lazy: an equality predicate
+   on `snapshot_date` is pushed to Netezza and only that slice is cached.
 2. **Report cache** (`TTLCache`, TTL 2 min) — computed payloads
-   (KPIs + tables + charts) are cached per (report, period, dimension), so
-   repeated clicks are instant.
+   (KPIs + tables + charts) are cached per (report, period, dimension, role,
+   `as_of` and attribution), so repeated clicks are instant without mixing
+   users or reporting views.
 
-Netezza is contacted only when: the table cache is cold, an entry expires, or
-you click **Reload data** in the sidebar (`POST /api/cache/refresh`). If a background
+Netezza is contacted only when an eager table or requested snapshot slice is
+cold/expired, or when you click **Reload data** in the sidebar. If a background
 refresh fails, the old (stale) data keeps serving — a DB hiccup never empties
 the cache. Cache hit/miss counters and the last load time are shown in the
 sidebar.
@@ -223,8 +276,9 @@ pip install playwright && python -m playwright install chromium
 python tools/visual_check.py           # needs the server running
 ```
 
-It checks the overview page, the daily brief (including print emulation) and
-the role switcher (picker locking, badge, scoped report subtitle).
+It checks the overview, point-in-time performance, SCD2 hierarchy, Champions
+League, data-quality gate, daily brief (including print emulation), responsive
+layouts and the role switcher (picker locking, badge, scoped report subtitle).
 
 ## Data model (JUST_DATA)
 
@@ -245,6 +299,16 @@ Star schema, all names in English:
 - `MIS_FACT_ADVISOR_PERF` — monthly advisor plans, KPI scores (0–100) and 1–5 ratings
 - `MIS_FACT_BRANCH_PLAN` — monthly branch plans (sum of its advisors' plans)
 - `MIS_DIM_USER` — 297 simulated users (analyst, area/branch managers, advisors) for role-based access
+- `MIS_DIM_DATE` — reporting calendar with calendar/business-day attributes
+- `MIS_DIM_ORG_ASSIGNMENT` — temporal advisor → branch → region history (SCD2)
+- `MIS_FACT_PERFORMANCE_SNAPSHOT` — daily activity and accumulating MTD mart
+- `MIS_AUDIT_SNAPSHOT_LOAD` — source watermark, row count and reconciliation gate
+
+The production-style Netezza CTAS/window-function pattern is documented in
+`sql/reporting_mart.sql`. `seed.py` loads a Python reference implementation of
+the same mart so database-free tests and the Netezza demo share one deterministic
+expected result. This also makes it possible to compare SQL output against an
+independent oracle in integration tests.
 
 Data is generated deterministically (fixed RNG seeds), so every `seed.py` run
 produces identical numbers.
@@ -254,17 +318,20 @@ produces identical numbers.
 | Endpoint | Description |
 |---|---|
 | `GET /` | dashboard UI |
-| `GET /api/meta` | available months + cache status |
-| `GET /api/report/{id}?from=YYYY-MM&to=YYYY-MM&dim=branch` | report payload (cached) |
-| `GET /api/drill/{id}/{branches\|advisors\|sales}?key=CODE&from=&to=` | row-level drill-down |
-| `GET /api/drill/{id}/{target}?key=CODE&fmt=xlsx` | drill view as spreadsheet |
-| `GET /api/export/{id}/{synthetic\|analytic}/{xlsx\|xlsb}?from=&to=&dim=` | spreadsheet download |
-| `GET /api/ledger?from=&to=&q=&group=&channel=&status=&sort=&dir=&page=&page_size=` | paginated, filtered sales detail (row-masked per role) |
+| `GET /api/meta` | available months, exact snapshot dates + cache status |
+| `GET /api/report/{id}?from=YYYY-MM&to=YYYY-MM&dim=branch&as_of=YYYY-MM-DD&attribution=historical` | existing report with exact cut-off and attribution |
+| `GET /api/performance?as_of=&attribution=&dim=region\|branch\|advisor` | daily MIS cockpit and all standard comparisons |
+| `GET /api/hierarchy?as_of=&attribution=` | hierarchy tree and SCD2 changes |
+| `GET /api/league?as_of=&attribution=&level=advisor\|branch` | role-scoped league and its scoring rules |
+| `GET /api/quality?as_of=` | reporting gate and individual quality checks |
+| `GET /api/drill/{id}/{branches\|advisors\|sales}?key=CODE&from=&to=&as_of=&attribution=` | row-level drill-down |
+| `GET /api/drill/{id}/{target}?key=CODE&fmt=xlsx&as_of=&attribution=` | drill view as spreadsheet |
+| `GET /api/export/{id}/{synthetic\|analytic}/{xlsx\|xlsb}?from=&to=&dim=&as_of=&attribution=` | spreadsheet download |
+| `GET /api/ledger?from=&to=&as_of=&attribution=&q=&group=&channel=&status=&sort=&dir=&page=&page_size=` | paginated, filtered and temporally attributed sales detail |
 | `GET /api/ledger/export/{xlsx\|xlsb}?filters...` | filtered ledger as spreadsheet |
 | `GET /api/people/advisors` / `GET /api/people/branches` | picker lists |
-| `GET /api/report/{id}?from=&to=&dim=` | report payload (cached, row-masked per signed-in role) |
-| `GET /api/people/advisors/{code}` | advisor profile + ratings panel (role-scoped, 403 outside scope) |
-| `GET /api/people/cumulative?scope=branch\|advisor&code=&month=` | cumulative vs plan vs previous month (role-scoped) |
+| `GET /api/people/advisors/{code}?as_of=` | advisor profile + ratings panel, cut at an exact snapshot (role-scoped, 403 outside scope) |
+| `GET /api/people/cumulative?scope=branch\|advisor&code=&month=&as_of=` | cumulative vs plan vs matching previous-month day (role-scoped) |
 | `GET /api/people/advisors/{code}/export/{fmt}` / `.../cumulative/export/{fmt}` | panel / cumulative spreadsheets (role-scoped) |
 | `GET /api/session/me` / `POST /api/session/user` / `GET /api/session/users` | simulated sign-in: current user, switch, directory |
 | `POST /api/cache/refresh` | force full table reload and clear derived caches |

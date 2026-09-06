@@ -25,12 +25,14 @@ async def export_report(
     from_: str | None = Query(default=None, alias="from"),
     to: str | None = Query(default=None),
     dim: str | None = Query(default=None),
+    as_of: str | None = Query(default=None),
+    attribution: str = Query(default="historical"),
     export_service: ExportService = Depends(get_export_service),
     user: SessionUser = Depends(get_current_user),
 ) -> FileResponse:
     try:
         result = await export_service.export_report(report_id, kind, fmt, from_, to,
-                                                    dim, user)
+                                                    dim, user, as_of, attribution)
     except reporting.UnknownReport:
         raise HTTPException(404, f"Unknown report: {report_id}") from None
     except reporting.DataNotReady as exc:

@@ -41,6 +41,7 @@ class AdvisorPanelResponse(BaseModel):
     code: str
     info: dict[str, Any] = Field(default_factory=dict)
     summary: dict[str, Any] = Field(default_factory=dict)
+    reporting_context: dict[str, Any] = Field(default_factory=dict)
     columns: list[ColumnSpec] = Field(default_factory=list)
     rows: list[list[Any]] = Field(default_factory=list)
     charts: list[ChartData] = Field(default_factory=list)
@@ -54,3 +55,4 @@ class CumulativeResponse(BaseModel):
     columns: list[ColumnSpec] = Field(default_factory=list)
     rows: list[list[Any]] = Field(default_factory=list)
     charts: list[ChartData] = Field(default_factory=list)
+    reporting_context: dict[str, Any] = Field(default_factory=dict)

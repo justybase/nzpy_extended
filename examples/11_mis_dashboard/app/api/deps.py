@@ -17,6 +17,7 @@ from app.services.ledger_service import LedgerService
 from app.services.people_service import PeopleService
 from app.services.report_service import ReportService
 from app.services.session_service import SessionService
+from app.services.temporal_service import TemporalMISService
 
 
 def get_settings(request: Request) -> Settings:
@@ -45,6 +46,10 @@ def get_people_service(request: Request) -> PeopleService:
 
 def get_session_service(request: Request) -> SessionService:
     return request.app.state.session_service
+
+
+def get_temporal_service(request: Request) -> TemporalMISService:
+    return request.app.state.temporal_service
 
 
 async def get_current_user(request: Request) -> SessionUser:

@@ -679,6 +679,36 @@ table.grid tr.drillable:hover td { background: #eaf1fb; }
   .toolbar .user-badge { margin-left: 0; }
 }
 
+.comparison-grid, .quality-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+  margin-bottom: 22px;
+}
+.comparison-card { padding: 18px; margin: 0; }
+.comparison-code { color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: 1px; }
+.comparison-value { font-size: 22px; font-weight: 750; margin: 7px 0 3px; }
+.comparison-delta.good { color: var(--good, #237b57); }
+.comparison-delta.negative { color: var(--danger, #b5484d); }
+.org-grid { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(420px, 1fr); gap: 20px; }
+.org-tree { padding: 20px; }
+.org-region, .org-branch { border-top: 1px solid var(--border); padding: 10px 0 0; margin-top: 10px; }
+.org-region summary, .org-branch summary { cursor: pointer; font-weight: 700; }
+.org-region summary span, .org-branch summary span { color: var(--muted); font-size: 11px; margin-left: 7px; }
+.org-branch { margin-left: 16px; }
+.org-advisors { display: grid; gap: 6px; padding: 9px 0 3px 18px; }
+.org-advisors span { display: flex; justify-content: space-between; gap: 10px; }
+.org-advisors small { color: var(--muted); }
+.league-rules { padding: 16px 20px; line-height: 1.65; }
+.quality-banner { border-radius: var(--radius); padding: 15px 20px; margin-bottom: 16px; font-weight: 800; }
+.quality-banner.status-pass { background: #e8f5ef; color: #237b57; }
+.quality-banner.status-fail { background: #faeaea; color: #a5363d; }
+.quality-check { padding: 20px; margin: 0; border-top: 3px solid var(--border); }
+.quality-check.status-pass { border-top-color: #42a47a; }
+.quality-check.status-fail { border-top-color: #ca555c; }
+.quality-status { font-size: 10px; letter-spacing: 1px; font-weight: 800; color: var(--muted); }
+.quality-value { font-size: 24px; font-weight: 750; margin: 8px 0; }
+
 @media screen and (max-width: 900px) {
   #app { flex-direction: column; }
   #sidebar { width: 100%; height: auto; position: static; flex: 0 0 auto; }
@@ -691,6 +721,7 @@ table.grid tr.drillable:hover td { background: #eaf1fb; }
   #user-box select { max-width: 360px; margin: 0; }
   #cache-box { display: none; }
   .chart-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .org-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media screen and (max-width: 640px) {

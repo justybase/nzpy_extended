@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.core.roles import SessionUser
-from app.repositories import ScopedMISRepository
+from app.repositories import AsOfMISRepository, ScopedMISRepository
 from app.repositories.base import MISRepository
 
 # (key, label, format) — order matters, it is the row layout
@@ -54,24 +54,30 @@ class LedgerService:
 
     @staticmethod
     def _repo_for(repository: MISRepository,
-                  user: SessionUser | None) -> MISRepository:
+                  user: SessionUser | None,
+                  as_of: str | None = None,
+                  attribution: str = "historical") -> MISRepository:
         """Row-level role masking for the ledger."""
+        if as_of is not None:
+            repository = AsOfMISRepository(repository, as_of, attribution)
         if user is None or user.is_analyst:
             return repository
         return ScopedMISRepository(repository, user)
 
     async def _joined_rows(self,
-                           user: SessionUser | None = None) -> list[list[Any]]:
+                           user: SessionUser | None = None,
+                           as_of: str | None = None,
+                           attribution: str = "historical") -> list[list[Any]]:
         """Sales detail joined with the dimension tables (cached).
 
         The join is rebuilt only when the repository snapshot changes (e.g.
         after a Netezza reload) or the signed-in user changes, so paging
         through a 200k-row ledger does not re-join on every request.
         """
-        repo = self._repo_for(self._repository, user)
+        repo = self._repo_for(self._repository, user, as_of, attribution)
         scope = user.code if user and not user.is_analyst else "full"
         snap = repo.snapshot()
-        fingerprint = (scope,) + tuple(
+        fingerprint = (scope, as_of, attribution) + tuple(
             (k, v["rows"], v["loaded_at"])
             for k, v in sorted(snap["tables"].items()))
         if self._joined is not None and self._joined[0] == fingerprint:
@@ -141,8 +147,10 @@ class LedgerService:
                     group: str | None, channel: str | None, status: str | None,
                     sort: str | None, dir_: str | None,
                     page: int, page_size: int,
-                    user: SessionUser | None = None) -> dict[str, Any]:
-        rows = await self._joined_rows(user)
+                    user: SessionUser | None = None,
+                    as_of: str | None = None,
+                    attribution: str = "historical") -> dict[str, Any]:
+        rows = await self._joined_rows(user, as_of, attribution)
         total = len(rows)
 
         # date window
@@ -216,9 +224,11 @@ class LedgerService:
     async def export_rows(self, from_: str | None, to: str | None, q: str | None,
                           group: str | None, channel: str | None,
                           status: str | None,
-                          user: SessionUser | None = None) -> dict[str, Any]:
+                          user: SessionUser | None = None,
+                          as_of: str | None = None,
+                          attribution: str = "historical") -> dict[str, Any]:
         """All filtered rows for export (capped at EXPORT_CAP)."""
-        rows = await self._joined_rows(user)
+        rows = await self._joined_rows(user, as_of, attribution)
         if from_ or to:
             rows = [r for r in rows
                     if (not from_ or r[1] >= from_)
