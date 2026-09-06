@@ -12,7 +12,8 @@ from app.schemas.temporal import (HierarchyResponse, LeagueResponse,
                                   PerformanceResponse, QualityResponse)
 from app.services.temporal_service import SnapshotNotFound, TemporalMISService
 
-router = APIRouter(prefix="/api", tags=["point-in-time MIS"])
+router = APIRouter(prefix="/api", tags=["point-in-time MIS"],
+                   dependencies=[Depends(get_current_user)])
 
 
 def _error(exc: Exception) -> HTTPException:
@@ -64,7 +65,10 @@ async def quality(
     as_of: str | None = Query(default=None),
     attribution: str = Query(default="historical"),
     service: TemporalMISService = Depends(get_temporal_service),
+    user: SessionUser = Depends(get_current_user),
 ) -> dict[str, Any]:
+    if not user.can_view_global_quality:
+        raise HTTPException(403, "Global data quality is restricted to central roles")
     try:
         return await service.quality(as_of, attribution)
     except (ValueError, SnapshotNotFound) as exc:

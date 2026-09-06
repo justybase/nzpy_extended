@@ -4,26 +4,21 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.deps import get_report_service, get_repository
-from app.repositories.base import MISRepository
-from app.services.report_service import ReportService
+from app.api.deps import get_cache_coordinator, get_current_user
+from app.core.roles import SessionUser
+from app.services.cache_coordinator import CacheCoordinator
 
-router = APIRouter(prefix="/api/cache", tags=["cache"])
+router = APIRouter(prefix="/api/cache", tags=["cache"],
+                   dependencies=[Depends(get_current_user)])
 
 
 @router.post("/refresh")
-async def refresh(request: Request,
-                  repository: MISRepository = Depends(get_repository),
-                  report_service: ReportService = Depends(get_report_service)) -> dict[str, Any]:
-    result = await repository.refresh_all()
-    report_service.clear_cache()  # computed payloads must be rebuilt from fresh data
-    request.app.state.people_service.clear_cache()
-    request.app.state.ledger_service.clear_cache()
-    request.app.state.temporal_service.clear_cache()
-    result["people_cache_cleared"] = True
-    result["ledger_cache_cleared"] = True
-    result["report_cache_cleared"] = True
-    result["temporal_cache_cleared"] = True
+async def refresh(coordinator: CacheCoordinator = Depends(get_cache_coordinator),
+                  user: SessionUser = Depends(get_current_user)) -> dict[str, Any]:
+    if not user.can_refresh_cache:
+        raise HTTPException(403, "Your role cannot refresh the data cache")
+    result = await coordinator.refresh("manual")
+    result["refresh_reason"] = "manual"
     return result

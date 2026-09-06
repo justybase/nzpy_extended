@@ -60,7 +60,7 @@ class LedgerService:
         """Row-level role masking for the ledger."""
         if as_of is not None:
             repository = AsOfMISRepository(repository, as_of, attribution)
-        if user is None or user.is_analyst:
+        if user is None or user.has_full_scope:
             return repository
         return ScopedMISRepository(repository, user)
 
@@ -75,7 +75,7 @@ class LedgerService:
         through a 200k-row ledger does not re-join on every request.
         """
         repo = self._repo_for(self._repository, user, as_of, attribution)
-        scope = user.code if user and not user.is_analyst else "full"
+        scope = user.code if user and not user.has_full_scope else "full"
         snap = repo.snapshot()
         fingerprint = (scope, as_of, attribution) + tuple(
             (k, v["rows"], v["loaded_at"])

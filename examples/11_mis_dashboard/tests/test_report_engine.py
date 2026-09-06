@@ -73,8 +73,9 @@ def test_dataset_is_well_formed(dataset) -> None:
                 "MIS_FACT_SALES", "MIS_FACT_BALANCES",
                 "MIS_FACT_CUSTOMER_MOVEMENT", "MIS_FACT_CAMPAIGN_RESULTS",
                 "MIS_FACT_BRANCH_PLAN", "MIS_FACT_ADVISOR_PERF",
-                "MIS_DIM_USER", "MIS_DIM_DATE", "MIS_DIM_ORG_ASSIGNMENT",
-                "MIS_FACT_PERFORMANCE_SNAPSHOT", "MIS_AUDIT_SNAPSHOT_LOAD"}
+                    "MIS_DIM_USER", "MIS_DIM_DATE", "MIS_DIM_ORG_ASSIGNMENT",
+                    "MIS_FACT_PERFORMANCE_SNAPSHOT", "MIS_AUDIT_SNAPSHOT_LOAD",
+                    "MIS_CONTROL_DATASET_LOAD"}
     assert set(dataset) == expected
     for name, (cols, rows) in dataset.items():
         assert cols, name

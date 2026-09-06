@@ -1,5 +1,5 @@
 """
-Tests for the simulated session (role-based access) — over the seeded
+Tests for session persona resolution (role-based access) — over the seeded
 in-memory dataset, no database required.
 
 Covers the user directory, switching, and the PeopleService scope rules for
@@ -58,15 +58,20 @@ async def test_default_user_is_analyst(session: SessionService) -> None:
 async def test_user_directory(session: SessionService) -> None:
     users = await session.users()
     roles = {u["role"] for u in users}
-    assert roles == {"ANALYST", "AREA_MANAGER", "BRANCH_MANAGER", "ADVISOR"}
+    assert {"ANALYST", "AREA_MANAGER", "BRANCH_MANAGER", "ADVISOR"} <= roles
+    assert {"MIS_SQL_DEVELOPER", "NETWORK_HEAD", "REGIONAL_DIRECTOR",
+            "BRANCH_DIRECTOR", "CUSTOMER_ADVISOR", "HQ_FULL_ACCESS",
+            "APP_TESTER"} <= roles
     assert any(u["code"] == "BM_DUB01" for u in users)
     assert any(u["code"] == "ADV_P0001" for u in users)
 
 
-async def test_switch_and_persist(session: SessionService) -> None:
+async def test_switch_resolves_without_global_state(session: SessionService) -> None:
     user = await session.switch("ADV_P0001")
     assert user.role == "ADVISOR" and user.advisor_id == 1
-    assert (await session.current()) == user  # persisted
+    # A request must never change the effective user for another request.
+    assert (await session.current()).code == "NET01"
+    assert (await session.resolve("ADV_P0001")).code == user.code
 
     bm = await session.switch("BM_DUB01")
     assert bm.role == "BRANCH_MANAGER" and bm.branch_id == 15  # DUB01
@@ -186,6 +191,21 @@ async def test_analyst_and_no_user_see_everything(people: PeopleService) -> None
     assert len(await people.advisor_list(None)) > 100
     await people.cumulative("branch", "DUB01", "2026-08", None)
     await people.advisor_panel("P0001", None)
+
+
+async def test_named_demo_personas_use_the_same_scope_policy(
+        people: PeopleService, session: SessionService) -> None:
+    regional = await session.resolve("REG_DIR_RNOR")
+    regional_branches = await people.branch_list(regional)
+    assert regional.role == "REGIONAL_DIRECTOR"
+    assert regional_branches and all(
+        branch["region_name"] == "North Region" for branch in regional_branches)
+
+    branch = await session.resolve("BR_DIR_BEL01")
+    assert [row["code"] for row in await people.branch_list(branch)] == ["BEL01"]
+
+    advisor = await session.resolve("ADV_DEMO_P0001")
+    assert [row["code"] for row in await people.advisor_list(advisor)] == ["P0001"]
 
 
 # ---------------------------------------------------------------------------

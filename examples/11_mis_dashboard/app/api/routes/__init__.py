@@ -2,10 +2,11 @@
 
 from fastapi import APIRouter
 
-from app.api.routes import (cache, drill, exports, ledger, meta, pages, people,
-                             reports, session, status, temporal)
+from app.api.routes import (auth, cache, drill, exports, ledger, meta, pages,
+                             people, reports, session, status, temporal)
 
 api_router = APIRouter()
+api_router.include_router(auth.router)
 api_router.include_router(pages.router)
 api_router.include_router(meta.router)
 api_router.include_router(reports.router)

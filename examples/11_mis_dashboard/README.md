@@ -2,7 +2,7 @@
 
 A complete example of an MIS-style (Management Information System) reporting
 dashboard for a bank's retail sales network. Built with **FastAPI**,
-**nzpy_extended**, **cachetools (TTLCache)** and **xlspy** (XLSB/XLSX export).
+**nzpy_extended**, **cachetools** and **xlspy** (XLSB/XLSX export).
 
 Everything is in English: table names, columns, menu items, labels and the
 sample data (Irish cities and names).
@@ -25,18 +25,22 @@ app/
 │       ├── drill.py           GET /api/drill/{id}/{target} (row drill-down)
 │       ├── exports.py         GET /api/export/... (xlsx/xlsb)
 │       ├── cache.py           POST /api/cache/refresh
+│       ├── auth.py            JWT login/logout endpoints
 │       └── status.py          GET /api/status
 ├── services/                  business logic
 │   ├── reporting.py           report definitions + pure-Python aggregations
+│   ├── cache_coordinator.py   ETL version polling + cache invalidation
 │   ├── report_service.py      orchestration + report payload TTLCache
 │   ├── ledger_service.py      sales ledger: server-side pagination/filtering
 │   ├── people_service.py      advisor panels + cumulative personal views
 │   ├── temporal_service.py    DTD/MTD/PMTD/MoM/YTD/YoY + temporal hierarchy
-│   ├── session_service.py     simulated sign-in + role-based scope rules
+│   ├── session_service.py     effective persona resolution + scope metadata
+│   ├── auth_service.py        JWT lifecycle and tester persona switching
+│   ├── fake_ldap.py           in-process LDAP-like demo directory
 │   └── export_service.py      xlspy workbook generation
 ├── repositories/              data access
 │   ├── base.py                MISRepository interface (ABC)
-│   ├── cached.py              eager tables + lazy Netezza slices in TTLCache
+│   ├── cached.py              ordinary tables + lazy slices in process cache
 │   ├── temporal.py            as-of cut-off + current/historical attribution
 │   └── scoped.py              row-level role masking (ScopedMISRepository)
 ├── schemas/                   Pydantic response models
@@ -65,7 +69,7 @@ never touch a database (`tests/test_report_service.py`).
 | Governance | Data freshness, reconciliation, continuity, uniqueness and integrity checks |
 | Personal | **My branch** (branch manager) and **My results** (advisor) — cumulative sales within the month vs plan and vs previous month |
 | Personal | **Daily brief** — your results + top network KPIs on one print-ready A4 page |
-| Access | **Role-based scope** — simulated sign-in (analyst / area manager / branch manager / advisor) enforced on the backend |
+| Access | **JWT login + fake LDAP** — role-based scope enforced on the backend, with a tester-only persona switcher |
 | Detail | **Sales ledger** — the full sales list with server-side pagination, free-text search, filters and sorting |
 | Overview | KPI cards, plan attainment, decision insights and charts across the whole network |
 
@@ -164,22 +168,30 @@ cumulative chart and the day-by-day table, with a generated/footer strip.
 The **Print / PDF** button uses `@media print` CSS (A4 portrait, sidebar and
 controls hidden) — exactly what prints is what you see.
 
-### Role-based access (simulated sign-in)
+### Authentication and role-based access
 
-No real authentication in this example — the sidebar's **"Signed in as"**
-selector simulates a login from the `MIS_DIM_USER` table (297 users):
+The dashboard uses JWT authentication backed by a deterministic, in-process
+fake LDAP service. The JWT is stored in an `HttpOnly`, `SameSite=Lax` cookie;
+the browser never receives the token in JSON. Data endpoints return **401**
+without a valid token. The root page and static assets remain public so the
+login screen can load.
 
-| Role | Can see |
+The complete role matrix, demo credentials and security notes are in
+[`docs/authentication.md`](docs/authentication.md). The short version is:
+
+| Role | Access |
 |---|---|
-| Analyst (`NET01`) | the whole network (default) |
-| Area manager (`AM_*`, one per region) | branches and advisors of their region |
-| Branch manager (`BM_*`, one per branch) | their branch and its advisors |
-| Advisor (`ADV_*`, one per active advisor) | themselves and their own branch |
+| MIS SQL developer | full MIS read access, global quality and cache refresh |
+| Network head | full business-data read access and global quality view |
+| Regional director | one region and its branches/advisors |
+| Branch director | one branch and its advisors |
+| Customer advisor | own results and own branch aggregates |
+| HQ full access | full application access, including quality and cache refresh |
+| Application developer / tester | demo access plus switching to any seeded persona |
 
-The scope is **enforced in the service layer**, not just hidden in the UI:
-the picker endpoints return only the allowed entities, and `advisor_panel` /
-`cumulative` (and their exports) answer **403** for anything outside the
-user's scope. Pickers lock (single option) when a role has only one choice.
+The scope is enforced in the service and repository layers, not just hidden in
+the UI. The tester's source identity stays in the signed token while the
+selected effective persona controls business-data visibility.
 
 **The MIS report pages are masked too.** A `ScopedMISRepository` wraps the
 cached tables and filters the fact rows (sales, balances, client movement,
@@ -203,31 +215,35 @@ series line chart and a day table. Plans come from `MIS_FACT_BRANCH_PLAN`
 
 ## Caching — why Netezza is barely queried
 
-The user-facing requirement: *do not hit Netezza on every click*. This app
-implements a two-level cache:
+The user-facing requirement is: *do not query Netezza for every click*. The
+application keeps ordinary MIS tables in a bounded process-local LRU cache and
+uses the ordinary `MIS_CONTROL_DATASET_LOAD` table only as a freshness signal.
+The larger `MIS_FACT_PERFORMANCE_SNAPSHOT` remains lazy: an equality predicate
+on `snapshot_date` is pushed to Netezza and only that slice is cached.
 
-1. **Table/query cache** (`cachetools.TTLCache`, TTL 15 min by default) — small
-   dimensions and existing facts are loaded at startup. The larger
-   `MIS_FACT_PERFORMANCE_SNAPSHOT` is intentionally lazy: an equality predicate
-   on `snapshot_date` is pushed to Netezza and only that slice is cached.
-2. **Report cache** (`TTLCache`, TTL 2 min) — computed payloads
-   (KPIs + tables + charts) are cached per (report, period, dimension, role,
-   `as_of` and attribution), so repeated clicks are instant without mixing
-   users or reporting views.
+At startup the eager tables are loaded once. A background coordinator polls the
+small control table (five minutes by default). When its latest `PUBLISHED`
+`version_no` and `load_id` are unchanged, no dataset table is read. When the
+version changes, all eager tables are loaded into a temporary set and swapped
+into the cache only after the complete refresh succeeds; lazy slices and all
+derived report/people/ledger/temporal caches are then cleared. The existing
+**Reload data** button uses the same path.
 
-Netezza is contacted only when an eager table or requested snapshot slice is
-cold/expired, or when you click **Reload data** in the sidebar. If a background
-refresh fails, the old (stale) data keeps serving — a DB hiccup never empties
-the cache. Cache hit/miss counters and the last load time are shown in the
-sidebar.
+If the control table or a refresh is unavailable, the last complete dataset
+continues to serve. After 24 hours without a successful freshness confirmation
+the API and sidebar mark it as `stale` and display a warning. The table cache
+is not persisted across a process restart; startup performs the initial load.
 
 Tunables (environment variables):
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `NZ_CACHE_TTL_TABLES` | `900` | table cache TTL in seconds |
+| `NZ_CACHE_TTL_TABLES` | `86400` | cache retention/status window in seconds |
 | `NZ_CACHE_TTL_REPORTS` | `120` | report payload cache TTL in seconds |
-| `NZ_CACHE_REFRESH_SECONDS` | `300` | background warm-refresh interval |
+| `NZ_CACHE_CONTROL_POLL_SECONDS` | `300` | polling interval for the small control table |
+| `NZ_CACHE_MAX_UNCONFIRMED_SECONDS` | `86400` | stale-warning threshold |
+| `NZ_CACHE_DATASET_NAME` | `MIS_DASHBOARD` | logical ETL dataset name |
+| `NZ_CACHE_CONTROL_TABLE` | `MIS_CONTROL_DATASET_LOAD` | ordinary control table name |
 
 ## Setup
 
@@ -244,7 +260,7 @@ export NZ_DEV_PASSWORD=password
 Install dependencies:
 
 ```bash
-pip install fastapi uvicorn cachetools xlspy
+pip install -r requirements.txt
 ```
 
 Create and seed the tables in JUST_DATA (drops and recreates all `MIS_*` tables):
@@ -276,9 +292,9 @@ pip install playwright && python -m playwright install chromium
 python tools/visual_check.py           # needs the server running
 ```
 
-It checks the overview, point-in-time performance, SCD2 hierarchy, Champions
-League, data-quality gate, daily brief (including print emulation), responsive
-layouts and the role switcher (picker locking, badge, scoped report subtitle).
+It checks the login flow, overview, point-in-time performance, SCD2 hierarchy,
+Champions League, data-quality gate, daily brief (including print emulation),
+responsive layouts and the tester role switcher.
 
 ## Data model (JUST_DATA)
 
@@ -298,17 +314,23 @@ Star schema, all names in English:
 - `MIS_FACT_CAMPAIGN_RESULTS` — campaign contacts / responses / conversions / cost
 - `MIS_FACT_ADVISOR_PERF` — monthly advisor plans, KPI scores (0–100) and 1–5 ratings
 - `MIS_FACT_BRANCH_PLAN` — monthly branch plans (sum of its advisors' plans)
-- `MIS_DIM_USER` — 297 simulated users (analyst, area/branch managers, advisors) for role-based access
+- `MIS_DIM_USER` — legacy scoped users plus seven named authentication personas for role-based access
 - `MIS_DIM_DATE` — reporting calendar with calendar/business-day attributes
 - `MIS_DIM_ORG_ASSIGNMENT` — temporal advisor → branch → region history (SCD2)
 - `MIS_FACT_PERFORMANCE_SNAPSHOT` — daily activity and accumulating MTD mart
 - `MIS_AUDIT_SNAPSHOT_LOAD` — source watermark, row count and reconciliation gate
+- `MIS_CONTROL_DATASET_LOAD` — published ETL version and freshness contract
 
 The production-style Netezza CTAS/window-function pattern is documented in
 `sql/reporting_mart.sql`. `seed.py` loads a Python reference implementation of
 the same mart so database-free tests and the Netezza demo share one deterministic
 expected result. This also makes it possible to compare SQL output against an
 independent oracle in integration tests.
+
+The complete table-level documentation is in
+[`docs/data_dictionary.md`](docs/data_dictionary.md), with the relationships
+visualized in [`docs/erd.md`](docs/erd.md). The ETL publication and cache
+contract is in [`docs/cache.md`](docs/cache.md).
 
 Data is generated deterministically (fixed RNG seeds), so every `seed.py` run
 produces identical numbers.
@@ -318,6 +340,9 @@ produces identical numbers.
 | Endpoint | Description |
 |---|---|
 | `GET /` | dashboard UI |
+| `POST /api/auth/login` | authenticate against fake LDAP and set the JWT cookie |
+| `POST /api/auth/logout` | clear the JWT cookie |
+| `GET /api/auth/me` | current authenticated/effective persona |
 | `GET /api/meta` | available months, exact snapshot dates + cache status |
 | `GET /api/report/{id}?from=YYYY-MM&to=YYYY-MM&dim=branch&as_of=YYYY-MM-DD&attribution=historical` | existing report with exact cut-off and attribution |
 | `GET /api/performance?as_of=&attribution=&dim=region\|branch\|advisor` | daily MIS cockpit and all standard comparisons |
@@ -333,9 +358,10 @@ produces identical numbers.
 | `GET /api/people/advisors/{code}?as_of=` | advisor profile + ratings panel, cut at an exact snapshot (role-scoped, 403 outside scope) |
 | `GET /api/people/cumulative?scope=branch\|advisor&code=&month=&as_of=` | cumulative vs plan vs matching previous-month day (role-scoped) |
 | `GET /api/people/advisors/{code}/export/{fmt}` / `.../cumulative/export/{fmt}` | panel / cumulative spreadsheets (role-scoped) |
-| `GET /api/session/me` / `POST /api/session/user` / `GET /api/session/users` | simulated sign-in: current user, switch, directory |
-| `POST /api/cache/refresh` | force full table reload and clear derived caches |
-| `GET /api/status` | DB + pool + cache stats |
+| `GET /api/session/me` | compatibility alias for the authenticated session |
+| `POST /api/session/user` / `GET /api/session/users` | tester-only effective-persona switch and directory |
+| `POST /api/cache/refresh` | force full table reload and clear derived caches (technical roles) |
+| `GET /api/status` | DB + pool + cache stats (authenticated users) |
 
 Report ids: `overview, loans, investments, insurance, current_accounts,
 ror_balances, savings_accounts, term_deposits, clients, penetration, campaigns`.

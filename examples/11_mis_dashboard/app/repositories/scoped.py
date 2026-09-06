@@ -39,19 +39,19 @@ class ScopedMISRepository(MISRepository):
         user = self._user
         if self._branch_ids is not None:
             return self._branch_ids, self._advisor_ids
-        if user is None or user.is_analyst:
+        if user is None or user.has_full_scope:
             self._branch_ids, self._advisor_ids = None, None
             return None, None
 
         bcols, brows = await self._inner.get_table("MIS_DIM_BRANCH")
-        if user.role == "AREA_MANAGER":
+        if user.is_region_scoped:
             bi, ri = bcols.index("branch_id"), bcols.index("region_id")
             branch_ids = {r[bi] for r in brows if r[ri] == user.region_id}
         else:
             bi = bcols.index("branch_id")
             branch_ids = {user.branch_id} if user.branch_id else set()
 
-        if user.role == "ADVISOR":
+        if user.is_advisor_scoped:
             advisor_ids = {user.advisor_id} if user.advisor_id else set()
         else:
             acols, arows = await self._inner.get_table("MIS_DIM_ADVISOR")
@@ -68,7 +68,7 @@ class ScopedMISRepository(MISRepository):
         branch_ids, advisor_ids = await self._scope()
         if name == "MIS_FACT_SALES":
             if advisor_ids is not None and self._user is not None \
-                    and self._user.role == "ADVISOR":
+                    and self._user.is_advisor_scoped:
                 ai = cols.index("advisor_id")
                 return cols, [r for r in rows if r[ai] in advisor_ids]
             if branch_ids is not None:
@@ -91,7 +91,7 @@ class ScopedMISRepository(MISRepository):
         cols, rows = await self._inner.get_table_slice(name, column, value)
         if name == "MIS_FACT_PERFORMANCE_SNAPSHOT":
             branch_ids, advisor_ids = await self._scope()
-            if advisor_ids is not None and self._user is not None and self._user.role == "ADVISOR":
+            if advisor_ids is not None and self._user is not None and self._user.is_advisor_scoped:
                 ai = cols.index("advisor_id")
                 return cols, [row for row in rows if row[ai] in advisor_ids]
             if branch_ids is not None:

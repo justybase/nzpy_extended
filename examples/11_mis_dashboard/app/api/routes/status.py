@@ -6,13 +6,14 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 
-from app.api.deps import get_report_service, get_repository, get_settings
+from app.api.deps import get_current_user, get_report_service, get_repository, get_settings
 from app.core.config import Settings
 from app.repositories.base import MISRepository
 from app.schemas.report import StatusResponse
 from app.services.report_service import ReportService
 
-router = APIRouter(prefix="/api", tags=["status"])
+router = APIRouter(prefix="/api", tags=["status"],
+                   dependencies=[Depends(get_current_user)])
 
 
 @router.get("/status", response_model=StatusResponse)

@@ -107,7 +107,7 @@ async def ledger_export(
         ["Attribution", attribution],
         ["Truncated at cap", f"{EXPORT_CAP:,}" if result["truncated"] else "no"],
         ["Generated", dt.datetime.now().isoformat(timespec="seconds")],
-        ["Data source", "cached MIS_* tables (TTLCache)"],
+        ["Data source", "cached ordinary MIS_* tables (ETL-versioned)"],
     ]
     path = export_service.write_workbook(fmt, sheet_name, result["columns"],
                                          result["rows"], meta_lines)

@@ -12,11 +12,11 @@ from starlette.background import BackgroundTask
 
 from app.api.deps import (get_current_user, get_export_service,
                           get_people_service)
+from app.core.roles import SessionUser
 from app.schemas.people import (AdvisorListResponse, AdvisorPanelResponse,
                                 BranchListResponse, CumulativeResponse)
 from app.services.export_service import ExportService, MEDIA_TYPES
 from app.services.people_service import Forbidden, PeopleService, UnknownEntity
-from app.services.session_service import SessionUser
 
 router = APIRouter(prefix="/api/people", tags=["people"])
 
@@ -98,7 +98,7 @@ async def advisor_panel_export(
         ["Name", payload["info"]["name"]],
         ["Rows", len(payload["rows"])],
         ["Generated", dt.datetime.now().isoformat(timespec="seconds")],
-        ["Data source", "cached MIS_* tables (TTLCache)"],
+            ["Data source", "cached ordinary MIS_* tables (ETL-versioned)"],
     ]
     context = payload.get("reporting_context", {})
     if context:
@@ -150,7 +150,7 @@ async def cumulative_export(
         ["As of", as_of or "month end"],
         ["Rows", len(payload["rows"])],
         ["Generated", dt.datetime.now().isoformat(timespec="seconds")],
-        ["Data source", "cached MIS_* tables (TTLCache)"],
+            ["Data source", "cached ordinary MIS_* tables (ETL-versioned)"],
     ]
     path = export_service.write_workbook(
         fmt, f"Cumulative {scope} - {code}"[:31], payload["columns"],

@@ -99,6 +99,9 @@ async def test_quality_gate_and_league_rules(service: TemporalMISService) -> Non
     assert league["rules"]["attainment_cap"] == 120
     assert league["rules"]["minimum_quality"] == 80
     assert league["columns"][0]["key"] == "rank"
+    qualified = [row for row in league["rows"] if row[3] is True]
+    assert len(qualified) >= 3
+    assert all(row[9] >= 10 and row[7] >= 80 for row in qualified)
 
 
 async def test_scoped_plan_denominator_matches_analytic_rows(

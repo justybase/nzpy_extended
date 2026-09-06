@@ -6,14 +6,15 @@ from typing import Any
 
 from fastapi import APIRouter, Depends
 
-from app.api.deps import (get_report_service, get_repository,
+from app.api.deps import (get_current_user, get_report_service, get_repository,
                           get_temporal_service)
 from app.repositories.base import MISRepository
 from app.schemas.report import MetaResponse
 from app.services.report_service import ReportService
 from app.services.temporal_service import TemporalMISService
 
-router = APIRouter(prefix="/api", tags=["meta"])
+router = APIRouter(prefix="/api", tags=["meta"],
+                   dependencies=[Depends(get_current_user)])
 
 
 @router.get("/meta", response_model=MetaResponse)
