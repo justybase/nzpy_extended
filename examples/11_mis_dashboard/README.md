@@ -59,6 +59,31 @@ Services depend only on the `MISRepository` interface, so the storage backend
 can be swapped — the unit tests use a tiny in-memory `FakeRepository` and
 never touch a database (`tests/test_report_service.py`).
 
+## Important async boundary warning
+
+`async def` does **not** make the code inside it non-blocking. A synchronous
+SQLite call, `open()`/`Path.read_text()`, XLSX/XLSB generation, `time.sleep()` or
+a large pure-Python aggregation inside an `async def` route or service still
+blocks the one event loop that serves other requests. The application may look
+asynchronous while concurrent requests quietly queue behind one slow report.
+
+Use `await` for genuinely asynchronous driver operations. Move unavoidable
+synchronous I/O or CPU-heavy work to a bounded worker pool, for example:
+
+```python
+async def build_report() -> dict[str, object]:
+    return await asyncio.to_thread(build_report_sync)
+```
+
+For a normal synchronous FastAPI route, FastAPI can use its thread pool; that
+does not happen automatically when the route is declared `async def`. Use
+`await asyncio.sleep(...)` instead of `time.sleep(...)`, keep background tasks
+as explicit references, and cancel **and await** them during shutdown. For
+large report datasets, prefer database aggregation/pushdown or a dedicated
+bounded worker rather than creating an unbounded number of threads. The full
+boundary checklist and examples are in
+[`docs/async-boundaries.md`](docs/async-boundaries.md).
+
 ## Developer documentation
 
 The implementation map and extension rules are in
@@ -80,6 +105,8 @@ references are kept separate:
 - [`docs/adr/README.md`](docs/adr/README.md) — architecture decision records;
 - [`docs/production-adaptation.md`](docs/production-adaptation.md) — bank
   environment decisions and required evidence;
+- [`docs/async-boundaries.md`](docs/async-boundaries.md) — async/sync boundary
+  warning and implementation checklist;
 - [`docs/operations.md`](docs/operations.md) — startup, failure and recovery
   runbook.
 
