@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
 const baseURL = process.env.NZ_E2E_BASE_URL || 'http://127.0.0.1:8480';
+const python = process.env.NZ_E2E_PYTHON || 'python3';
 
 export default defineConfig({
   testDir: './e2e',
@@ -16,7 +17,7 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   webServer: process.env.NZ_E2E_START_SERVER ? {
-    command: 'python3 ../server.py',
+    command: `${python} ../server.py`,
     url: `${baseURL}/`,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

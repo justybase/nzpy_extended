@@ -7,10 +7,11 @@ import os
 from typing import Any
 
 import nzpy_extended as nzpy
-from fastapi import APIRouter, Depends, Form, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
 from app.api.deps import get_query_service, get_settings, get_sql_safety
+from app.api.form import read_form
 from app.core.config import Settings
 from app.schemas.models import CancelResponse
 from app.services.query_service import QueryService
@@ -95,15 +96,21 @@ async def workspace_socket(websocket: WebSocket) -> None:
 
 @router.post("/api/query")
 async def run_query(
-    sql: str = Form(...),
-    timeout: float | None = Form(None),
-    query_id: str | None = Form(None),
-    preview_token: str | None = Form(None),
-    write_confirmed: bool = Form(False),
+    request: Request,
     settings: Settings = Depends(get_settings),
     service: QueryService = Depends(get_query_service),
     safety: SqlSafetyService = Depends(get_sql_safety),
 ) -> JSONResponse:
+    form = await read_form(request)
+    sql = str(form.get("sql", ""))
+    raw_timeout = str(form.get("timeout", "")).strip()
+    try:
+        timeout = float(raw_timeout) if raw_timeout else None
+    except ValueError as exc:
+        raise HTTPException(400, "timeout must be a number") from exc
+    query_id = str(form.get("query_id", "")) or None
+    preview_token = str(form.get("preview_token", "")) or None
+    write_confirmed = str(form.get("write_confirmed", "")).lower() in {"1", "true", "yes", "on"}
     if not sql.strip():
         raise HTTPException(400, "SQL query is empty")
     if not safety.validate(preview_token, sql, None, write_confirmed):
@@ -123,6 +130,10 @@ async def run_query(
 
 
 @router.post("/api/cancel", response_model=CancelResponse)
-async def cancel_query(query_id: str = Form(...), service: QueryService = Depends(get_query_service)) -> CancelResponse:
+async def cancel_query(request: Request, service: QueryService = Depends(get_query_service)) -> CancelResponse:
+    form = await read_form(request)
+    query_id = str(form.get("query_id", ""))
+    if not query_id:
+        raise HTTPException(400, "query_id is required")
     accepted = await service.cancel(query_id)
     return CancelResponse(status="cancelling" if accepted else "no_active_query", query_id=query_id)
