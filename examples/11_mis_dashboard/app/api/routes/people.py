@@ -111,7 +111,7 @@ async def advisor_panel_export(
     # drop the hidden 'ym' sort key column, as report exports do
     columns = payload["columns"][1:]
     rows = [r[1:] for r in payload["rows"]]
-    path = export_service.write_workbook(
+    path = await export_service.write_workbook_async(
         fmt, f"Advisor ratings - {code}"[:31], columns, rows, meta_lines)
     return FileResponse(
         path,
@@ -152,7 +152,7 @@ async def cumulative_export(
         ["Generated", dt.datetime.now().isoformat(timespec="seconds")],
             ["Data source", "cached ordinary MIS_* tables (ETL-versioned)"],
     ]
-    path = export_service.write_workbook(
+    path = await export_service.write_workbook_async(
         fmt, f"Cumulative {scope} - {code}"[:31], payload["columns"],
         payload["rows"], meta_lines)
     return FileResponse(

@@ -8,6 +8,7 @@ with generation metadata.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import os
 import tempfile
@@ -109,8 +110,9 @@ class ExportService:
                 ["Attribution", context.get("attribution")],
                 ["Reconciled", context.get("complete")],
             ]
-        path = self.write_workbook(fmt, sheet_name, export["columns"],
-                                   export["rows"], meta_lines)
+        path = await self.write_workbook_async(
+            fmt, sheet_name, export["columns"], export["rows"], meta_lines
+        )
         filename = f"{report_id}_{kind}_{period['from']}_{period['to']}.{fmt}"
         if export["dim"]:
             filename = f"{report_id}_{kind}_{export['dim']}_{period['from']}_{period['to']}.{fmt}"
@@ -147,12 +149,26 @@ class ExportService:
                 ["Attribution", context.get("attribution")],
                 ["Reconciled", context.get("complete")],
             ]
-        path = self.write_workbook(fmt, sheet_name, payload["columns"],
-                                   payload["rows"], meta_lines)
+        path = await self.write_workbook_async(
+            fmt, sheet_name, payload["columns"], payload["rows"], meta_lines
+        )
         filename = f"drill_{report_id}_{target}_{key}_{period['from']}_{period['to']}.{fmt}"
         return ExportResult(path=path, filename=filename, media_type=MEDIA_TYPES[fmt])
 
     # -- low-level ----------------------------------------------------------
+
+    async def write_workbook_async(
+        self,
+        fmt: str,
+        sheet_name: str,
+        columns: list[dict[str, str]],
+        rows: list[list[Any]],
+        meta_lines: list[list[Any]],
+    ) -> str:
+        """Create an export without blocking the FastAPI event loop."""
+        return await asyncio.to_thread(
+            self.write_workbook, fmt, sheet_name, columns, rows, meta_lines
+        )
 
     def write_workbook(self, fmt: str, sheet_name: str, columns: list[dict[str, str]],
                        rows: list[list[Any]], meta_lines: list[list[Any]]) -> str:

@@ -8,6 +8,7 @@ operations; normal report requests read the RAM cache.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import json
 import os
@@ -111,7 +112,7 @@ class SQLiteSnapshotStore:
     async def restore(self, table_names: list[str]) -> dict[str, Any]:
         if self._path is None:
             return {"restored": False, "reason": "disabled"}
-        return self._restore_sync(list(table_names))
+        return await asyncio.to_thread(self._restore_sync, list(table_names))
 
     async def stage_generation(
         self,
@@ -121,7 +122,8 @@ class SQLiteSnapshotStore:
     ) -> Path:
         if self._path is None:
             raise RuntimeError("SQLite snapshot store is disabled")
-        return self._stage_generation_sync(
+        return await asyncio.to_thread(
+            self._stage_generation_sync,
             tables,
             list(table_names),
             generation,
@@ -130,12 +132,12 @@ class SQLiteSnapshotStore:
     async def activate(self, staged_path: Path) -> None:
         if self._path is None:
             raise RuntimeError("SQLite snapshot store is disabled")
-        self._activate_sync(staged_path)
+        await asyncio.to_thread(self._activate_sync, staged_path)
 
     async def discard(self, staged_path: Path | None) -> None:
         if staged_path is None:
             return
-        staged_path.unlink(missing_ok=True)
+        await asyncio.to_thread(staged_path.unlink, missing_ok=True)
 
     async def read_lazy_slice(
         self,
@@ -146,7 +148,8 @@ class SQLiteSnapshotStore:
     ) -> TableData | None:
         if self._path is None:
             return None
-        return self._read_lazy_slice_sync(
+        return await asyncio.to_thread(
+            self._read_lazy_slice_sync,
             generation_id,
             table_name,
             column,
@@ -164,7 +167,8 @@ class SQLiteSnapshotStore:
     ) -> bool:
         if self._path is None:
             return False
-        return self._write_lazy_slice_sync(
+        return await asyncio.to_thread(
+            self._write_lazy_slice_sync,
             generation_id,
             table_name,
             column,
