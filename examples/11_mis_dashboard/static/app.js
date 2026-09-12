@@ -7,39 +7,75 @@
 
 const MENU = [
   { sep: "Reports" },
-  { id: "overview", label: "Overview", type: "report" },
-  { id: "network_cockpit", label: "Network cockpit", type: "cockpit", cockpit: "overview" },
-  { id: "pipeline_pacing", label: "Pipeline & pacing", type: "cockpit", cockpit: "pipeline" },
-  { id: "branch_network", label: "Branch network", type: "cockpit", cockpit: "branches" },
-  { id: "daily_performance", label: "Daily performance", type: "performance" },
-  { id: "loans", label: "Loans", type: "report" },
-  { id: "investments", label: "Investments", type: "report" },
-  { id: "insurance", label: "Insurance", type: "report" },
-  { id: "current_accounts", label: "Current accounts (ROR)", type: "report" },
-  { id: "ror_balances", label: "ROR balances", type: "report" },
-  { id: "savings_accounts", label: "Savings accounts", type: "report" },
-  { id: "term_deposits", label: "Term deposits", type: "report" },
-  { id: "clients", label: "Client acquisition & churn", type: "report" },
-  { id: "penetration", label: "Product penetration", type: "report" },
-  { id: "campaigns", label: "Campaign effectiveness", type: "report" },
+  { id: "overview", label: "Overview", type: "report", icon: "grid" },
+  { id: "network_cockpit", label: "Network cockpit", type: "cockpit", cockpit: "overview", icon: "gauge" },
+  { id: "pipeline_pacing", label: "Pipeline & pacing", type: "cockpit", cockpit: "pipeline", icon: "funnel" },
+  { id: "branch_network", label: "Branch network", type: "cockpit", cockpit: "branches", icon: "building" },
+  { id: "daily_performance", label: "Daily performance", type: "performance", icon: "pulse" },
+  { id: "loans", label: "Loans", type: "report", icon: "banknote" },
+  { id: "investments", label: "Investments", type: "report", icon: "trending" },
+  { id: "insurance", label: "Insurance", type: "report", icon: "shield" },
+  { id: "current_accounts", label: "Current accounts (ROR)", type: "report", icon: "wallet" },
+  { id: "ror_balances", label: "ROR balances", type: "report", icon: "layers" },
+  { id: "savings_accounts", label: "Savings accounts", type: "report", icon: "coins" },
+  { id: "term_deposits", label: "Term deposits", type: "report", icon: "lock" },
+  { id: "clients", label: "Client acquisition & churn", type: "report", icon: "users" },
+  { id: "penetration", label: "Product penetration", type: "report", icon: "target" },
+  { id: "campaigns", label: "Campaign effectiveness", type: "report", icon: "megaphone" },
   { sep: "Sales force" },
-  { id: "advisors", label: "Advisor performance", type: "advisors" },
-  { id: "champions", label: "Champions League", type: "league" },
+  { id: "advisors", label: "Advisor performance", type: "advisors", icon: "usercheck" },
+  { id: "champions", label: "Champions League", type: "league", icon: "trophy" },
   { sep: "Organization" },
-  { id: "org_history", label: "Organization history", type: "hierarchy" },
+  { id: "org_history", label: "Organization history", type: "hierarchy", icon: "sitemap" },
   { sep: "My views" },
-  { id: "my_branch", label: "My branch", type: "personal", scope: "branch" },
-  { id: "my_results", label: "My results", type: "personal", scope: "advisor" },
-  { id: "daily_brief", label: "Daily brief", type: "brief" },
+  { id: "my_branch", label: "My branch", type: "personal", scope: "branch", icon: "home" },
+  { id: "my_results", label: "My results", type: "personal", scope: "advisor", icon: "barchart" },
+  { id: "daily_brief", label: "Daily brief", type: "brief", icon: "file" },
   { sep: "Detail" },
-  { id: "ledger", label: "Sales ledger", type: "ledger" },
+  { id: "ledger", label: "Sales ledger", type: "ledger", icon: "list" },
   { sep: "Governance" },
-  { id: "data_quality", label: "Data quality", type: "quality" },
+  { id: "data_quality", label: "Data quality", type: "quality", icon: "shieldcheck" },
 ];
+
+// Inline 24x24 stroke icons for the sidebar (trusted, static markup).
+const ICONS = {
+  grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  gauge: '<path d="M12 14l4-4"/><path d="M4 18a8 8 0 1 1 16 0"/>',
+  funnel: '<path d="M3 5h18l-7 8v5l-4 2v-7Z"/>',
+  building: '<path d="M4 21V6a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v15"/><path d="M15 21V10h4a1 1 0 0 1 1 1v10M8 9h3M8 13h3M8 17h3M18 14h1M18 17h1M3 21h18"/>',
+  pulse: '<path d="M3 12h4l2 6 4-14 2 8h6"/>',
+  banknote: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.4"/><path d="M6 10v4M18 10v4"/>',
+  trending: '<path d="M3 17l5-5 4 4 8-8"/><path d="M15 8h5v5"/>',
+  shield: '<path d="M12 3l7 3v6c0 4.5-3 7.8-7 9-4-1.2-7-4.5-7-9V6Z"/><path d="M9.5 12l2 2 3.5-4"/>',
+  wallet: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M16 14h2"/>',
+  layers: '<path d="M12 3l9 5-9 5-9-5 9-5Z"/><path d="M3 13l9 5 9-5"/>',
+  coins: '<ellipse cx="12" cy="6.5" rx="7" ry="3"/><path d="M5 6.5v5c0 1.7 3.1 3 7 3s7-1.3 7-3v-5"/><path d="M5 11.5v5c0 1.7 3.1 3 7 3s7-1.3 7-3v-5"/>',
+  lock: '<rect x="4.5" y="10" width="15" height="10" rx="2"/><path d="M8 10V7.5a4 4 0 0 1 8 0V10M12 14v2"/>',
+  users: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 5.5a3.2 3.2 0 0 1 0 5M18 14a6 6 0 0 1 3 5"/>',
+  target: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
+  megaphone: '<path d="M3 11v2a2 2 0 0 0 2 2h1l4 4V5L6 9H5a2 2 0 0 0-2 2Z"/><path d="M14 8a5 5 0 0 1 0 8M17 5a9 9 0 0 1 0 14"/>',
+  usercheck: '<circle cx="9" cy="8" r="3.4"/><path d="M3 20a6 6 0 0 1 11-3.3"/><path d="M16 17l2 2 4-4"/>',
+  trophy: '<path d="M8 4h8v5a4 4 0 0 1-8 0Z"/><path d="M8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4"/><path d="M12 13v3M9 20h6M10 20c0-2 .5-3 2-4 1.5 1 2 2 2 4"/>',
+  sitemap: '<rect x="9" y="3" width="6" height="5" rx="1"/><rect x="3" y="16" width="6" height="5" rx="1"/><rect x="15" y="16" width="6" height="5" rx="1"/><path d="M12 8v4M6 16v-2h12v2"/>',
+  home: '<path d="M4 11l8-7 8 7"/><path d="M6 10v10h12V10"/><path d="M10 20v-5h4v5"/>',
+  barchart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+  file: '<path d="M6 3h8l4 4v14H6Z"/><path d="M14 3v4h4M9 12h6M9 16h6"/>',
+  list: '<path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/>',
+  shieldcheck: '<path d="M12 3l7 3v6c0 4.5-3 7.8-7 9-4-1.2-7-4.5-7-9V6Z"/><path d="M9 12l2 2 4-4"/>',
+};
+
+function iconMarkup(name) {
+  const body = ICONS[name];
+  if (!body) return "";
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+}
 
 const PALETTE = ["#167d8d", "#6775c5", "#d9a44a", "#c86c73", "#6d9b85",
                  "#956daa", "#4f8eb8", "#a08667", "#9da851", "#52a9a0",
                  "#53668a", "#b58fac", "#c48851", "#808995", "#a4baa0"];
+const PALETTE_DARK = ["#4fc3cf", "#8f9be8", "#e6bb6b", "#e08d95", "#83c1a3",
+                      "#b58fd0", "#6fb0dc", "#c2a37f", "#bcc36f", "#71c9c0",
+                      "#8296c4", "#d3aecd", "#dcab72", "#a2abb5", "#bcd6b8"];
 
 const MONTHS = ["January", "February", "March", "April", "May", "June",
                 "July", "August", "September", "October", "November", "December"];
@@ -63,6 +99,9 @@ let briefRequestId = 0; // stale guard for daily brief
 let ALL_MONTHS = [];    // available months from /api/meta
 let ALL_SNAPSHOTS = []; // exact reporting cut-offs from the audit ledger
 let currentUser = null; // authenticated/effective session user
+let inflightRequests = 0; // drives the thin top progress bar
+const THEME_KEY = "mis.theme";
+const UI_STATE_KEY = "mis.ui.state.v1";
 const USER_ROLES = [
   "MIS_SQL_DEVELOPER", "NETWORK_HEAD", "HQ_FULL_ACCESS", "APP_TESTER",
   "REGIONAL_DIRECTOR", "AREA_MANAGER", "BRANCH_DIRECTOR", "BRANCH_MANAGER",
@@ -88,6 +127,103 @@ const personState = { code: null, month: null };
 const briefState = { scope: "advisor", code: null, month: null };
 
 const $ = (id) => document.getElementById(id);
+
+/* -------------------------------------------------------------- theme */
+
+function cssVar(name, fallback) {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
+function currentTheme() {
+  return document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  try { localStorage.setItem(THEME_KEY, theme); } catch { /* private mode */ }
+  const meta = $("meta-theme-color");
+  if (meta) meta.setAttribute("content", theme === "dark" ? "#0b141c" : "#0f2530");
+  const toggle = $("theme-toggle");
+  if (toggle) toggle.setAttribute("aria-pressed", String(theme === "dark"));
+}
+
+function toggleTheme() {
+  applyTheme(currentTheme() === "dark" ? "light" : "dark");
+  // Charts read design tokens at build time, so rebuild the current view.
+  selectPage(state.page);
+}
+
+/* ------------------------------------------------ UI state persistence */
+
+function persistUiState() {
+  try {
+    localStorage.setItem(UI_STATE_KEY, JSON.stringify({
+      from: state.from, to: state.to, dim: state.dim,
+      asOf: state.asOf, attribution: state.attribution,
+      ledger: {
+        q: ledgerState.q, group: ledgerState.group, channel: ledgerState.channel,
+        status: ledgerState.status, sort: ledgerState.sort, dir: ledgerState.dir,
+        page: ledgerState.page, pageSize: ledgerState.pageSize,
+      },
+    }));
+  } catch { /* private mode */ }
+}
+
+function readUiState() {
+  try { return JSON.parse(localStorage.getItem(UI_STATE_KEY) || "null") || {}; }
+  catch { return {}; }
+}
+
+/* ---------------------------------------------------- request progress */
+
+function progressStart() {
+  inflightRequests += 1;
+  const bar = $("progress");
+  if (bar) bar.hidden = false;
+}
+
+function progressStop() {
+  inflightRequests = Math.max(0, inflightRequests - 1);
+  if (inflightRequests > 0) return;
+  const bar = $("progress");
+  if (!bar) return;
+  setTimeout(() => { if (inflightRequests === 0) bar.hidden = true; }, 220);
+}
+
+/* ------------------------------------------------- loading skeletons */
+
+function skeletonKpis(count = 6) {
+  const grid = $("kpis");
+  if (!grid) return;
+  grid.hidden = false;
+  grid.innerHTML = Array.from({ length: count }, () =>
+    '<div class="kpi skeleton"><div class="sk sk-label"></div>' +
+    '<div class="sk sk-value"></div><div class="sk sk-line"></div></div>').join("");
+}
+
+function skeletonTable(container, rows = 6) {
+  if (!container) return;
+  container.innerHTML = `<div class="sk-table">${
+    Array.from({ length: rows }, () => '<div class="sk sk-row"></div>').join("")}</div>`;
+}
+
+function renderError(container, message, retry) {
+  if (!container) return;
+  container.innerHTML = "";
+  const box = document.createElement("div");
+  box.className = "empty";
+  box.textContent = message;
+  if (typeof retry === "function") {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn";
+    button.textContent = "Retry";
+    button.addEventListener("click", retry);
+    box.appendChild(button);
+  }
+  container.appendChild(box);
+}
 
 $("menu-toggle").addEventListener("click", () => {
   const open = $("sidebar").classList.toggle("menu-open");
@@ -125,18 +261,34 @@ function formatValue(value, fmt) {
   }
 }
 
-function showToast(msg, ms = 5000) {
+function showToast(msg, options = 5000) {
   const t = $("toast");
+  let ms = 5000;
+  let type = "info";
+  if (typeof options === "number") ms = options;
+  else if (options && typeof options === "object") {
+    ms = options.ms ?? 5000;
+    type = options.type ?? "info";
+  }
+  t.className = `toast toast-${type}`;
   t.textContent = msg;
   t.hidden = false;
   clearTimeout(t._timer);
   t._timer = setTimeout(() => { t.hidden = true; }, ms);
 }
 
-function showNotice(msg) {
+function showNotice(msg, retry) {
   const n = $("notice");
   n.hidden = !msg;
   n.textContent = msg || "";
+  if (msg && typeof retry === "function") {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn small";
+    button.textContent = "Retry";
+    button.addEventListener("click", retry);
+    n.appendChild(button);
+  }
 }
 
 /* ------------------------------------------------------------------ menu */
@@ -158,9 +310,14 @@ function renderMenu(activeId) {
     const btn = document.createElement("button");
     btn.className = "menu-item" + (item.id === activeId ? " active" : "");
     if (item.id === activeId) btn.setAttribute("aria-current", "page");
+    const icon = document.createElement("span");
+    icon.className = "menu-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.innerHTML = iconMarkup(item.icon);
     const labelSpan = document.createElement("span");
     labelSpan.className = "menu-label";
     labelSpan.textContent = item.label;
+    btn.appendChild(icon);
     btn.appendChild(labelSpan);
     btn.addEventListener("click", () => selectPage(item.id));
     menu.appendChild(btn);
@@ -179,24 +336,56 @@ function syncUrl() {
   if (state.dim) params.set("dim", state.dim);
   if (state.asOf) params.set("as_of", state.asOf);
   params.set("attribution", state.attribution);
+  if (state.page === "ledger") {
+    if (ledgerState.q) params.set("lq", ledgerState.q);
+    if (ledgerState.group) params.set("lg", ledgerState.group);
+    if (ledgerState.channel) params.set("lc", ledgerState.channel);
+    if (ledgerState.status) params.set("ls", ledgerState.status);
+    if (ledgerState.sort !== "sale_date") params.set("lsort", ledgerState.sort);
+    if (ledgerState.dir !== "desc") params.set("ldir", ledgerState.dir);
+    if (ledgerState.page > 1) params.set("lp", String(ledgerState.page));
+    if (ledgerState.pageSize !== 50) params.set("lsize", String(ledgerState.pageSize));
+  }
   history.replaceState(null, "", window.location.pathname + "?" + params.toString());
+  persistUiState();
 }
 
 function restoreUrlState() {
   const params = new URLSearchParams(window.location.search);
+  const persisted = readUiState();
+  // The landing route always opens Overview; only an explicit URL page wins.
   const page = params.get("page");
   if (page && menuItem(page)) state.page = page;
-  state.from = params.get("from") || state.from;
-  state.to = params.get("to") || state.to;
-  state.dim = params.get("dim") || state.dim;
-  state.asOf = params.get("as_of") || state.asOf;
-  state.attribution = params.get("attribution") || state.attribution;
+  state.from = params.get("from") || persisted.from || state.from;
+  state.to = params.get("to") || persisted.to || state.to;
+  state.dim = params.get("dim") || persisted.dim || state.dim;
+  state.asOf = params.get("as_of") || persisted.asOf || state.asOf;
+  const attribution = params.get("attribution") || persisted.attribution;
+  state.attribution = attribution === "current" ? "current" : "historical";
+
+  // Ledger filters are shareable through the URL and restored from the last visit.
+  const stored = persisted.ledger || {};
+  const pick = (key, saved, fallback) => {
+    if (params.has(key)) return params.get(key);
+    return saved === null || saved === undefined ? fallback : saved;
+  };
+  ledgerState.q = pick("lq", stored.q, ledgerState.q);
+  ledgerState.group = pick("lg", stored.group, ledgerState.group);
+  ledgerState.channel = pick("lc", stored.channel, ledgerState.channel);
+  ledgerState.status = pick("ls", stored.status, ledgerState.status);
+  ledgerState.sort = pick("lsort", stored.sort, ledgerState.sort);
+  ledgerState.dir = pick("ldir", stored.dir, ledgerState.dir) === "asc" ? "asc" : "desc";
+  const pageValue = parseInt(pick("lp", stored.page, ledgerState.page), 10);
+  ledgerState.page = Number.isFinite(pageValue) && pageValue > 0 ? pageValue : 1;
+  const sizeValue = parseInt(pick("lsize", stored.pageSize, ledgerState.pageSize), 10);
+  ledgerState.pageSize = [25, 50, 100, 200].includes(sizeValue) ? sizeValue : 50;
 }
 
 function selectPage(id) {
   if (id === "data_quality" && currentUser && !currentUser.can_view_global_quality) {
     id = "overview";
   }
+  const changed = id !== state.page;
   $("sidebar").classList.remove("menu-open");
   $("menu-toggle").setAttribute("aria-expanded", "false");
   state.page = id;
@@ -204,6 +393,11 @@ function selectPage(id) {
   renderMenu(id);
   const item = menuItem(id);
   $("page-title").textContent = item ? item.label : id;
+  document.title = `${item ? item.label : id} · Sales Network MIS`;
+  if (changed) {
+    const main = $("main");
+    if (main) main.focus({ preventScroll: true });
+  }
   closeDrill();
   showNotice(null);
   if (item.type === "ledger") loadLedgerPage();
@@ -221,19 +415,24 @@ function selectPage(id) {
 /* ------------------------------------------------------------------ fetch */
 
 async function fetchJSON(url, opts = {}) {
-  const res = await fetch(url, { credentials: "same-origin", ...opts });
-  let body = null;
-  try { body = await res.json(); } catch { /* non-JSON */ }
-  if (!res.ok) {
-    if (res.status === 401 && !url.endsWith("/api/auth/login")) {
-      showLogin("Your session has expired. Please sign in again.");
+  progressStart();
+  try {
+    const res = await fetch(url, { credentials: "same-origin", ...opts });
+    let body = null;
+    try { body = await res.json(); } catch { /* non-JSON */ }
+    if (!res.ok) {
+      if (res.status === 401 && !url.endsWith("/api/auth/login")) {
+        showLogin("Your session has expired. Please sign in again.");
+      }
+      const detail = body && body.detail ? body.detail : `HTTP ${res.status}`;
+      const err = new Error(detail);
+      err.status = res.status;
+      throw err;
     }
-    const detail = body && body.detail ? body.detail : `HTTP ${res.status}`;
-    const err = new Error(detail);
-    err.status = res.status;
-    throw err;
+    return body;
+  } finally {
+    progressStop();
   }
-  return body;
 }
 
 function showLogin(message = "") {
@@ -344,6 +543,7 @@ async function loadCockpitPage(view) {
   </div>`;
   $("page-title").textContent = titles[view][0];
   $("page-subtitle").textContent = titles[view][1] + scopeNote();
+  skeletonKpis(6);
   try {
     const payloads = await Promise.all([
       fetchJSON(`/api/report/overview?${params}`),
@@ -359,7 +559,8 @@ async function loadCockpitPage(view) {
     renderCockpit(view, overview, payloads[1] || payloads[2]);
   } catch (err) {
     if (requestId !== pageRequestId) return;
-    $("cockpit-content").innerHTML = `<div class="empty">Could not load cockpit: ${err.message}</div>`;
+    renderError($("cockpit-content"), `Could not load cockpit: ${err.message}`,
+      () => loadCockpitPage(view));
   }
 }
 
@@ -405,14 +606,18 @@ async function loadReportPage() {
   if (state.dim) params.set("dim", state.dim);
   if (state.asOf) params.set("as_of", state.asOf);
   params.set("attribution", state.attribution);
+  skeletonKpis(6);
+  skeletonTable($("synthetic-table"), 8);
+  skeletonTable($("analytic-table"), 8);
   try {
     const payload = await fetchJSON(`/api/report/${state.page}?${params}`);
     if (requestId !== pageRequestId) return;
     renderReport(payload);
   } catch (err) {
     if (requestId !== pageRequestId) return;
-    showNotice(`Could not load report "${state.page}": ${err.message}`);
-    $("synthetic-table").innerHTML = "";
+    showNotice(`Could not load report "${state.page}": ${err.message}`,
+      () => loadReportPage());
+    renderError($("synthetic-table"), "Report unavailable.", () => loadReportPage());
     $("analytic-table").innerHTML = "";
     $("insights").innerHTML = "";
   }
@@ -495,10 +700,17 @@ function renderKpis(grid, kpis) {
       const delta = document.createElement("div");
       const improving = typeof kpi.delta === "number" && kpi.delta >= 0;
       delta.className = `kpi-delta ${improving ? "good" : "negative"}`;
+      const arrow = document.createElement("span");
+      arrow.className = "delta-arrow";
+      arrow.setAttribute("aria-hidden", "true");
+      arrow.textContent = improving ? "▲" : "▼";
       const deltaText = formatValue(kpi.delta, kpi.delta_fmt || kpi.fmt);
       const pctText = kpi.delta_pct === null || kpi.delta_pct === undefined
         ? "" : ` (${kpi.delta_pct >= 0 ? "+" : ""}${Number(kpi.delta_pct).toFixed(2)}%)`;
-      delta.textContent = `${kpi.delta_label || "vs previous period"}: ${deltaText}${pctText}`;
+      const text = document.createElement("span");
+      text.textContent = `${kpi.delta_label || "vs previous period"}: ${deltaText}${pctText}`;
+      delta.appendChild(arrow);
+      delta.appendChild(text);
       card.appendChild(delta);
     }
     if (kpi.target !== null && kpi.target !== undefined) {
@@ -506,6 +718,18 @@ function renderKpis(grid, kpis) {
       target.className = "kpi-target";
       target.textContent = `Target: ${formatValue(kpi.target, kpi.target_fmt || kpi.fmt)}`;
       card.appendChild(target);
+      if (typeof kpi.value === "number" && typeof kpi.target === "number" && kpi.target) {
+        const ratio = Math.max(0, (kpi.value / kpi.target) * 100);
+        const bar = document.createElement("div");
+        bar.className = "kpi-bar";
+        bar.setAttribute("role", "img");
+        bar.setAttribute("aria-label", `${ratio.toFixed(1)}% of target`);
+        bar.title = `${ratio.toFixed(1)}% of target`;
+        const fill = document.createElement("span");
+        fill.style.width = `${Math.min(ratio, 100).toFixed(1)}%`;
+        bar.appendChild(fill);
+        card.appendChild(bar);
+      }
     }
     grid.appendChild(card);
   }
@@ -661,37 +885,114 @@ function downloadAllChartsPDF() {
   pdf.save(`${state.page}_charts.pdf`);
 }
 
+function chartPalette() {
+  return currentTheme() === "dark" ? PALETTE_DARK : PALETTE;
+}
+
+function hexToRgba(hex, alpha) {
+  const raw = String(hex).replace("#", "");
+  const full = raw.length === 3 ? raw.split("").map((c) => c + c).join("") : raw;
+  const n = parseInt(full, 16);
+  if (!Number.isFinite(n)) return hex;
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
+
+function areaFill(color) {
+  return (context) => {
+    const { ctx, chartArea } = context.chart;
+    if (!chartArea) return hexToRgba(color, 0.18);
+    const gradient = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
+    gradient.addColorStop(0, hexToRgba(color, 0.30));
+    gradient.addColorStop(1, hexToRgba(color, 0.01));
+    return gradient;
+  };
+}
+
+function formatChartValue(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return String(value ?? "");
+  if (Math.abs(n) >= 1000) {
+    return new Intl.NumberFormat("en-IE", { notation: "compact", maximumFractionDigits: 1 }).format(n);
+  }
+  return Number.isInteger(n) ? fmtInt.format(n) : n.toFixed(2);
+}
+
+// Draws a total in the middle of a doughnut (registered once, opt-in per chart).
+let chartPluginsReady = false;
+const centerTextPlugin = {
+  id: "centerText",
+  afterDraw(chart) {
+    const cfg = (chart.options.plugins || {}).centerText;
+    if (!cfg || !cfg.text || !chart.chartArea) return;
+    const { ctx, chartArea } = chart;
+    const x = (chartArea.left + chartArea.right) / 2;
+    const y = (chartArea.top + chartArea.bottom) / 2;
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = cssVar("--text", "#17252f");
+    const size = Math.min(22, Math.max(14, chartArea.height * 0.14));
+    ctx.font = `700 ${size}px ${cssVar("--font-sans", "sans-serif")}`;
+    ctx.fillText(cfg.text, x, y - (cfg.sub ? 7 : 0));
+    if (cfg.sub) {
+      ctx.fillStyle = cssVar("--muted", "#61788a");
+      ctx.font = `600 10px ${cssVar("--font-sans", "sans-serif")}`;
+      ctx.fillText(cfg.sub, x, y + 13);
+    }
+    ctx.restore();
+  },
+};
+
 function makeChart(canvas, spec) {
   if (!hasChartLib()) return null;
+  if (!chartPluginsReady) {
+    Chart.register(centerTextPlugin);
+    chartPluginsReady = true;
+  }
   const labels = spec.labels || [];
   const seriesList = spec.series || [];
-  const colors = seriesList.map((_, i) => PALETTE[i % PALETTE.length]);
+  const palette = chartPalette();
+  const colors = seriesList.map((_, i) => palette[i % palette.length]);
+  const gridColor = cssVar("--chart-grid", "#e9eef3");
+  const tickColor = cssVar("--chart-tick", "#77899a");
+  const legendColor = cssVar("--chart-legend", "#61788a");
+  const isDark = currentTheme() === "dark";
   let type = spec.type;
   const isHBar = type === "hbar";
   if (isHBar) type = "bar";
 
   let datasets;
+  let centerText = null;
   if (type === "doughnut") {
+    const data = seriesList[0] ? seriesList[0].data : [];
+    const total = data.reduce((sum, v) => sum + (Number.isFinite(Number(v)) ? Number(v) : 0), 0);
+    if (data.length) centerText = { text: formatChartValue(total), sub: "total" };
     datasets = [{
-      data: seriesList[0] ? seriesList[0].data : [],
-      backgroundColor: labels.map((_, i) => PALETTE[i % PALETTE.length]),
+      data,
+      backgroundColor: labels.map((_, i) => palette[i % palette.length]),
+      hoverBackgroundColor: labels.map((_, i) => palette[i % palette.length]),
       borderWidth: 3,
-      borderColor: "#ffffff",
-      hoverOffset: 5,
+      borderColor: cssVar("--chart-doughnut-border", "#ffffff"),
+      hoverOffset: 6,
     }];
   } else {
     datasets = seriesList.map((s, i) => ({
       label: s.name,
       data: s.data,
       borderColor: colors[i],
-      backgroundColor: type === "line" ? colors[i] + "16" : colors[i] + "dd",
-      borderRadius: type === "bar" ? 4 : 0,
+      backgroundColor: type === "line" ? areaFill(colors[i]) : hexToRgba(colors[i], isDark ? 0.62 : 0.82),
+      hoverBackgroundColor: colors[i],
+      borderRadius: type === "bar" ? 5 : 0,
+      borderSkipped: false,
       maxBarThickness: 36,
-      borderWidth: type === "line" ? 2 : 1,
-      fill: false,
-      tension: 0.3,
+      borderWidth: type === "line" ? 2.4 : 1,
+      fill: type === "line",
+      tension: 0.32,
       pointRadius: type === "line" ? 2 : 0,
       pointHoverRadius: 5,
+      pointBackgroundColor: colors[i],
+      pointBorderColor: cssVar("--panel", "#ffffff"),
+      pointBorderWidth: 1.5,
     }));
   }
 
@@ -701,35 +1002,60 @@ function makeChart(canvas, spec) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      cutout: type === "doughnut" ? "72%" : undefined,
-      animation: { duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 350 },
+      cutout: type === "doughnut" ? "68%" : undefined,
+      animation: { duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 380 },
       indexAxis: isHBar ? "y" : "x",
+      interaction: { mode: type === "doughnut" ? "nearest" : "index", intersect: false },
       plugins: {
+        centerText,
         legend: {
           display: datasets.length > 1 || type === "doughnut",
           position: "bottom",
-          labels: { boxWidth: 8, boxHeight: 8, usePointStyle: true, padding: 16,
-                    color: "#64748b", font: { size: 11 } },
+          labels: { boxWidth: 8, boxHeight: 8, usePointStyle: true, pointStyle: "circle",
+                    padding: 16, color: legendColor, font: { size: 11 } },
+        },
+        tooltip: {
+          backgroundColor: isDark ? "#04141b" : "#17252f",
+          titleColor: "#ffffff",
+          bodyColor: isDark ? "#dbe8ef" : "#d6e2ea",
+          padding: 11,
+          cornerRadius: 8,
+          boxPadding: 4,
+          usePointStyle: true,
+          callbacks: {
+            label: (ctx) => {
+              const value = typeof ctx.parsed === "number"
+                ? ctx.parsed : (ctx.parsed ? ctx.parsed.y : null);
+              const prefix = ctx.dataset.label ? `${ctx.dataset.label}: ` : "";
+              return `${prefix}${formatChartValue(value)}`;
+            },
+          },
         },
       },
       scales: type === "doughnut" ? {} : (isHBar ? {
         x: {
           beginAtZero: true,
-          ticks: { font: { size: 10 }, callback: compactChartNumber },
-          grid: { display: false },
+          ticks: { font: { size: 10 }, color: tickColor, callback: compactChartNumber },
+          grid: { color: gridColor, drawTicks: false },
+          border: { display: false },
         },
         y: {
           type: "category",
-          ticks: { autoSkip: false, font: { size: 10 } },
+          ticks: { autoSkip: false, font: { size: 10.5 }, color: tickColor },
           grid: { display: false },
+          border: { display: false },
         },
       } : {
-        x: { ticks: { maxRotation: 35, font: { size: 10 } }, grid: { display: false }, border: { display: false } },
+        x: {
+          ticks: { maxRotation: 35, font: { size: 10.5 }, color: tickColor },
+          grid: { display: false },
+          border: { display: false },
+        },
         y: {
           beginAtZero: true,
           border: { display: false },
-          grid: { color: "#edf1f4" },
-          ticks: { font: { size: 10 }, callback: compactChartNumber },
+          grid: { color: gridColor, drawTicks: false },
+          ticks: { font: { size: 10.5 }, color: tickColor, callback: compactChartNumber },
         },
       }),
     },
@@ -866,7 +1192,9 @@ function renderTable(container, columns, rows, tableId, drill) {
     }
     row.forEach((v, i) => {
       const td = document.createElement("td");
-      td.className = columns[i].fmt === "str" ? "" : "num";
+      const numeric = columns[i].fmt !== "str";
+      td.className = numeric ? "num" : "";
+      if (numeric && typeof v === "number" && v < 0) td.className += " neg";
       td.textContent = formatValue(v, columns[i].fmt);
       tr.appendChild(td);
     });
@@ -981,6 +1309,8 @@ async function loadPerformancePage(dim = "branch") {
     <div id="performance-table" class="table-wrap"></div></section>`;
   $("performance-dim").value = dim;
   $("performance-dim").onchange = () => loadPerformancePage($("performance-dim").value);
+  skeletonKpis(6);
+  skeletonTable($("performance-table"), 8);
   try {
     const payload = await fetchJSON(`/api/performance?${temporalParams({ dim })}`);
     if (requestId !== pageRequestId) return;
@@ -1015,7 +1345,8 @@ async function loadPerformancePage(dim = "branch") {
     renderTable($("performance-table"), payload.columns, payload.rows, `performance:${dim}`);
   } catch (err) {
     if (requestId !== pageRequestId) return;
-    showNotice(`Could not load point-in-time performance: ${err.message}`);
+    showNotice(`Could not load point-in-time performance: ${err.message}`,
+      () => loadPerformancePage(dim));
   }
 }
 
@@ -1189,6 +1520,10 @@ async function loadLedgerPage() {
   }
 }
 
+function ledgerHasFilters() {
+  return Boolean(ledgerState.q || ledgerState.group || ledgerState.channel || ledgerState.status);
+}
+
 function fillSelect(sel, values, current) {
   sel.innerHTML = "";
   const none = document.createElement("option");
@@ -1222,6 +1557,7 @@ function renderLedger(payload) {
         <a class="btn small primary" id="ledger-export-xlsx" href="#">XLSX</a>
         <a class="btn small primary" id="ledger-export-xlsb" href="#">XLSB</a>
       </span>
+      ${ledgerHasFilters() ? '<button class="btn small" id="ledger-clear" type="button" title="Reset search and filters">Clear filters</button>' : ''}
     </div>
     <div class="card">
       <div class="table-wrap ledger-table" id="ledger-table"></div>
@@ -1252,6 +1588,25 @@ function renderLedger(payload) {
       fetchLedgerPage().catch((err) => showNotice(`Search failed: ${err.message}`));
     }, 300);
   });
+  q.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && ledgerState.q) {
+      q.value = "";
+      ledgerState.q = "";
+      ledgerState.page = 1;
+      loadLedgerPage();
+    }
+  });
+  const clear = $("ledger-clear");
+  if (clear) {
+    clear.onclick = () => {
+      ledgerState.q = "";
+      ledgerState.group = "";
+      ledgerState.channel = "";
+      ledgerState.status = "";
+      ledgerState.page = 1;
+      loadLedgerPage();
+    };
+  }
   $("ledger-group").onchange = () => { ledgerState.group = $("ledger-group").value; ledgerState.page = 1; fetchLedgerPage(); };
   $("ledger-channel").onchange = () => { ledgerState.channel = $("ledger-channel").value; ledgerState.page = 1; fetchLedgerPage(); };
   $("ledger-status").onchange = () => { ledgerState.status = $("ledger-status").value; ledgerState.page = 1; fetchLedgerPage(); };
@@ -1288,6 +1643,8 @@ async function fetchLedgerPage() {
 }
 
 function renderLedgerTable(payload) {
+  // keep the URL shareable and the last-used filters persisted
+  if (state.page === "ledger") syncUrl();
   // export links always reflect the current filters
   const x = $("ledger-export-xlsx"), b = $("ledger-export-xlsb");
   if (x && b) {
@@ -1354,7 +1711,9 @@ function renderLedgerTable(payload) {
     const tr = document.createElement("tr");
     row.forEach((v, i) => {
       const td = document.createElement("td");
-      td.className = columns[i].fmt === "str" ? "" : "num";
+      const numeric = columns[i].fmt !== "str";
+      td.className = numeric ? "num" : "";
+      if (numeric && typeof v === "number" && v < 0) td.className += " neg";
       td.textContent = formatValue(v, columns[i].fmt);
       tr.appendChild(td);
     });
@@ -1548,6 +1907,7 @@ async function loadPersonalPage(scope) {
       </label>
       <label>Month <select id="entity-month"></select></label>
     </div>
+    <div class="card" id="personal-table-placeholder"></div>
     <div id="personal-table-card" class="card" hidden>
       <div class="card-head">
         <div>
@@ -1595,16 +1955,20 @@ async function loadPersonalPage(scope) {
     if (items.length === 1) {
       sel.title = `Your role (${currentUser.role_label}) restricts this picker`;
     }
+    skeletonTable($("personal-table-placeholder"), 6);
     if (personState.code) await loadCumulative(scope);
   } catch (err) {
     if (requestId !== pageRequestId) return;
-    showNotice(`Could not load ${label}s: ${err.message}`);
+    const placeholder = $("personal-table-placeholder");
+    if (placeholder) placeholder.hidden = true;
+    showNotice(`Could not load ${label}s: ${err.message}`, () => loadPersonalPage(scope));
   }
 }
 
 async function loadCumulative(scope) {
   const pageId = pageRequestId;
   const requestId = ++cumulativeRequestId;
+  skeletonKpis(6);
   try {
     const payload = await fetchJSON(
       `/api/people/cumulative?scope=${scope}&code=${encodeURIComponent(personState.code)}`
@@ -1614,11 +1978,15 @@ async function loadCumulative(scope) {
     renderCumulative(payload);
   } catch (err) {
     if (requestId !== cumulativeRequestId || pageId !== pageRequestId) return;
+    const placeholder = $("personal-table-placeholder");
+    if (placeholder) placeholder.hidden = true;
     showNotice(`Could not load the cumulative view: ${err.message}`);
   }
 }
 
 function renderCumulative(payload) {
+  const placeholder = $("personal-table-placeholder");
+  if (placeholder) placeholder.hidden = true;
   renderKpis($("kpis"), payload.kpis || []);
   renderCharts(payload.charts || []);
   const card = $("personal-table-card");
@@ -1700,10 +2068,10 @@ async function initSession() {
       });
       currentUser = res.user;
       renderUserBadge();
-      showToast(`Signed in as ${currentUser.name} (${currentUser.role_label}). Scope updated.`);
+      showToast(`Signed in as ${currentUser.name} (${currentUser.role_label}). Scope updated.`, { type: "success" });
       selectPage(state.page); // re-scope pickers on the current page
     } catch (err) {
-      showToast(`Switch failed: ${err.message}`);
+      showToast(`Switch failed: ${err.message}`, { type: "error" });
       sel.value = previousCode;
     }
   };
@@ -1911,11 +2279,11 @@ async function refreshCache() {
   btn.textContent = "Reloading…";
   try {
     await fetchJSON("/api/cache/refresh", { method: "POST" });
-    showToast("Tables reloaded from Netezza. Derived caches cleared.");
+    showToast("Tables reloaded from Netezza. Derived caches cleared.", { type: "success" });
     await initMeta();
     selectPage(state.page);
   } catch (err) {
-    showToast(`Refresh failed: ${err.message}`);
+    showToast(`Refresh failed: ${err.message}`, { type: "error" });
   } finally {
     btn.disabled = false;
     btn.textContent = "Reload data";
@@ -2086,12 +2454,14 @@ async function initMeta() {
 }
 
 (async function main() {
+  applyTheme(currentTheme());
   wireDemoAccounts();
   $("login-form").addEventListener("submit", submitLogin);
   $("logout-button").addEventListener("click", signOut);
   $("cache-refresh").addEventListener("click", refreshCache);
   $("drill-close").addEventListener("click", closeDrill);
   $("btn-charts-pdf").addEventListener("click", downloadAllChartsPDF);
+  $("theme-toggle").addEventListener("click", toggleTheme);
   restoreUrlState();
   try {
     await initSession();
