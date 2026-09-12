@@ -421,6 +421,29 @@ table.grid tr.drillable:hover td { background: #eaf1fb; }
 
 .empty { padding: 26px; text-align: center; color: var(--muted); }
 
+/* ---------------- executive cockpit pages ---------------- */
+.cockpit-page { display: grid; gap: 16px; }
+.cockpit-header { display: flex; justify-content: space-between; align-items: flex-end; gap: 18px; }
+.cockpit-header h2 { margin: 0; font-size: 18px; }
+.cockpit-header p { margin: 5px 0 0; color: var(--muted); }
+.cockpit-context { color: var(--accent); font-size: 12px; font-weight: 650; white-space: nowrap; }
+.cockpit-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.cockpit-summary, .cockpit-actions { margin: 0; }
+.cockpit-summary .card-head { align-items: flex-start; }
+.cockpit-action-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 16px 20px 20px; }
+.cockpit-action { display: grid; gap: 6px; min-height: 92px; padding: 13px 14px; border-left: 3px solid #aab5c0; background: #f5f8fa; }
+.cockpit-action.good { border-left-color: var(--good); background: #edf6f2; }
+.cockpit-action.warning { border-left-color: var(--warn); background: #faf6ec; }
+.cockpit-action.critical { border-left-color: var(--bad); background: #fbf0f1; }
+.cockpit-action span { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.cockpit-action b { color: var(--accent); font-size: 11px; }
+
+@media screen and (max-width: 700px) {
+  .cockpit-header { display: block; }
+  .cockpit-context { display: inline-block; margin-top: 10px; }
+  .cockpit-action-list { grid-template-columns: 1fr; }
+}
+
 /* ---------------- sales ledger ---------------- */
 .ledger-toolbar {
   display: flex;

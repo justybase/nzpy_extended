@@ -8,6 +8,9 @@
 const MENU = [
   { sep: "Reports" },
   { id: "overview", label: "Overview", type: "report" },
+  { id: "network_cockpit", label: "Network cockpit", type: "cockpit", cockpit: "overview" },
+  { id: "pipeline_pacing", label: "Pipeline & pacing", type: "cockpit", cockpit: "pipeline" },
+  { id: "branch_network", label: "Branch network", type: "cockpit", cockpit: "branches" },
   { id: "daily_performance", label: "Daily performance", type: "performance" },
   { id: "loans", label: "Loans", type: "report" },
   { id: "investments", label: "Investments", type: "report" },
@@ -204,6 +207,7 @@ function selectPage(id) {
   closeDrill();
   showNotice(null);
   if (item.type === "ledger") loadLedgerPage();
+  else if (item.type === "cockpit") loadCockpitPage(item.cockpit);
   else if (item.type === "advisors") loadAdvisorsPage();
   else if (item.type === "performance") loadPerformancePage();
   else if (item.type === "hierarchy") loadHierarchyPage();
@@ -313,6 +317,80 @@ function setLayout({ kpis = false, charts: showCharts = false, synthetic = false
   if (!insights) $("insights").innerHTML = "";
   // 'charts' is the global array — the parameter is renamed to avoid shadowing
   if (!showCharts) { for (const c of charts) c.destroy(); charts.length = 0; }
+}
+
+/* --------------------------------------------------------- cockpit pages */
+
+async function loadCockpitPage(view) {
+  setLayout({ kpis: true, charts: true, custom: true, fromTo: true,
+              globalPdf: true, insights: true });
+  const requestId = ++pageRequestId;
+  const page = $("custom-page");
+  const titles = {
+    overview: ["Network cockpit", "Executive view of sales performance, plan delivery and network capacity."],
+    pipeline: ["Pipeline & pacing", "Manage conversion velocity, business-day pacing and the actions behind the forecast."],
+    branches: ["Branch network", "Compare branch productivity, regional coverage and target attainment."],
+  };
+  const params = new URLSearchParams({ from: state.from, to: state.to });
+  if (state.asOf) params.set("as_of", state.asOf);
+  params.set("attribution", state.attribution);
+  page.innerHTML = `<div class="cockpit-page" data-cockpit="${view}">
+    <div class="cockpit-header">
+      <div><div class="page-eyebrow">Management information system</div>
+        <h2>${titles[view][0]}</h2><p>${titles[view][1]}</p></div>
+      <span class="cockpit-context">${monthLabel(state.from)} – ${monthLabel(state.to)}</span>
+    </div>
+    <div class="cockpit-grid" id="cockpit-content"><div class="empty">Loading cockpit…</div></div>
+  </div>`;
+  $("page-title").textContent = titles[view][0];
+  $("page-subtitle").textContent = titles[view][1] + scopeNote();
+  try {
+    const payloads = await Promise.all([
+      fetchJSON(`/api/report/overview?${params}`),
+      view === "pipeline" ? fetchJSON(`/api/report/loans?${params}`) : null,
+      view === "branches" ? fetchJSON(`/api/report/overview?${params}&dim=branch`) : null,
+    ]);
+    if (requestId !== pageRequestId) return;
+    const overview = payloads[0];
+    renderKpis($("kpis"), overview.kpis || []);
+    renderInsights(overview.insights || []);
+    renderCharts(view === "overview" ? overview.charts || [] :
+      (payloads[1] || payloads[2] || overview).charts || []);
+    renderCockpit(view, overview, payloads[1] || payloads[2]);
+  } catch (err) {
+    if (requestId !== pageRequestId) return;
+    $("cockpit-content").innerHTML = `<div class="empty">Could not load cockpit: ${err.message}</div>`;
+  }
+}
+
+function renderCockpit(view, overview, secondary) {
+  const content = $("cockpit-content");
+  const synthetic = overview.synthetic || { columns: [], rows: [] };
+  const rows = synthetic.rows || [];
+  const labels = synthetic.columns || [];
+  const table = rows.slice(0, 8).map((row) => `<tr>${row.slice(1).map((cell) =>
+    `<td>${formatValue(cell, labels[1]?.fmt || "str")}</td>`).join("")}</tr>`).join("");
+  const headers = labels.slice(1).map((column) => `<th>${column.label}</th>`).join("");
+  const title = view === "pipeline" ? "Pipeline watchlist" :
+    view === "branches" ? "Branch performance ranking" : "Network performance snapshot";
+  const copy = view === "pipeline"
+    ? "Use the loan report as the operational proxy for current lending velocity."
+    : view === "branches"
+      ? "Authorized branch results from the same report contract used by the standard overview."
+      : "Decision-ready indicators from the live MIS report service.";
+  content.innerHTML = `<section class="cockpit-summary card">
+      <div class="card-head"><div><h2>${title}</h2><div class="card-sub">${copy}</div></div>
+        <a class="btn" href="?page=${view === "branches" ? "overview" : view === "pipeline" ? "loans" : "overview"}">Open detailed report</a></div>
+      <div class="table-wrap"><table class="grid"><thead><tr>${headers}</tr></thead><tbody>${table ||
+        `<tr><td colspan="${Math.max(labels.length - 1, 1)}" class="empty">No rows in the selected scope.</td></tr>`}</tbody></table></div>
+    </section>
+    <section class="cockpit-actions card"><div class="card-head"><div><h2>Manager actions</h2>
+      <div class="card-sub">Insights are generated by the report service and respect the signed-in scope.</div></div></div>
+      <div class="cockpit-action-list">${(overview.insights || []).slice(0, 3).map((item) =>
+        `<article class="cockpit-action ${item.severity || "neutral"}"><strong>${item.title}</strong><span>${item.detail}</span>${item.action ? `<b>${item.action}</b>` : ""}</article>`).join("") ||
+        `<div class="empty">No actions were returned for this period.</div>`}</div>
+    </section>`;
+  void secondary;
 }
 
 /* ------------------------------------------------------------- reports */
