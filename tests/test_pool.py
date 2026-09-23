@@ -298,7 +298,7 @@ async def test_pool_max_lifetime_recycles_connection():
 @pytest.mark.asyncio
 @pytest.mark.timeout(30)
 async def test_pool_release_rollback_open_transaction():
-    TABLE = "test_pool_rollback_tx"
+    TABLE = f"test_pool_rollback_tx_{uuid.uuid4().hex}"
     pool = NzPool(max_size=2, min_size=0, **POOL_KWARGS)
     try:
         c0 = await pool.acquire()
@@ -322,7 +322,7 @@ async def test_pool_release_rollback_open_transaction():
         await pool.release(c2)
     finally:
         c_clean = await pool.acquire()
-        await c_clean.cursor().execute(f"DROP TABLE {TABLE}")
+        await c_clean.cursor().execute(f"DROP TABLE {TABLE} IF EXISTS")
         await pool.release(c_clean)
         await pool.close_all()
 

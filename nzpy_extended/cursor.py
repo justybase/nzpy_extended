@@ -233,10 +233,10 @@ class Cursor:
                         (self.ps is not None and len(self.ps.get('row_desc', [])) > 0)
                     )
                     self.generator = generator
-                    return [list(r) for r in rows]
+                    return rows
                 elif state == "READY_FOR_QUERY":
                     self.generator = None
-                    return [list(r) for r in rows]
+                    return rows
                 elif state == "ERROR":
                     err = self._c.error if self._c is not None else None
                     if self._c is not None:
@@ -244,9 +244,9 @@ class Cursor:
                     self.generator = None
                     if err is not None:
                         raise ProgrammingError(err)
-                    return [list(r) for r in rows]
+                    return rows
             self.generator = None
-            return [list(r) for r in rows]
+            return rows
         except TypeError:
             raise ProgrammingError("attempting to use unexecuted cursor")
 
@@ -287,7 +287,7 @@ class Cursor:
         else:
             row = await self._anext_internal()
         self._rownumber += 1
-        return list(row)
+        return row
 
     async def _anext_internal(self) -> Any:
         try:

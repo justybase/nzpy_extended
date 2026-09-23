@@ -14,6 +14,11 @@ _OPTIONAL_RELATIONS = (
     "JUST_DATA.ADMIN.CUSTOMERADDRESS",
     "JUST_DATA.ADMIN.CUSTOMERDATA",
 )
+_VOLATILE_SCHEDULER_SNAPSHOTS = (
+    "SYSTEM.ADMIN._V_SCHED_SN_LATEST",
+    "SYSTEM.ADMIN._V_SCHED_GRA_LATEST",
+    "SYSTEM.ADMIN._V_SCHED_SN_EXT_LATEST",
+)
 
 
 def _skip_missing_fixture_relations(sql: str) -> None:
@@ -21,6 +26,15 @@ def _skip_missing_fixture_relations(sql: str) -> None:
     for relation in _OPTIONAL_RELATIONS:
         if relation in sql_upper:
             pytest.skip(f"Optional fixture relation is unavailable: {relation}")
+
+
+def _skip_volatile_scheduler_snapshots(sql: str) -> None:
+    sql_upper = sql.upper()
+    for relation in _VOLATILE_SCHEDULER_SNAPSHOTS:
+        if relation in sql_upper:
+            pytest.skip(
+                "Scheduler latest views change between the independent driver reads"
+            )
 
 
 def _get_shared_reference():
@@ -42,6 +56,7 @@ def _close_reference_driver():
 @pytest.mark.timeout(600)  # 10 min timeout per query
 async def test_node_query_matches_reference_driver(sql):
     _skip_missing_fixture_relations(sql)
+    _skip_volatile_scheduler_snapshots(sql)
     reference_con = _get_shared_reference()
     nzpy_con = await _nzpy_conn()
     nz_cur = nzpy_con.cursor()
