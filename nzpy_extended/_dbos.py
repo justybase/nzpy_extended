@@ -114,7 +114,7 @@ class DbosParser:
         self,
         cursor: Cursor,
         tupdesc: DbosTupleDesc,
-        data: bytes,
+        data: bytes | memoryview,
     ) -> None:
         """Parse a single DBOS *Y* payload and append the row to
         ``cursor.cached_rows``.
@@ -150,7 +150,7 @@ class DbosParser:
         cursor: Cursor,
         tupdesc: DbosTupleDesc,
         mv: memoryview,
-        data: bytes,
+        data: bytes | memoryview,
     ) -> None:
         """Pure-Python DBOS row decoder."""
         import struct

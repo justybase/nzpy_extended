@@ -4,6 +4,20 @@ All notable changes to `nzpy_extended` are documented in this file.
 
 ## Unreleased
 
+## 0.6.0 - 2026-09-23
+
+### Added
+
+- Add catalog-backed DDL generation for tables, views, and stored procedures,
+  including single-object helpers, filtered lists, and database/schema exports.
+- Add a runnable DDL export example with per-object error reporting and SQL file
+  output.
+
+### Performance
+
+- Preserve DBOS row buffers as `memoryview` objects through cursor fetching to
+  reduce row-copy allocations.
+
 ## 0.5.0 - 2026-09-05
 
 - Propagate commit failures from connection/transaction contexts; begin explicit
