@@ -8,7 +8,14 @@ from typing import Any
 
 import pytest
 
-from nzpy_extended._ddl import build_external_table_ddl, build_synonym_ddl
+from nzpy_extended._ddl import (
+    build_external_table_ddl,
+    build_procedure_ddl,
+    build_synonym_ddl,
+    is_external_layout_zone_count,
+    quote_netezza_ident,
+    reconstruct_external_layout,
+)
 from nzpy_extended._extab import ExternalTableManager
 from nzpy_extended._metadata_api import ConnectionMetadataProvider
 from nzpy_extended.protocol import (
@@ -19,6 +26,11 @@ from nzpy_extended.protocol import (
 from nzpy_extended.utils import i_pack, i_unpack
 
 pytestmark = pytest.mark.unit
+
+
+def test_quote_netezza_ident_delimits_reserved_words() -> None:
+    assert quote_netezza_ident("SELECT") == '"SELECT"'
+    assert quote_netezza_ident("_PRIVATE") == '"_PRIVATE"'
 
 
 def test_build_external_table_ddl_quotes_options_and_columns() -> None:
@@ -40,6 +52,43 @@ def test_build_external_table_ddl_quotes_options_and_columns() -> None:
     assert "FILLRECORD false" in ddl
 
 
+def test_build_external_table_ddl_preserves_compression_and_escapes_controls() -> None:
+    ddl = build_external_table_ddl(
+        "DB", "ADMIN", "EXT", None,
+        [{"name": "C", "full_type": "VARCHAR(10)", "not_null": False}],
+        {"compress": "zstd", "recorddelim": "\r\n", "layout": "BYTES 4",
+         "includezeroseconds": False, "meridiandelim": ".", "maxerrors": 0},
+    )
+    assert "COMPRESS zstd" in ddl
+    assert "RECORDDELIM '\r\n'" in ddl
+    assert "LAYOUT (BYTES 4)" in ddl
+    assert "INCLUDEZEROSECONDS false" in ddl
+    assert "MERIDIANDELIM '.'" in ddl
+    assert "MAXERRORS 0" in ddl
+
+
+def test_reconstruct_external_layout_uses_ordered_catalog_zones() -> None:
+    assert reconstruct_external_layout(4, [
+        {"usetype": "FILLER", "name": "F1", "type": "CHAR(2)", "style": "INTERNAL", "length": "BYTES 2"},
+        {"name": "SELECT", "type": "INT4", "style": "DECIMAL", "length": "BYTES 4", "nullif": "&&2 = ''"},
+        {"name": "DT", "type": "DATE", "style": "YMD", "delimiter": "-", "length": "BYTES 10"},
+        {"name": " DATE FIELD ", "type": "DATE", "style": "YMD", "delimiter": " ", "length": "BYTES 10"},
+    ]) == "FILLER F1 CHAR(2) INTERNAL BYTES 2, \"SELECT\" INT4 DECIMAL BYTES 4 NULLIF &&2 = '', DT DATE YMD '-' BYTES 10, \" DATE FIELD \" DATE YMD ' ' BYTES 10"
+    assert is_external_layout_zone_count("2")
+    assert not is_external_layout_zone_count(0)
+    with pytest.raises(ValueError, match="_V_EXTZONES returned 1"):
+        reconstruct_external_layout(2, [{"type": "INT4", "length": "BYTES 4"}])
+
+
+def test_procedure_comment_uses_full_overload_signature() -> None:
+    ddl = build_procedure_ddl("DB", "ADMIN", {
+        "procedure_name": "P", "procedure_signature": "P(INTEGER)",
+        "arguments": "(p INTEGER)", "returns": "INTEGER",
+        "execute_as_owner": True, "description": "sample", "procedure_source": "BEGIN END;",
+    })
+    assert "COMMENT ON PROCEDURE DB.ADMIN.P(INTEGER) IS 'sample';" in ddl
+
+
 def test_build_external_table_ddl_rejects_missing_columns() -> None:
     with pytest.raises(ValueError, match="has no columns"):
         build_external_table_ddl("DB", "ADMIN", "EMPTY", None, [], {})
@@ -51,7 +100,28 @@ def test_build_synonym_ddl_qualifies_reference_and_escapes_comment() -> None:
     )
 
     assert "CREATE SYNONYM DB.ADMIN.ALIAS FOR OTHER_DB.DATA.TARGET;" in ddl
-    assert "COMMENT ON SYNONYM ALIAS IS 'owner''s alias';" in ddl
+    assert "COMMENT ON SYNONYM DB.ADMIN.ALIAS IS 'owner''s alias';" in ddl
+
+
+def test_synonym_ddl_handles_quoted_dots_and_partial_reference_qualification() -> None:
+    ddl = build_synonym_ddl(
+        "DB", "ADMIN", "ALIAS", '"Data.Schema"."Target.Name"', None,
+        "OTHER_DB", "IGNORED_SCHEMA",
+    )
+    assert 'FOR OTHER_DB."Data.Schema"."Target.Name";' in ddl
+    single_part = build_synonym_ddl(
+        "DB", "ADMIN", "ALIAS", '"Target.Name"', None,
+        "OTHER_DB", "Data.Schema",
+    )
+    assert 'FOR OTHER_DB."Data.Schema"."Target.Name";' in single_part
+    omitted_schema = build_synonym_ddl(
+        "DB", "ADMIN", "ALIAS", "TARGET", None, "OTHER_DB", None
+    )
+    assert "FOR OTHER_DB..TARGET;" in omitted_schema
+    spaced = build_synonym_ddl(
+        "DB", "ADMIN", "ALIAS", '  " Schema Name " . " Target Name "  ', None
+    )
+    assert 'FOR " Schema Name "." Target Name ";' in spaced
 
 
 class _StubMetadata(ConnectionMetadataProvider):

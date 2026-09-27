@@ -36,6 +36,8 @@ from ._ddl import (
     build_synonym_ddl,
     build_table_ddl,
     build_view_ddl,
+    is_external_layout_zone_count,
+    reconstruct_external_layout,
 )
 
 if TYPE_CHECKING:
@@ -1151,6 +1153,21 @@ class ConnectionMetadataProvider:
             }
             for column in columns_rows
         ]
+        catalog_layout = row.get("layout")
+        layout_zones: list[dict[str, Any]] = []
+        if is_external_layout_zone_count(catalog_layout):
+            layout_zones = await self._query_dicts(
+                "SELECT Z.usetype, Z.name, Z.type, Z.style, Z.length, Z.delimiter, "
+                "Z.around, Z.nullif, Z.endian, Z.alignment, Z.modulus "
+                "FROM _v_external E JOIN _v_extzones Z ON E.relid = Z.relid "
+                f"WHERE E.schema = '{_escape_literal(actual_schema)}' "
+                f"AND E.tablename = '{_escape_literal(table_name)}' ORDER BY Z.zoneid"
+            )
+        row["layout"] = reconstruct_external_layout(
+            catalog_layout,
+            layout_zones,
+            [column["name"] for column in columns],
+        )
         db_resolved = database if database is not None else await self.get_current_database()
         return build_external_table_ddl(
             db_resolved or "UNKNOWN",
