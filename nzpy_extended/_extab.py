@@ -182,9 +182,7 @@ class ExternalTableManager:
                 )
                 try:
                     while True:
-                        data = await asyncio.to_thread(
-                            filehandle.read, effectiveBlockSize
-                        )
+                        data = await asyncio.to_thread(filehandle.read, effectiveBlockSize)
                         if not data:
                             break
                         await _send_chunk(data)
