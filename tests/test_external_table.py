@@ -3,6 +3,7 @@ import stat
 import tempfile
 import threading
 import time
+import uuid
 import pytest
 
 from decimal import Decimal
@@ -913,3 +914,24 @@ class TestExternalTableCompressed:
         )
         row_count = (await self.cursor.fetchone())[0]
         assert row_count == 15
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+async def test_load_data_streams_large_generator(con):
+    """Exercise a multi-megabyte generated import with a real Netezza backend."""
+    table = f"PY_LARGE_IMPORT_{uuid.uuid4().hex[:10].upper()}"
+    cursor = con.cursor()
+    row_count = 4096
+    payload = "x" * 512
+    rows = ((index, payload) for index in range(row_count))
+    try:
+        await con.load_data(
+            table,
+            rows,
+            columns=[("id", "INTEGER"), ("text_data", "VARCHAR(512)")],
+        )
+        await cursor.execute(f"SELECT COUNT(*) FROM {table}")
+        assert (await cursor.fetchone())[0] == row_count
+    finally:
+        await cursor.execute(f"DROP TABLE {table} IF EXISTS")

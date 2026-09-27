@@ -283,12 +283,51 @@ for r in results:
 
 ---
 
+### Other catalog helpers
+
+The additional catalog helpers return dictionaries with the catalog columns:
+
+- get_functions(schema=None)
+- get_constraints(schema=None)
+- get_all_distribution_keys(schema=None)
+- get_organize_keys(schema=None)
+- get_object_details(schema=None)
+- search_objects_detailed(name_pattern, schema=None)
+
+Detailed object search uses a case-insensitive substring match and includes
+object descriptions and creation dates.
+
+### Reconstruct and export DDL
+
+Single-object DDL helpers are available for tables, views, stored procedures,
+external tables, and synonyms:
+
+- get_table_ddl(table_name, schema=None)
+- get_view_ddl(view_name, schema=None)
+- get_procedure_ddl(proc_name, schema=None)
+- get_external_table_ddl(table_name, schema=None)
+- get_synonym_ddl(synonym_name, schema=None)
+
+The corresponding batch helpers are get_tables_ddl, get_views_ddl,
+get_procedures_ddl, get_external_tables_ddl, and get_synonyms_ddl.
+export_database_ddl combines selected object types into one SQL script.
+External tables and synonyms are included by default; pass
+include_external_tables=False or include_synonyms=False to omit them. Each
+type accepts a name pattern or an explicit list of names.
+
+For overloaded procedures, pass the full signature, for example
+LOAD_ORDERS(INTEGER, VARCHAR(30)).
+
 ## System Catalog Views Used
 
 The metadata API queries the following Netezza system catalog views internally. Column names may vary by NPS version; the queries in this driver are tested against NPS 11.2.
 
 | View | Used by |
 |---|---|
+| _v_function | get_functions() |
+| _v_relation_keydata | get_constraints(), table DDL |
+| _v_external, _v_extobject | external-table DDL |
+| _v_object_data | detailed object listing/search and comments |
 | `_v_table` | `get_tables()` |
 | `_v_view` | `get_views()` |
 | `_v_relation_column` | `get_columns()` |

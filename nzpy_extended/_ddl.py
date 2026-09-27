@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from typing import TypedDict
+from typing import Any, TypedDict
 
 _SIMPLE_IDENT = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 
@@ -52,6 +52,51 @@ class ProcedureInfo(TypedDict):
     execute_as_owner: bool
     description: str | None
     procedure_source: str
+
+
+class ExternalColumn(TypedDict):
+    """Column descriptor used by the external-table DDL builder."""
+
+    name: str
+    full_type: str
+    not_null: bool
+
+
+EXTERNAL_OPTIONS: tuple[tuple[str, str, str], ...] = (
+    ("DELIMITER", "delim", "string"),
+    ("ENCODING", "encoding", "string"),
+    ("TIMESTYLE", "timestyle", "string"),
+    ("REMOTESOURCE", "remotesource", "string"),
+    ("SKIPROWS", "skiprows", "number"),
+    ("MAXERRORS", "maxerrors", "number"),
+    ("ESCAPECHAR", "escape", "string"),
+    ("DECIMALDELIM", "decimaldelim", "string"),
+    ("LOGDIR", "logdir", "string"),
+    ("QUOTEDVALUE", "quotedvalue", "string"),
+    ("NULLVALUE", "nullvalue", "string"),
+    ("CRINSTRING", "crinstring", "boolean"),
+    ("TRUNCSTRING", "truncstring", "boolean"),
+    ("CTRLCHARS", "ctrlchars", "boolean"),
+    ("IGNOREZERO", "ignorezero", "boolean"),
+    ("TIMEEXTRAZEROS", "timeextrazeros", "boolean"),
+    ("Y2BASE", "y2base", "number"),
+    ("FILLRECORD", "fillrecord", "boolean"),
+    ("COMPRESS", "compress", "boolean"),
+    ("INCLUDEHEADER", "includeheader", "boolean"),
+    ("LFINSTRING", "lfinstring", "boolean"),
+    ("DATESTYLE", "datestyle", "string"),
+    ("DATEDELIM", "datedelim", "string"),
+    ("TIMEDELIM", "timedelim", "string"),
+    ("BOOLSTYLE", "boolstyle", "string"),
+    ("FORMAT", "format", "string"),
+    ("SOCKETBUFSIZE", "socketbufsize", "number"),
+    ("RECORDDELIM", "recorddelim", "string"),
+    ("MAXROWS", "maxrows", "number"),
+    ("REQUIREQUOTES", "requirequotes", "boolean"),
+    ("RECORDLENGTH", "recordlength", "number"),
+    ("DATETIMEDELIM", "datetimedelim", "string"),
+    ("REJECTFILE", "rejectfile", "string"),
+)
 
 
 def quote_netezza_ident(name: str) -> str:
@@ -264,11 +309,99 @@ def build_procedure_ddl(
     return "\n".join(lines)
 
 
+def build_external_table_ddl(
+    database: str,
+    schema: str,
+    table_name: str,
+    data_object: str | None,
+    columns: Sequence[ExternalColumn],
+    options: Mapping[str, Any],
+) -> str:
+    """Build executable CREATE EXTERNAL TABLE DDL from catalog metadata."""
+    if not columns:
+        raise ValueError(f"External table {table_name} has no columns")
+    qualified = ".".join(
+        quote_netezza_ident(part) for part in (database, schema, table_name)
+    )
+    lines = [
+        f"CREATE EXTERNAL TABLE {qualified}",
+        "(",
+        ",\n".join(
+            f"    {quote_netezza_ident(column['name'])} {column['full_type']}"
+            f"{' NOT NULL' if column['not_null'] else ''}"
+            for column in columns
+        ),
+        ")",
+        "USING",
+        "(",
+    ]
+    if data_object is not None:
+        lines.append(f"    DATAOBJECT('{_quote_sql_string(data_object)}')")
+    for keyword, column_name, kind in EXTERNAL_OPTIONS:
+        value = options.get(column_name)
+        if value is None:
+            continue
+        if kind == "string":
+            rendered = f"'{_quote_sql_string(str(value))}'"
+        elif kind == "boolean":
+            rendered = "true" if _as_bool(value) else "false"
+        else:
+            rendered = str(value)
+        lines.append(f"    {keyword} {rendered}")
+    lines.append(");")
+    return "\n".join(lines)
+
+
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value).strip().lower() in {"1", "t", "true", "yes", "y", "on"}
+
+
+def build_synonym_ddl(
+    database: str,
+    schema: str,
+    synonym_name: str,
+    reference: str,
+    description: str | None,
+    reference_database: str | None = None,
+    reference_schema: str | None = None,
+) -> str:
+    """Build CREATE SYNONYM DDL and its optional catalog comment."""
+    if "." in reference:
+        target = ".".join(
+            quote_netezza_ident(part) if part else "" for part in reference.split(".")
+        )
+    elif reference_database and reference_schema:
+        target = ".".join(
+            quote_netezza_ident(part)
+            for part in (reference_database, reference_schema, reference)
+        )
+    else:
+        target = quote_netezza_ident(reference)
+    qualified = ".".join(
+        quote_netezza_ident(part) for part in (database, schema, synonym_name)
+    )
+    lines = [f"CREATE SYNONYM {qualified} FOR {target};"]
+    if description:
+        lines.append(
+            f"COMMENT ON SYNONYM {quote_netezza_ident(synonym_name)} "
+            f"IS '{_quote_sql_string(description)}';"
+        )
+    return "\n".join(lines)
+
+
 __all__ = [
     "DdlColumn",
     "DdlKey",
+    "ExternalColumn",
+    "EXTERNAL_OPTIONS",
     "ProcedureInfo",
+    "build_external_table_ddl",
     "build_procedure_ddl",
+    "build_synonym_ddl",
     "build_table_ddl",
     "build_view_ddl",
     "fix_procedure_returns",

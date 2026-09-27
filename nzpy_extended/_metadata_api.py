@@ -28,8 +28,12 @@ from typing import TYPE_CHECKING, Any
 from ._ddl import (
     DdlColumn,
     DdlKey,
+    EXTERNAL_OPTIONS,
+    ExternalColumn,
     ProcedureInfo,
+    build_external_table_ddl,
     build_procedure_ddl,
+    build_synonym_ddl,
     build_table_ddl,
     build_view_ddl,
 )
@@ -498,6 +502,105 @@ class ConnectionMetadataProvider:
             f"FROM _v_synonym WHERE {where} ORDER BY schema, synonym_name"
         )
 
+    async def get_functions(self, schema: str | None = None) -> list[dict[str, Any]]:
+        """List user-visible SQL functions and their signatures."""
+        conditions = ["function IS NOT NULL"]
+        if schema is not None:
+            normalized_schema = _normalize_simple_identifier(schema)
+            conditions.append(f"schema = '{_escape_literal(normalized_schema)}'")
+        rows = await self._query_dicts(
+            "SELECT schema, function AS function_name, owner, objid, "
+            "functionsignature AS signature, returns, env "
+            "FROM _v_function WHERE " + " AND ".join(conditions) +
+            " ORDER BY schema, function"
+        )
+        for row in rows:
+            environment = _to_opt_str(row.get("env"))
+            row["is_sql_read_launcher"] = bool(
+                environment and "com.ibm.nz.fq.sqlreadlauncher" in environment.lower()
+            )
+        return rows
+
+    async def get_constraints(self, schema: str | None = None) -> list[dict[str, Any]]:
+        """List relation constraints and their referenced columns."""
+        conditions = ["relation IS NOT NULL"]
+        if schema is not None:
+            normalized_schema = _normalize_simple_identifier(schema)
+            conditions.append(f"schema = '{_escape_literal(normalized_schema)}'")
+        return await self._query_dicts(
+            "SELECT schema, relation, constraintname, contype, attname, "
+            "pkdatabase, pkschema, pkrelation, pkattname, updt_type, del_type "
+            "FROM _v_relation_keydata WHERE " + " AND ".join(conditions) +
+            " ORDER BY schema, relation, conseq"
+        )
+
+    async def get_all_distribution_keys(
+        self, schema: str | None = None
+    ) -> list[dict[str, Any]]:
+        """List distribution-key columns for all tables."""
+        conditions = ["tablename IS NOT NULL"]
+        if schema is not None:
+            normalized_schema = _normalize_simple_identifier(schema)
+            conditions.append(f"schema = '{_escape_literal(normalized_schema)}'")
+        return await self._query_dicts(
+            "SELECT schema, tablename AS table_name, attname AS column_name, "
+            "distattnum AS ordinal FROM _v_table_dist_map WHERE " +
+            " AND ".join(conditions) + " ORDER BY schema, tablename, distseqno"
+        )
+
+    async def get_organize_keys(self, schema: str | None = None) -> list[dict[str, Any]]:
+        """List ORGANIZE ON columns for all tables."""
+        conditions = ["tablename IS NOT NULL"]
+        if schema is not None:
+            normalized_schema = _normalize_simple_identifier(schema)
+            conditions.append(f"schema = '{_escape_literal(normalized_schema)}'")
+        return await self._query_dicts(
+            "SELECT schema, tablename AS table_name, attname AS column_name, "
+            "attnum AS ordinal FROM _v_table_organize_column WHERE " +
+            " AND ".join(conditions) + " ORDER BY schema, tablename, orgseqno"
+        )
+
+    async def get_object_details(self, schema: str | None = None) -> list[dict[str, Any]]:
+        """List catalog objects with descriptions and creation dates."""
+        conditions = ["objname IS NOT NULL"]
+        if schema is not None:
+            normalized_schema = _normalize_simple_identifier(schema)
+            conditions.append(f"schema = '{_escape_literal(normalized_schema)}'")
+        conditions.append(
+            "objtype NOT IN ('AGGREGATE','CONSTRAINT','DATABASE','DATATYPE','GROUP',"
+            "'MANAGEMENT INDEX','MANAGEMENT SEQ','MANAGEMENT TABLE','MANAGEMENT VIEW',"
+            "'SCHEDULER RULE','SCHEMA','SYSTEM INDEX','SYSTEM SEQ','SYSTEM TABLE',"
+            "'SYSTEM VIEW','USER')"
+        )
+        return await self._query_dicts(
+            "SELECT schema, objname AS object_name, objtype AS object_type, "
+            "owner, objid, description, createdate AS create_date "
+            "FROM _v_object_data WHERE " + " AND ".join(conditions) +
+            " ORDER BY schema, objtype, objname"
+        )
+
+    async def search_objects_detailed(
+        self, name_pattern: str, schema: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Search all supported catalog object types by substring."""
+        escaped_pattern = _escape_literal(f"%{name_pattern}%")
+        conditions = [f"UPPER(objname) LIKE UPPER('{escaped_pattern}')"]
+        if schema is not None:
+            normalized_schema = _normalize_simple_identifier(schema)
+            conditions.append(f"schema = '{_escape_literal(normalized_schema)}'")
+        conditions.append(
+            "objtype NOT IN ('AGGREGATE','CONSTRAINT','DATABASE','DATATYPE','GROUP',"
+            "'MANAGEMENT INDEX','MANAGEMENT SEQ','MANAGEMENT TABLE','MANAGEMENT VIEW',"
+            "'SCHEDULER RULE','SCHEMA','SYSTEM INDEX','SYSTEM SEQ','SYSTEM TABLE',"
+            "'SYSTEM VIEW','USER')"
+        )
+        return await self._query_dicts(
+            "SELECT schema, objname AS object_name, objtype AS object_type, "
+            "owner, objid, description, createdate AS create_date "
+            "FROM _v_object_data WHERE " + " AND ".join(conditions) +
+            " ORDER BY schema, objtype, objname"
+        )
+
     # ── sessions ────────────────────────────────────────────────────────────
 
     async def get_sessions(self) -> list[dict[str, Any]]:
@@ -942,7 +1045,7 @@ class ConnectionMetadataProvider:
 
         ``proc_name`` accepts either a bare name (``MY_PROC``) or a full
         signature (``MY_PROC(INTEGER, VARCHAR(10))``). Overloaded names
-        resolve to the first matching signature in sorted order.
+        require a full signature.
         """
         qual_schema, qual_proc, schema_quoted, proc_quoted = (
             _split_qualified_details(proc_name)
@@ -973,6 +1076,10 @@ class ConnectionMetadataProvider:
         if not rows:
             where_label = f"{schema}.{proc_upper}" if schema else proc_upper
             raise ValueError(f"Procedure {where_label} not found")
+        if not is_signature and len(rows) > 1:
+            raise ValueError(
+                f"Procedure {proc_upper} has multiple overloads; pass its full signature"
+            )
         row = rows[0]
 
         raw_owner_flag = row.get("executedasowner")
@@ -999,6 +1106,98 @@ class ConnectionMetadataProvider:
             schema_display = catalog_schema
 
         return build_procedure_ddl(db_resolved, schema_display, info)
+
+    async def get_external_table_ddl(
+        self,
+        table_name: str,
+        schema: str | None = None,
+        database: str | None = None,
+    ) -> str:
+        """Build executable CREATE EXTERNAL TABLE DDL for one catalog object."""
+        schema, table_name = _normalize_object_name(table_name, schema)
+        fields = ", ".join(f"E.{column}" for _, column, _ in EXTERNAL_OPTIONS)
+        conditions = [f"E.tablename = '{_escape_literal(table_name)}'"]
+        if schema is not None:
+            conditions.append(f"E.schema = '{_escape_literal(schema)}'")
+        rows = await self._query_dicts(
+            "SELECT E.schema, E.tablename AS table_name, X.extobjname AS data_object, "
+            f"{fields} FROM _v_external E JOIN _v_extobject X ON E.relid = X.objid "
+            "WHERE " + " AND ".join(conditions) + " ORDER BY E.schema, E.tablename"
+        )
+        exact = [row for row in rows if str(row.get("table_name")) == table_name]
+        schemas = {str(row.get("schema")) for row in exact}
+        if len(schemas) > 1:
+            raise ValueError(
+                f"External table {table_name} exists in several schemas; "
+                "pass schema"
+            )
+        if not exact:
+            where_label = f"{schema}.{table_name}" if schema else table_name
+            raise ValueError(f"External table {where_label} not found")
+        row = exact[0]
+        actual_schema = str(row["schema"])
+        columns_rows = await self._query_dicts(
+            "SELECT C.attname AS column_name, C.format_type AS full_type, "
+            "C.attnotnull AS not_null FROM _v_relation_column C "
+            "JOIN _v_external E ON C.objid = E.relid "
+            f"WHERE E.schema = '{_escape_literal(actual_schema)}' "
+            f"AND E.tablename = '{_escape_literal(table_name)}' ORDER BY C.attnum"
+        )
+        columns: list[ExternalColumn] = [
+            {
+                "name": str(column["column_name"]),
+                "full_type": str(column["full_type"]),
+                "not_null": _to_bool(column.get("not_null")),
+            }
+            for column in columns_rows
+        ]
+        db_resolved = database if database is not None else await self.get_current_database()
+        return build_external_table_ddl(
+            db_resolved or "UNKNOWN",
+            actual_schema,
+            table_name,
+            _to_opt_str(row.get("data_object")),
+            columns,
+            row,
+        )
+
+    async def get_synonym_ddl(
+        self,
+        synonym_name: str,
+        schema: str | None = None,
+        database: str | None = None,
+    ) -> str:
+        """Build CREATE SYNONYM DDL and an optional comment."""
+        schema, synonym_name = _normalize_object_name(synonym_name, schema)
+        conditions = [f"synonym_name = '{_escape_literal(synonym_name)}'"]
+        if schema is not None:
+            conditions.append(f"schema = '{_escape_literal(schema)}'")
+        rows = await self._query_dicts(
+            "SELECT schema, synonym_name, refobjname AS referenced_object, "
+            "refdatabase AS ref_database, refschema AS ref_schema, description "
+            "FROM _v_synonym WHERE " + " AND ".join(conditions) +
+            " ORDER BY schema, synonym_name"
+        )
+        exact = [row for row in rows if str(row.get("synonym_name")) == synonym_name]
+        schemas = {str(row.get("schema")) for row in exact}
+        if len(schemas) > 1:
+            raise ValueError(
+                f"Synonym {synonym_name} exists in several schemas; pass schema"
+            )
+        if not exact:
+            where_label = f"{schema}.{synonym_name}" if schema else synonym_name
+            raise ValueError(f"Synonym {where_label} not found")
+        row = exact[0]
+        db_resolved = database if database is not None else await self.get_current_database()
+        return build_synonym_ddl(
+            db_resolved or "UNKNOWN",
+            str(row["schema"]),
+            synonym_name,
+            str(row.get("referenced_object") or ""),
+            _to_opt_str(row.get("description")),
+            _to_opt_str(row.get("ref_database")),
+            _to_opt_str(row.get("ref_schema")),
+        )
 
     # ── list and batch DDL ──────────────────────────────────────────────────
 
@@ -1160,6 +1359,108 @@ class ConnectionMetadataProvider:
                 })
         return results
 
+    async def get_external_tables_ddl(
+        self,
+        schema: str | None = None,
+        table_pattern: str | None = None,
+        tables: Sequence[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Build DDL for external tables, continuing after per-object errors."""
+        targets: list[tuple[str | None, str]] = []
+        if tables is not None:
+            targets = [_normalize_object_name(str(name), schema) for name in tables]
+        else:
+            conditions = ["tablename IS NOT NULL"]
+            if schema is not None:
+                conditions.append(
+                    f"schema = '{_escape_literal(_normalize_simple_identifier(schema))}'"
+                )
+            if table_pattern is not None:
+                conditions.append(f"tablename LIKE '{_escape_literal(table_pattern)}'")
+            rows = await self._query_dicts(
+                "SELECT schema, tablename AS table_name FROM _v_external WHERE "
+                + " AND ".join(conditions)
+                + " ORDER BY schema, tablename"
+            )
+            targets = [(str(row["schema"]), str(row["table_name"])) for row in rows]
+        results: list[dict[str, Any]] = []
+        for target_schema, table_name in targets:
+            try:
+                ddl = await self.get_external_table_ddl(
+                    _quote_identifier(table_name),
+                    _quote_identifier(target_schema) if target_schema else None,
+                )
+                results.append(
+                    {
+                        "schema": target_schema or "UNKNOWN",
+                        "external_table_name": table_name,
+                        "ddl": ddl,
+                        "error": None,
+                    }
+                )
+            except Exception as exc:
+                results.append(
+                    {
+                        "schema": target_schema or "UNKNOWN",
+                        "external_table_name": table_name,
+                        "ddl": "",
+                        "error": str(exc),
+                    }
+                )
+        return results
+
+    async def get_synonyms_ddl(
+        self,
+        schema: str | None = None,
+        synonym_pattern: str | None = None,
+        synonyms: Sequence[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Build DDL for synonyms, continuing after per-object errors."""
+        targets: list[tuple[str | None, str]] = []
+        if synonyms is not None:
+            targets = [_normalize_object_name(str(name), schema) for name in synonyms]
+        else:
+            conditions = ["synonym_name IS NOT NULL"]
+            if schema is not None:
+                conditions.append(
+                    f"schema = '{_escape_literal(_normalize_simple_identifier(schema))}'"
+                )
+            if synonym_pattern is not None:
+                conditions.append(
+                    f"synonym_name LIKE '{_escape_literal(synonym_pattern)}'"
+                )
+            rows = await self._query_dicts(
+                "SELECT schema, synonym_name FROM _v_synonym WHERE "
+                + " AND ".join(conditions)
+                + " ORDER BY schema, synonym_name"
+            )
+            targets = [(str(row["schema"]), str(row["synonym_name"])) for row in rows]
+        results: list[dict[str, Any]] = []
+        for target_schema, synonym_name in targets:
+            try:
+                ddl = await self.get_synonym_ddl(
+                    _quote_identifier(synonym_name),
+                    _quote_identifier(target_schema) if target_schema else None,
+                )
+                results.append(
+                    {
+                        "schema": target_schema or "UNKNOWN",
+                        "synonym_name": synonym_name,
+                        "ddl": ddl,
+                        "error": None,
+                    }
+                )
+            except Exception as exc:
+                results.append(
+                    {
+                        "schema": target_schema or "UNKNOWN",
+                        "synonym_name": synonym_name,
+                        "ddl": "",
+                        "error": str(exc),
+                    }
+                )
+        return results
+
     async def export_database_ddl(
         self,
         schema: str | None = None,
@@ -1173,12 +1474,18 @@ class ConnectionMetadataProvider:
         include_procedures: bool = True,
         output_path: str | Path | None = None,
         database: str | None = None,
+        include_external_tables: bool = True,
+        include_synonyms: bool = True,
+        external_table_pattern: str | None = None,
+        synonym_pattern: str | None = None,
+        external_tables: Sequence[str] | None = None,
+        synonyms: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         """Export DDL for a schema or for the whole current database.
 
         This is the batch counterpart of the single-object getters. It
-        collects tables and optionally views and procedures into one
-        script with header, per-type sections, and a footer summary.
+        collects tables, views, procedures, external tables, and synonyms
+        into one script with header, per-type sections, and a footer summary.
         Individual object failures are recorded and do not abort the run.
         When ``output_path`` is given the script is written to that file.
         """
@@ -1203,6 +1510,10 @@ class ConnectionMetadataProvider:
             included.append("VIEW")
         if include_procedures:
             included.append("PROCEDURE")
+        if include_external_tables:
+            included.append("EXTERNAL TABLE")
+        if include_synonyms:
+            included.append("SYNONYM")
         parts.append(f"-- Object Types: {', '.join(included)}")
         parts.append("-- ============================================")
         parts.append("")
@@ -1264,6 +1575,62 @@ class ConnectionMetadataProvider:
                         object_count += 1
                     else:
                         errors.append(f"Procedure {label}: {item['error']}")
+                        skipped += 1
+
+        if include_external_tables:
+            external_results = await self.get_external_tables_ddl(
+                schema=schema,
+                table_pattern=(
+                    external_table_pattern
+                    if external_table_pattern is not None
+                    else table_pattern
+                ),
+                tables=external_tables,
+            )
+            if external_results:
+                parts.append("-- ----------------------------------------")
+                parts.append(f"-- EXTERNAL TABLES ({len(external_results)})")
+                parts.append("-- ----------------------------------------")
+                parts.append("")
+                for item in external_results:
+                    label = (
+                        f"{db_resolved}.{item['schema']}."
+                        f"{item['external_table_name']}"
+                    )
+                    if item["error"] is None and item["ddl"]:
+                        parts.append(f"-- EXTERNAL TABLE: {label}")
+                        parts.append(str(item["ddl"]))
+                        parts.append("")
+                        object_count += 1
+                    else:
+                        errors.append(
+                            f"External table {label}: {item['error']}"
+                        )
+                        skipped += 1
+
+        if include_synonyms:
+            synonym_results = await self.get_synonyms_ddl(
+                schema=schema,
+                synonym_pattern=synonym_pattern,
+                synonyms=synonyms,
+            )
+            if synonym_results:
+                parts.append("-- ----------------------------------------")
+                parts.append(f"-- SYNONYMS ({len(synonym_results)})")
+                parts.append("-- ----------------------------------------")
+                parts.append("")
+                for item in synonym_results:
+                    label = (
+                        f"{db_resolved}.{item['schema']}."
+                        f"{item['synonym_name']}"
+                    )
+                    if item["error"] is None and item["ddl"]:
+                        parts.append(f"-- SYNONYM: {label}")
+                        parts.append(str(item["ddl"]))
+                        parts.append("")
+                        object_count += 1
+                    else:
+                        errors.append(f"Synonym {label}: {item['error']}")
                         skipped += 1
 
         written_path: str | None = None

@@ -4,6 +4,20 @@ All notable changes to `nzpy_extended` are documented in this file.
 
 ## Unreleased
 
+## 0.7.0 - 2026-09-27
+
+### Added
+
+- Add metadata helpers for functions, constraints, distribution and organize
+  keys, detailed object listings, and detailed object search.
+- Add DDL reconstruction and batch export for external tables and synonyms.
+- Include external tables and synonyms in database DDL exports by default,
+  with options to filter or omit each object type.
+- Split oversized generated external-table import chunks to the server's
+  negotiated block size.
+- Add unit and live-database coverage for DDL reconstruction and external-table
+  transfer chunking.
+
 ## 0.6.0 - 2026-09-23
 
 ### Added
