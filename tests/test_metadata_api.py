@@ -357,19 +357,20 @@ async def test_metadata_ddl_helpers_round_trip_catalog_objects(con):
 
     create_statements = [
         (
-            f"CREATE TABLE {table} (id INTEGER, name VARCHAR(30)) "
-            "DISTRIBUTE ON (id)"
+            f'CREATE TABLE {table} ("SELECT" INTEGER, name VARCHAR(30)) '
+            'DISTRIBUTE ON ("SELECT")'
         ),
-        f"CREATE VIEW {view} AS SELECT id, name FROM {table}",
+        f'CREATE VIEW {view} AS SELECT "SELECT", name FROM {table}',
         (
             f"CREATE OR REPLACE PROCEDURE {procedure}() RETURNS INTEGER "
             "EXECUTE AS OWNER LANGUAGE NZPLSQL AS BEGIN_PROC "
             "BEGIN RETURN 1; END; END_PROC;"
         ),
         f"CREATE SYNONYM {synonym} FOR {table}",
+        f"COMMENT ON SYNONYM {synonym} IS 'DDL round-trip comment'",
         (
-            f"CREATE EXTERNAL TABLE {external}(id INTEGER) USING "
-            f"(DATAOBJECT('/tmp/{external}.txt') REMOTESOURCE 'jdbc')"
+            f"CREATE EXTERNAL TABLE {external}(id INTEGER, label CHAR(10), event_date DATE) USING "
+            f"(DATAOBJECT('/tmp/{external}.txt') FORMAT 'FIXED' RECORDLENGTH 24 RECORDDELIM '\r\n' LAYOUT (BYTES 4, BYTES 10, DATE YMD ' ' BYTES 10))"
         ),
     ]
     drop_statements = [
@@ -382,6 +383,7 @@ async def test_metadata_ddl_helpers_round_trip_catalog_objects(con):
     try:
         for statement in create_statements:
             await cur.execute(statement)
+        await cur.execute(f"COMMENT ON PROCEDURE {procedure}() IS 'DDL round-trip comment'")
 
         table_ddl = await con.meta.get_table_ddl(table, schema=schema)
         view_ddl = await con.meta.get_view_ddl(view, schema=schema)
