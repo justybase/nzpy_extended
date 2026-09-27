@@ -4,6 +4,14 @@ All notable changes to `nzpy_extended` are documented in this file.
 
 ## Unreleased
 
+## 0.7.1 - 2026-09-27
+
+### Fixed
+
+- Keep external-table file reads on the asyncio worker thread and satisfy the
+  regression coverage for that non-blocking path.
+- Use a standards-compatible license declaration for package builds.
+
 ## 0.7.0 - 2026-09-27
 
 ### Added
