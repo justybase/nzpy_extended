@@ -138,23 +138,17 @@ class ExternalTableManager:
 
         async def _send_chunk(data_chunk: bytes) -> None:
             data_len = len(data_chunk)
-            if blockSize < data_len:
-                diff = data_len - blockSize
+            offset = 0
+            while offset < data_len:
+                end = min(offset + effectiveBlockSize, data_len)
+                chunk = data_chunk[offset:end]
                 val = bytearray(
-                    i_pack(EXTAB_SOCK_DATA) + i_pack(blockSize)
+                    i_pack(EXTAB_SOCK_DATA) + i_pack(len(chunk))
                 )
-                val.extend(data_chunk[:blockSize])
+                val.extend(chunk)
                 await conn._write(val)
                 await conn._flush()
-                val = bytearray(i_pack(EXTAB_SOCK_DATA) + i_pack(diff))
-                val.extend(data_chunk[blockSize:])
-                await conn._write(val)
-                await conn._flush()
-            else:
-                val = bytearray(i_pack(EXTAB_SOCK_DATA) + i_pack(data_len))
-                val.extend(data_chunk)
-                await conn._write(val)
-                await conn._flush()
+                offset = end
             conn.log.debug("No. of bytes sent to BE:%s", data_len)
 
         try:
@@ -186,34 +180,16 @@ class ExternalTableManager:
                 conn.log.info(
                     "Successfully opened External file to read:%s", filename
                 )
-                while True:
-                    data = await asyncio.to_thread(filehandle.read, effectiveBlockSize)
-                    if not data:
-                        break
-                    data_len = len(data)
-                    if blockSize < data_len:
-                        diff = data_len - blockSize
-                        val = bytearray(
-                            i_pack(EXTAB_SOCK_DATA) + i_pack(blockSize)
+                try:
+                    while True:
+                        data = await asyncio.to_thread(
+                            filehandle.read, effectiveBlockSize
                         )
-                        val.extend(data[:blockSize])
-                        await conn._write(val)
-                        await conn._flush()
-                        val = bytearray(
-                            i_pack(EXTAB_SOCK_DATA) + i_pack(diff)
-                        )
-                        val.extend(data[blockSize:])
-                        await conn._write(val)
-                        await conn._flush()
-                    else:
-                        val = bytearray(
-                            i_pack(EXTAB_SOCK_DATA) + i_pack(data_len)
-                        )
-                        val.extend(data)
-                        await conn._write(val)
-                        await conn._flush()
-                    conn.log.debug("No. of bytes sent to BE:%s", data_len)
-                await asyncio.to_thread(filehandle.close)
+                        if not data:
+                            break
+                        await _send_chunk(data)
+                finally:
+                    await asyncio.to_thread(filehandle.close)
 
             val = bytearray(i_pack(EXTAB_SOCK_DONE))
             await conn._write(val)
