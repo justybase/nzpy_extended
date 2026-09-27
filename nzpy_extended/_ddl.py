@@ -172,7 +172,9 @@ def reconstruct_external_layout(
     definitions: list[str] = []
     column_index = 0
     for index, row in enumerate(zones, 1):
-        get = lambda key: _layout_text(_layout_catalog_value(row, key))
+        def get(key: str) -> str:
+            return _layout_text(_layout_catalog_value(row, key))
+
         use_type = get("usetype").upper()
         if use_type and use_type not in {"REF", "FILLER"}:
             raise ValueError(
