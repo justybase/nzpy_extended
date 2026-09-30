@@ -102,6 +102,50 @@ class NzBufferedStream:
                 pass
         return bytes(self.view[self.head:self.tail])
 
+    async def read_view(self, n: int) -> memoryview:
+        """Read a payload as a short-lived view, avoiding the final bytes copy.
+
+        A view into the reusable receive buffer is returned when the full payload
+        is already buffered. Fragmented payloads use one owned bytearray whose
+        lifetime is retained by the returned memoryview.
+        """
+        if n < 0:
+            raise InterfaceError("Negative protocol read length")
+        if self.view is None:
+            raise InterfaceError("Stream is closed")
+        if n > 100 * 1024 * 1024:
+            raise ValueError(f"Requested read size {n} exceeds maximum allowed 104857600")
+        if n == 0:
+            return memoryview(b"")
+
+        avail = self.tail - self.head
+        if avail >= n:
+            result_view = self.view[self.head:self.head + n]
+            self.head += n
+            return result_view
+
+        result_buffer = bytearray(n)
+        res_view = memoryview(result_buffer)
+        bytes_read = 0
+        while bytes_read < n:
+            avail = self.tail - self.head
+            if avail > 0:
+                view = self.view
+                if view is None:
+                    raise InterfaceError("Stream is closed")
+                to_copy = min(n - bytes_read, avail)
+                res_view[bytes_read:bytes_read + to_copy] = view[self.head:self.head + to_copy]
+                self.head += to_copy
+                bytes_read += to_copy
+
+            if bytes_read < n:
+                await self._fill_buffer()
+                if self.tail == self.head:
+                    await self._handle_fatal_eof()
+                    raise OperationalError("Unexpected EOF while reading protocol payload")
+
+        return memoryview(result_buffer)
+
     async def read(self, n: int) -> bytes:
         if n < 0:
             raise InterfaceError("Negative protocol read length")

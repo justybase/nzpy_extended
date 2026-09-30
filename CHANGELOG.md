@@ -4,6 +4,13 @@ All notable changes to `nzpy_extended` are documented in this file.
 
 ## Unreleased
 
+## 0.7.3 - 2026-09-30
+
+### Performance
+
+- Pass DBOS payload views directly to the decoders and bound the receive buffer
+  pool's retained memory.
+
 ## 0.7.1 - 2026-09-27
 
 ### Fixed

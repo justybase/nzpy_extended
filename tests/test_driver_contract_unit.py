@@ -58,6 +58,42 @@ def connection_stub():
 
 
 @pytest.mark.asyncio
+async def test_buffered_stream_read_view_reuses_complete_receive_buffer():
+    stream = NzBufferedStream(MagicMock(spec=socket.socket), max_size=8, buffer_size=8)
+    stream.buffer[:6] = b"abcdef"
+    stream.tail = 6
+
+    result = await stream.read_view(4)
+
+    assert isinstance(result, memoryview)
+    assert result.obj is stream.buffer
+    assert bytes(result) == b"abcd"
+    assert await stream.read(2) == b"ef"
+    stream.close()
+
+
+@pytest.mark.asyncio
+async def test_buffered_stream_read_view_handles_fragmented_payload_without_bytes_copy():
+    stream = NzBufferedStream(MagicMock(spec=socket.socket), max_size=8, buffer_size=8)
+    stream.buffer[:2] = b"ab"
+    stream.tail = 2
+
+    async def receive(_sock, view):
+        view[:3] = b"cde"
+        return 3
+
+    stream.loop = MagicMock()
+    stream.loop.sock_recv_into = receive
+
+    result = await stream.read_view(5)
+
+    assert isinstance(result, memoryview)
+    assert result.obj is not stream.buffer
+    assert bytes(result) == b"abcde"
+    stream.close()
+
+
+@pytest.mark.asyncio
 async def test_commit_failure_propagates_and_closes():
     c = connection_stub()
     c.commit.side_effect = nz.OperationalError('commit failed')

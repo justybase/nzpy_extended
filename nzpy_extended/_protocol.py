@@ -485,10 +485,8 @@ class ProtocolHandler:
                 tup_len = i_unpack(inner_header, 4)[0]
                 data = stream.read_view_sync(tup_len)
                 if data is None:
-                    data = await conn._read(tup_len)
-                conn._dbos._process_dbos_payload(
-                    cursor, conn.tupdesc, bytes(data)
-                )
+                    data = await stream.read_view(tup_len)
+                conn._dbos._process_dbos_payload(cursor, conn.tupdesc, data)
 
                 if _cstate._HAVE_C_EXT:
                     assert _cstate._c_ext is not None

@@ -54,3 +54,22 @@ def test_global_pool_thread_safe_reuse() -> None:
     for t in threads:
         t.join()
     assert errors == []
+
+
+def test_pool_caps_cached_buffers_and_reports_retained_bytes() -> None:
+    pool = BufferPool(buffer_size=256, max_cached_buffers=2)
+    buffers = [bytearray(256) for _ in range(3)]
+
+    for buffer in buffers:
+        pool.release(buffer)
+
+    assert pool.cached_count == 2
+    assert pool.cached_bytes == 512
+    assert pool.acquire() is buffers[1]
+    assert pool.acquire() is buffers[0]
+    assert pool.cached_bytes == 0
+
+
+def test_pool_rejects_invalid_capacity() -> None:
+    with pytest.raises(ValueError, match="max_cached_buffers"):
+        BufferPool(max_cached_buffers=-1)
