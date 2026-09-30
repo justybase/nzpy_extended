@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 import struct
+from collections import deque
 from types import SimpleNamespace
 
 import pytest
 
 from nzpy_extended import _cstate
 from nzpy_extended._dbos import DbosParser
+from nzpy_extended.core import Connection
 from nzpy_extended.types import DbosTupleDesc
 from nzpy_extended.protocol import NzTypeInt, NzTypeVarChar
 
@@ -104,3 +107,50 @@ def test_dbos_batch_decodes_varying_offsets_and_leaves_partial_frame() -> None:
 
     assert rows == [[1, "a"], [2, "a much longer value"], [3, None]]
     assert consumed == len(complete)
+
+
+@pytest.mark.asyncio
+async def test_protocol_passes_dbos_payload_view_directly_to_decoder(monkeypatch: pytest.MonkeyPatch) -> None:
+    conn = Connection()
+    conn.log = logging.getLogger("test.dbos_view")
+    payload = memoryview(_row_payload(81, "view"))
+    inner_header = b"\x00" * 4 + struct.pack(">i", len(payload))
+
+    class ViewStream:
+        def read_view_sync(self, size: int) -> memoryview | None:
+            if size == 8:
+                return memoryview(inner_header)
+            return None
+
+        async def read_view(self, size: int) -> memoryview:
+            assert size == len(payload)
+            return payload
+
+        def read_available_view(self) -> None:
+            return None
+
+        def advance_head(self, _size: int) -> None:
+            raise AssertionError("no batched rows are buffered")
+
+    conn._stream = ViewStream()  # type: ignore[assignment]
+    conn.tupdesc = _descriptor()
+    headers = deque([b"Y\x00\x00\x00\x00", b"Z\x00\x00\x00\x00"])
+
+    async def read_header(size: int) -> bytes:
+        assert size == 5
+        return headers.popleft()
+
+    conn._read = read_header  # type: ignore[method-assign]
+    seen: list[type] = []
+
+    def record_payload(cursor, _tupdesc, data) -> None:
+        seen.append(type(data))
+        cursor.cached_rows.append(["decoded"])
+
+    monkeypatch.setattr(conn._dbos, "_process_dbos_payload", record_payload)
+    cursor = conn.cursor()
+    states = [state async for state in conn._protocol._connNextResultSetGenerator(cursor)]
+
+    assert states == ["DATA_BATCH", "READY_FOR_QUERY"]
+    assert seen == [memoryview]
+    assert list(cursor.cached_rows) == [["decoded"]]
