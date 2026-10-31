@@ -703,6 +703,10 @@ def test_no_memory_leak_new_connection_each_iteration(
 @pytest.mark.parametrize("mode", ["fetchall", "cancel"], ids=["fetchall", "cancel"])
 def test_async_vs_sync_rss_comparable(mode: str) -> None:
     """Async and sync must have similar RSS growth in isolated subprocesses."""
+    # Measure the decoder this run uses (native when loaded, pure Python otherwise).
+    from nzpy_extended import _native
+
+    native_on = _native._native_ext is not None
     if mode == "fetchall":
         iters = ITERATIONS_FETCHALL
         max_growth = MAX_RSS_GROWTH_FETCHALL_MB
@@ -714,11 +718,11 @@ def test_async_vs_sync_rss_comparable(mode: str) -> None:
 
     async_rss = run_isolated_rss_benchmark(
         "async", mode, iters, SQL_FACTPRODUCT,
-        fetch_rows=FETCH_ROWS_DEFAULT, native_on=True,
+        fetch_rows=FETCH_ROWS_DEFAULT, native_on=native_on,
     )
     sync_rss = run_isolated_rss_benchmark(
         "sync", mode, iters, SQL_FACTPRODUCT,
-        fetch_rows=FETCH_ROWS_DEFAULT, native_on=True,
+        fetch_rows=FETCH_ROWS_DEFAULT, native_on=native_on,
     )
 
     async_growth = async_rss[-1] - async_rss[0]
