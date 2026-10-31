@@ -1,7 +1,6 @@
 import asyncio
 import socket as _socket
 import ssl
-import select
 from collections.abc import Awaitable, Callable
 from .exceptions import InterfaceError, OperationalError
 from ._constants import DEFAULT_BUFFER_SIZE
@@ -246,8 +245,33 @@ class NzBufferedStream:
         self.tail += chunk_len
 
     async def _wait_ssl(self, writing: bool) -> None:
-        await asyncio.to_thread(select.select, [] if writing else [self.sock],
-                                [self.sock] if writing else [], [], 0.1)
+        """Wait until the TLS socket can be read (or written) without a helper thread.
+
+        The event loop's own selector reports readiness, so a wait costs no thread
+        hop and ends as soon as the socket is ready. Cancellation removes the
+        callback in ``finally``.
+        """
+        fd = self.sock.fileno()
+        if fd < 0:
+            raise OperationalError("Socket closed while waiting for TLS I/O")
+        loop = self.loop
+        ready: asyncio.Future[None] = loop.create_future()
+
+        def _wake() -> None:
+            if not ready.done():
+                ready.set_result(None)
+
+        if writing:
+            loop.add_writer(fd, _wake)
+        else:
+            loop.add_reader(fd, _wake)
+        try:
+            await ready
+        finally:
+            if writing:
+                loop.remove_writer(fd)
+            else:
+                loop.remove_reader(fd)
 
     async def _recv_into(self, view: memoryview) -> int:
         if not isinstance(self.sock, ssl.SSLSocket):

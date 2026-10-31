@@ -54,6 +54,12 @@ All notable changes to `nzpy_extended` are documented in this file.
   ISO-8859-1 (`latin` is the default `char_varchar_encoding`) or ASCII-compatible
   and the bytes are ASCII. Results are unchanged; a text-heavy 100k-row fetch
   spends about half as long in the decoder.
+- TLS reads and writes that would block wait on the event loop's selector. They
+  no longer take a helper thread per wait. A query over a TLS connection on the
+  loopback mock went from about 633 µs to about 517 µs.
+- A new connection no longer runs four informational `SELECT`s whose results only
+  went to debug logging. On the reference appliance, connecting went from about
+  115–123 ms to about 86 ms.
 
 ### Fixed
 

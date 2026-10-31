@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import tempfile
-import getpass
 import logging
 import logging.handlers
-import platform
 import socket
 import ssl as ssl_module
 import asyncio
@@ -410,57 +408,14 @@ class Connection:
             if not await self._execute(self._cursor, query, None):
                 return False
 
-            client_info = "select version(), 'Netezza Python " \
-                          "Client Version: {}', " \
-                          "'{}', 'OS Platform: {}', 'OS Username: {}'"
-
-            query = client_info.format(nzpy_extended_client_version,
-                                       platform.uname().machine,
-                                       platform.system(),
-                                       getpass.getuser())
-
-            if not await self._execute(self._cursor, query, None):
-                return False
-            else:
-                results = await self._cursor.fetchall()
-                for c1, c2, c3, c4, c5 in results:
-                    self.log.debug("c1 = %s, c2 = %s, c3 = %s, c4 = %s, "
-                                   "c5 = %s" % (c1, c2, c3, c4, c5))
-
+            # The client-version statement tells the server which driver is connected.
+            # The informational SELECTs that used to follow (version, database
+            # encoding, ODBC features, identifier case) only fed debug logging, so
+            # they are gone: each one cost a round trip on every new connection.
             client_info = "SET CLIENT_VERSION = '{}'"
             query = client_info.format(nzpy_extended_client_version)
             if not await self._execute(self._cursor, query, None):
                 return False
-
-            if not await self._execute(self._cursor, "select ascii(' ') as space, "
-                                               "encoding as ccsid "
-                                               "from _v_database "
-                                               "where objid = current_db",
-                                  None):
-                return False
-            else:
-                results = await self._cursor.fetchall()
-                for c1, c2 in results:
-                    self.log.debug("c1 = %s, c2 = %s" % (c1, c2))
-
-            if not await self._execute(self._cursor, "select feature from "
-                                               "_v_odbc_feature "
-                                               "where spec_level = '3.5'",
-                                  None):
-                return False
-            else:
-                results = await self._cursor.fetchall()
-                for c1 in results:
-                    self.log.debug("c1 = %s" % (c1))
-
-            if not await self._execute(self._cursor, "select identifier_case, "
-                                               "current_catalog, "
-                                               "current_user", None):
-                return False
-            else:
-                results = await self._cursor.fetchall()
-                for c1, c2, c3 in results:
-                    self.log.debug("c1 = %s, c2 = %s, c3 = %s" % (c1, c2, c3))
 
             return True
 

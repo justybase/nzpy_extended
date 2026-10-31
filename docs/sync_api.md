@@ -159,6 +159,8 @@ cur.executemany(
 
 On partial failure: sets `rowcount` to successful count. The error keeps its DB-API class (for example `IntegrityError`). The failing index is in `error.__notes__` (`executemany failed at param set i/n`), not in `str(error)`.
 
+**Performance:** `executemany` runs one statement per parameter set, so each row pays the full server cost of an `INSERT`. On the reference Netezza 11.2 appliance one `INSERT` took about 45 ms, and it was the same with `autocommit` on or off. For 2,000 rows `executemany` took about 87 s, and `load_data` took about 0.7 s for the same rows. For bulk loads, use [`load_data`](load_data.md).
+
 #### `callproc(procname, parameters=None) → list | None`
 
 Call a stored procedure. Returns copy of input parameters.
