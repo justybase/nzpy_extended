@@ -1036,12 +1036,12 @@ class Connection:
 
 
 def __getattr__(name: str) -> Any:
-    """Dynamic re-exports for C extension state so that monkeypatching
-    ``_cstate._HAVE_C_EXT`` is always reflected here.
+    """Dynamic re-exports for native extension state so that monkeypatching
+    ``_native._HAVE_NATIVE`` is always reflected here.
     """
-    if name in ("_HAVE_C_EXT", "_c_ext"):
-        from . import _cstate
-        return getattr(_cstate, name)
+    if name in ("_HAVE_NATIVE", "_native_ext"):
+        from . import _native
+        return getattr(_native, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

@@ -28,10 +28,15 @@ except ImportError:
     import typing
     fastapi: typing.Any = None  # type: ignore[no-redef]
 
-from ._version import get_versions
+from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
+from importlib.metadata import version as _distribution_version
 
-__version__: str = get_versions()['version']  # type: ignore[no-untyped-call]
-del get_versions
+try:
+    # Version comes from Cargo.toml via maturin; see [project] dynamic = ["version"].
+    __version__: str = _distribution_version("nzpy_extended")
+except _PackageNotFoundError:  # importing from a source tree that is not installed
+    __version__ = "0+unknown"
+del _PackageNotFoundError, _distribution_version
 
 
 async def connect(

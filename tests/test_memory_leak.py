@@ -3,7 +3,7 @@ Memory leak regression tests.
 
 Verifies that Python objects (Decimals, row-lists) and RSS do not grow
 when fetching large result sets or cancelling queries after partial reads.
-Runs parametrized with C extension enabled and disabled, async and sync API.
+Runs parametrized with native extension enabled and disabled, async and sync API.
 
 Requires:
   - Live Netezza database (NZ_DEV_HOST, NZ_DEV_PORT, NZ_DEV_DB, NZ_DEV_USER, NZ_DEV_PASSWORD)
@@ -358,14 +358,14 @@ def _run_new_connection_each_sync(
 @pytest.mark.parametrize("api", ["async", "sync"], ids=["async", "sync"])
 def test_no_memory_leak_repeated_fetchall(
     api: Literal["async", "sync"],
-    cext_mode: bool,
+    native_mode: bool,
     db_kwargs_mem: dict[str, Any],
 ) -> None:
     """Repeated fetchall on large SELECT must not leak objects or RSS."""
     gc.collect()
     rss0 = rss_mb()
     dec0, rl0 = count_leaked_objects()
-    print(f"\n[{api=} {cext_mode=}]  init: RSS={rss0:.1f} MB  decimals={dec0}  rowlists={rl0}")
+    print(f"\n[{api=} {native_mode=}]  init: RSS={rss0:.1f} MB  decimals={dec0}  rowlists={rl0}")
 
     if api == "async":
         import nzpy_extended as nzpy
@@ -392,7 +392,7 @@ def test_no_memory_leak_repeated_fetchall(
             conn.close()
 
     gc.collect()
-    print(f"[{api=} {cext_mode=}]  final: decimals={dec_final}  rowlists={rl_final}")
+    print(f"[{api=} {native_mode=}]  final: decimals={dec_final}  rowlists={rl_final}")
 
     assert_memory_stable(
         rss_per_iter,
@@ -401,21 +401,21 @@ def test_no_memory_leak_repeated_fetchall(
         max_rss_growth_mb=MAX_RSS_GROWTH_FETCHALL_MB,
         max_rss_growth_per_iter_mb=MAX_RSS_GROWTH_PER_ITER_FETCHALL_MB,
         iterations=ITERATIONS_FETCHALL,
-        label=f"{api}/cext={cext_mode}",
+        label=f"{api}/native={native_mode}",
     )
 
 
 @pytest.mark.parametrize("api", ["async", "sync"], ids=["async", "sync"])
 def test_no_memory_leak_cancel_after_partial_fetch(
     api: Literal["async", "sync"],
-    cext_mode: bool,
+    native_mode: bool,
     db_kwargs_mem: dict[str, Any],
 ) -> None:
     """Cancel after reading a few rows must not leak memory across iterations."""
     gc.collect()
     rss0 = rss_mb()
     dec0, rl0 = count_leaked_objects()
-    print(f"\n[{api=} {cext_mode=}]  init: RSS={rss0:.1f} MB  decimals={dec0}  rowlists={rl0}")
+    print(f"\n[{api=} {native_mode=}]  init: RSS={rss0:.1f} MB  decimals={dec0}  rowlists={rl0}")
 
     if api == "async":
         import nzpy_extended as nzpy
@@ -444,7 +444,7 @@ def test_no_memory_leak_cancel_after_partial_fetch(
             conn.close()
 
     gc.collect()
-    print(f"[{api=} {cext_mode=}]  final: decimals={dec_final}  rowlists={rl_final}")
+    print(f"[{api=} {native_mode=}]  final: decimals={dec_final}  rowlists={rl_final}")
 
     assert_memory_stable(
         rss_per_iter,
@@ -453,19 +453,19 @@ def test_no_memory_leak_cancel_after_partial_fetch(
         max_rss_growth_mb=MAX_RSS_GROWTH_CANCEL_MB,
         max_rss_growth_per_iter_mb=MAX_RSS_GROWTH_PER_ITER_CANCEL_MB,
         iterations=ITERATIONS_CANCEL,
-        label=f"{api}/cext={cext_mode}/cancel",
+        label=f"{api}/native={native_mode}/cancel",
     )
 
 
 @pytest.mark.parametrize("api", ["async", "sync"], ids=["async", "sync"])
 def test_no_memory_leak_multiple_cancels_same_connection(
     api: Literal["async", "sync"],
-    cext_mode: bool,
+    native_mode: bool,
     db_kwargs_mem: dict[str, Any],
 ) -> None:
     """Many cancel cycles on one connection must stay stable; session remains usable."""
     gc.collect()
-    print(f"\n[{api=} {cext_mode=}]  multiple cancel test")
+    print(f"\n[{api=} {native_mode=}]  multiple cancel test")
 
     if api == "async":
         import nzpy_extended as nzpy
@@ -505,7 +505,7 @@ def test_no_memory_leak_multiple_cancels_same_connection(
             conn.close()
 
     gc.collect()
-    print(f"[{api=} {cext_mode=}]  final: decimals={dec_final}  rowlists={rl_final}")
+    print(f"[{api=} {native_mode=}]  final: decimals={dec_final}  rowlists={rl_final}")
 
     assert_memory_stable(
         rss_per_iter,
@@ -514,19 +514,19 @@ def test_no_memory_leak_multiple_cancels_same_connection(
         max_rss_growth_mb=MAX_RSS_GROWTH_CANCEL_MB,
         max_rss_growth_per_iter_mb=MAX_RSS_GROWTH_PER_ITER_CANCEL_MB,
         iterations=ITERATIONS_MULTIPLE_CANCEL,
-        label=f"{api}/cext={cext_mode}/multi-cancel",
+        label=f"{api}/native={native_mode}/multi-cancel",
     )
 
 
 @pytest.mark.parametrize("api", ["async", "sync"], ids=["async", "sync"])
 def test_no_memory_leak_fetchmany_chunks(
     api: Literal["async", "sync"],
-    cext_mode: bool,
+    native_mode: bool,
     db_kwargs_mem: dict[str, Any],
 ) -> None:
     """fetchmany() in chunks must not leak (exercises streaming read path)."""
     gc.collect()
-    print(f"\n[{api=} {cext_mode=}]  fetchmany chunks test")
+    print(f"\n[{api=} {native_mode=}]  fetchmany chunks test")
 
     if api == "async":
         import asyncio
@@ -560,17 +560,17 @@ def test_no_memory_leak_fetchmany_chunks(
         max_rss_growth_mb=MAX_RSS_GROWTH_FETCHALL_MB,
         max_rss_growth_per_iter_mb=MAX_RSS_GROWTH_PER_ITER_FETCHALL_MB,
         iterations=ITERATIONS_FETCHALL,
-        label=f"{api}/cext={cext_mode}/fetchmany",
+        label=f"{api}/native={native_mode}/fetchmany",
     )
 
 
 def test_no_memory_leak_async_iteration_cancel(
-    cext_mode: bool,
+    native_mode: bool,
     db_kwargs_mem: dict[str, Any],
 ) -> None:
     """async for partial read + cancel must not leak."""
     gc.collect()
-    print(f"\n[async iterate cancel {cext_mode=}]")
+    print(f"\n[async iterate cancel {native_mode=}]")
 
     import asyncio
     import nzpy_extended as nzpy
@@ -593,19 +593,19 @@ def test_no_memory_leak_async_iteration_cancel(
         max_rss_growth_mb=MAX_RSS_GROWTH_CANCEL_MB,
         max_rss_growth_per_iter_mb=MAX_RSS_GROWTH_PER_ITER_CANCEL_MB,
         iterations=ITERATIONS_CANCEL,
-        label=f"async-iterate/cext={cext_mode}/cancel",
+        label=f"async-iterate/native={native_mode}/cancel",
     )
 
 
 @pytest.mark.parametrize("api", ["async", "sync"], ids=["async", "sync"])
 def test_no_memory_leak_close_without_cancel(
     api: Literal["async", "sync"],
-    cext_mode: bool,
+    native_mode: bool,
     db_kwargs_mem: dict[str, Any],
 ) -> None:
     """Closing cursor after partial read (no explicit cancel) must not leak."""
     gc.collect()
-    print(f"\n[{api=} {cext_mode=}]  close-without-cancel test")
+    print(f"\n[{api=} {native_mode=}]  close-without-cancel test")
 
     if api == "async":
         import asyncio
@@ -639,17 +639,17 @@ def test_no_memory_leak_close_without_cancel(
         max_rss_growth_mb=MAX_RSS_GROWTH_CANCEL_MB,
         max_rss_growth_per_iter_mb=MAX_RSS_GROWTH_PER_ITER_CANCEL_MB,
         iterations=ITERATIONS_CANCEL,
-        label=f"{api}/cext={cext_mode}/close-no-cancel",
+        label=f"{api}/native={native_mode}/close-no-cancel",
     )
 
 
 def test_no_memory_leak_pool_cancel_cycles(
-    cext_mode: bool,
+    native_mode: bool,
     db_kwargs_mem: dict[str, Any],
 ) -> None:
     """Pooled connections: partial fetch + cancel + release must not leak."""
     gc.collect()
-    print(f"\n[pool cancel {cext_mode=}]")
+    print(f"\n[pool cancel {native_mode=}]")
 
     import asyncio
 
@@ -664,19 +664,19 @@ def test_no_memory_leak_pool_cancel_cycles(
         max_rss_growth_mb=MAX_RSS_GROWTH_CANCEL_MB,
         max_rss_growth_per_iter_mb=MAX_RSS_GROWTH_PER_ITER_CANCEL_MB,
         iterations=ITERATIONS_POOL,
-        label=f"pool/cext={cext_mode}/cancel",
+        label=f"pool/native={native_mode}/cancel",
     )
 
 
 @pytest.mark.parametrize("api", ["async", "sync"], ids=["async", "sync"])
 def test_no_memory_leak_new_connection_each_iteration(
     api: Literal["async", "sync"],
-    cext_mode: bool,
+    native_mode: bool,
     db_kwargs_mem: dict[str, Any],
 ) -> None:
     """Fresh connection per iteration + full fetchall must not leak."""
     gc.collect()
-    print(f"\n[{api=} {cext_mode=}]  new-conn-each-iter test")
+    print(f"\n[{api=} {native_mode=}]  new-conn-each-iter test")
 
     if api == "async":
         import asyncio
@@ -696,7 +696,7 @@ def test_no_memory_leak_new_connection_each_iteration(
         max_rss_growth_mb=MAX_RSS_GROWTH_FETCHALL_MB,
         max_rss_growth_per_iter_mb=MAX_RSS_GROWTH_PER_ITER_FETCHALL_MB,
         iterations=ITERATIONS_FETCHALL,
-        label=f"{api}/cext={cext_mode}/new-conn",
+        label=f"{api}/native={native_mode}/new-conn",
     )
 
 
@@ -714,11 +714,11 @@ def test_async_vs_sync_rss_comparable(mode: str) -> None:
 
     async_rss = run_isolated_rss_benchmark(
         "async", mode, iters, SQL_FACTPRODUCT,
-        fetch_rows=FETCH_ROWS_DEFAULT, cext_on=True,
+        fetch_rows=FETCH_ROWS_DEFAULT, native_on=True,
     )
     sync_rss = run_isolated_rss_benchmark(
         "sync", mode, iters, SQL_FACTPRODUCT,
-        fetch_rows=FETCH_ROWS_DEFAULT, cext_on=True,
+        fetch_rows=FETCH_ROWS_DEFAULT, native_on=True,
     )
 
     async_growth = async_rss[-1] - async_rss[0]

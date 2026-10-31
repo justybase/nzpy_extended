@@ -4,11 +4,11 @@ Memory leak test for nzpy_extended.
 
 Detects reference leaks by running a large query multiple times and
 checking that Python objects (Decimals, lists) and RSS do not accumulate
-across iterations.  Runs with AND without the C extension so both
+across iterations.  Runs with AND without the native extension so both
 paths are covered.
 
 Usage:
-    # default: 10 iterations, async API, fetchall, both C-ext and pure-python
+    # default: 10 iterations, async API, fetchall, both native-ext and pure-python
     python examples/19_memory_leak_test.py
 
     # cancel after partial fetch (same SQL repeated, abort each time)
@@ -89,7 +89,7 @@ def _analyse_and_report(
     measurements: list[float],
     decimals_per_iter: list[int],
     iterations: int,
-    cext_label: str,
+    native_label: str,
     row_counts: list[int],
     *,
     mode: Literal["fetchall", "cancel"],
@@ -131,7 +131,7 @@ def _analyse_and_report(
     else:
         verdict = "STABLE (too few iterations)"
 
-    print(f"\nResults ({cext_label}, {mode}):")
+    print(f"\nResults ({native_label}, {mode}):")
     print(f"  RSS       : first={rss_first:.1f} MB  last={rss_last:.1f} MB  growth={growth_rss:+.1f} MB")
     print(f"  RSS rate  : {rss_rate:+.2f} MB/iter")
     print(f"  Decimals  : first={d_first}  last={d_last}  growth={growth_dec:+d}")
@@ -210,7 +210,7 @@ async def _run_async(
     sql: str,
     iterations: int,
     delay: float,
-    cext_label: str,
+    native_label: str,
     mode: Literal["fetchall", "cancel"],
     fetch_rows: int,
 ) -> bool:
@@ -221,7 +221,7 @@ async def _run_async(
         host=_NZ_HOST, port=_NZ_PORT, database=_NZ_DB,
     )
     try:
-        return await _run_async_loop(conn, sql, iterations, delay, cext_label, mode, fetch_rows)
+        return await _run_async_loop(conn, sql, iterations, delay, native_label, mode, fetch_rows)
     finally:
         await conn.close()
 
@@ -231,7 +231,7 @@ async def _run_async_loop(
     sql: str,
     iterations: int,
     delay: float,
-    cext_label: str,
+    native_label: str,
     mode: Literal["fetchall", "cancel"],
     fetch_rows: int,
 ) -> bool:
@@ -241,7 +241,7 @@ async def _run_async_loop(
 
     header = (
         f"\n{'='*60}\n"
-        f"Mode: {cext_label} (async, {mode})\n"
+        f"Mode: {native_label} (async, {mode})\n"
         f"SQL : {sql[:80]}{'...' if len(sql) > 80 else ''}\n"
         f"Iters: {iterations}\n"
         f"{'='*60}\n"
@@ -270,7 +270,7 @@ async def _run_async_loop(
             await asyncio.sleep(delay)
 
     return _analyse_and_report(
-        measurements, decimals_per_iter, iterations, cext_label, row_counts, mode=mode
+        measurements, decimals_per_iter, iterations, native_label, row_counts, mode=mode
     )
 
 
@@ -282,7 +282,7 @@ def _run_sync(
     sql: str,
     iterations: int,
     delay: float,
-    cext_label: str,
+    native_label: str,
     mode: Literal["fetchall", "cancel"],
     fetch_rows: int,
 ) -> bool:
@@ -293,7 +293,7 @@ def _run_sync(
         host=_NZ_HOST, port=_NZ_PORT, database=_NZ_DB,
     )
     try:
-        return _run_sync_loop(conn, sql, iterations, delay, cext_label, mode, fetch_rows)
+        return _run_sync_loop(conn, sql, iterations, delay, native_label, mode, fetch_rows)
     finally:
         conn.close()
 
@@ -303,7 +303,7 @@ def _run_sync_loop(
     sql: str,
     iterations: int,
     delay: float,
-    cext_label: str,
+    native_label: str,
     mode: Literal["fetchall", "cancel"],
     fetch_rows: int,
 ) -> bool:
@@ -313,7 +313,7 @@ def _run_sync_loop(
 
     header = (
         f"\n{'='*60}\n"
-        f"Mode: {cext_label} (sync, {mode})\n"
+        f"Mode: {native_label} (sync, {mode})\n"
         f"SQL : {sql[:80]}{'...' if len(sql) > 80 else ''}\n"
         f"Iters: {iterations}\n"
         f"{'='*60}\n"
@@ -342,7 +342,7 @@ def _run_sync_loop(
             time.sleep(delay)
 
     return _analyse_and_report(
-        measurements, decimals_per_iter, iterations, cext_label, row_counts, mode=mode
+        measurements, decimals_per_iter, iterations, native_label, row_counts, mode=mode
     )
 
 
@@ -350,9 +350,9 @@ def _run_sync_loop(
 # Mode switcher
 # ---------------------------------------------------------------------------
 
-def _set_cext(enabled: bool) -> None:
-    import nzpy_extended._cstate as _cstate
-    _cstate._HAVE_C_EXT = enabled
+def _set_native(enabled: bool) -> None:
+    import nzpy_extended._native as _native
+    _native._HAVE_NATIVE = enabled
 
 
 def run_test(
@@ -363,21 +363,21 @@ def run_test(
     mode: Literal["fetchall", "cancel"] = "fetchall",
     fetch_rows: int = 5,
 ) -> bool:
-    """Run test in both C-ext and pure-python modes. Returns True if both pass."""
+    """Run test in both native-ext and pure-python modes. Returns True if both pass."""
     results: list[bool] = []
 
-    for cext_enabled, cext_label in [(True, "C extension"), (False, "pure Python")]:
-        _set_cext(cext_enabled)
+    for native_enabled, native_label in [(True, "native extension"), (False, "pure Python")]:
+        _set_native(native_enabled)
         gc.collect()
 
         print(f"\nInitial RSS: {_get_rss():.1f} MB  |  "
               f"Decimals: {_count_leaked_objects()[0]}  |  "
-              f"C-ext: {cext_enabled}", flush=True)
+              f"native-ext: {native_enabled}", flush=True)
 
         if use_sync:
-            ok = _run_sync(sql, iterations, delay, cext_label, mode, fetch_rows)
+            ok = _run_sync(sql, iterations, delay, native_label, mode, fetch_rows)
         else:
-            ok = asyncio.run(_run_async(sql, iterations, delay, cext_label, mode, fetch_rows))
+            ok = asyncio.run(_run_async(sql, iterations, delay, native_label, mode, fetch_rows))
         results.append(ok)
 
     print()
@@ -388,7 +388,7 @@ def run_test(
         print(f"         Mode: {mode}  Iterations: {iterations}")
         return True
     print("OVERALL: FAIL - Memory leak detected!")
-    for label, ok in zip(["C extension", "pure Python"], results):
+    for label, ok in zip(["native extension", "pure Python"], results):
         print(f"         {label}: {'PASS' if ok else 'FAIL'}")
     return False
 

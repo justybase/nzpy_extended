@@ -69,7 +69,7 @@ from .utils import (
     pg_to_py_encodings,
 )
 from ._serializers import build_pg_types, build_py_types
-from . import _cstate
+from . import _native
 
 
 def _backend_text(data: bytes, encoding: str) -> str:
@@ -579,12 +579,12 @@ class ProtocolHandler:
                 except DataError as exc:
                     conn._defer_decode_error(exc)
 
-                if _cstate._HAVE_C_EXT:
-                    assert _cstate._c_ext is not None
+                if _native._HAVE_NATIVE:
+                    assert _native._native_ext is not None
                     view = stream.read_available_view()
                     if view is not None and len(view) > 13:
                         try:
-                            rows, consumed = _cstate._c_ext.process_dbos_batch(
+                            rows, consumed = _native._native_ext.process_dbos_batch(
                                 view,
                                 conn.tupdesc.field_type,
                                 conn.tupdesc.field_size,

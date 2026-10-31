@@ -174,7 +174,7 @@ async def test_explicit_client_encoding_latin9():
         await conn.close()
 
 
-# ===== C extension parity =====
+# ===== native extension parity =====
 
 
 @pytest.mark.asyncio
@@ -184,8 +184,8 @@ async def test_explicit_client_encoding_latin9():
     ("Hello World", "VARCHAR(100)"),
     ("中文", "NVARCHAR(100)"),
 ])
-async def test_cext_parity_encoding(con_cext, cext_mode, test_value, col_type):
-    conn = con_cext
+async def test_native_parity_encoding(con_native, native_mode, test_value, col_type):
+    conn = con_native
     cur = conn.cursor()
     table = f"TMP_PARITY_{abs(hash(test_value))}"
     await cur.execute(f"DROP TABLE {table} IF EXISTS")
@@ -194,4 +194,4 @@ async def test_cext_parity_encoding(con_cext, cext_mode, test_value, col_type):
     await cur.execute(f"SELECT col FROM {table}")
     row = await cur.fetchone()
     assert row[0] == test_value, \
-        f"[{cext_mode}] Mismatch: {row[0]!r} != {test_value!r}"
+        f"[{native_mode}] Mismatch: {row[0]!r} != {test_value!r}"

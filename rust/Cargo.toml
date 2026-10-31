@@ -1,0 +1,25 @@
+[package]
+name = "nzpy_rust_ext"
+version = "0.7.3"
+edition = "2021"
+rust-version = "1.85"
+license = "Apache-2.0"
+publish = false
+description = "Rust DBOS row decoder for nzpy_extended"
+
+[lib]
+name = "rust_ext"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+# Enabled by maturin for the Python extension build; off for `cargo test`,
+# so the pure-Rust layout/numeric/temporal logic links without libpython.
+extension-module = ["pyo3/extension-module"]
+
+[dependencies]
+pyo3 = { version = "0.30", default-features = false, features = ["macros"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

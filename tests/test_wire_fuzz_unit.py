@@ -6,7 +6,7 @@ The properties checked are:
 * a damaged response only ever surfaces as a driver error (``Error``), never
   as a bare Python exception, and never hangs the client;
 * the same response delivered in any fragmentation decodes identically;
-* the C and pure-Python DBOS decoders agree on random row payloads.
+* the native and pure-Python DBOS decoders agree on random row payloads.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from typing import Any
 import pytest
 
 import nzpy_extended as nz
-from nzpy_extended import _cstate
+from nzpy_extended import _native
 from nzpy_extended.exceptions import DataError, Error, InterfaceError
 from tests.mock_netezza import (
     MockNetezzaServer,
@@ -157,7 +157,7 @@ def _outcome_values(outcomes: list[Outcome]) -> list[Any]:
     return [(o.result_sets, o.raw_rows, o.rowcount, o.error is None) for o in outcomes]
 
 
-@pytest.mark.skipif(not _cstate._HAVE_C_EXT, reason="C extension is not built")
+@pytest.mark.skipif(not _native._HAVE_NATIVE, reason="native extension is not built")
 def test_random_dbos_payloads_decode_identically_in_c_and_python() -> None:
     texts = [b"", b"a", b"abc\xc3\x9f", b"\xff\xfe", b"x" * 40]
     checked = 0
@@ -173,11 +173,11 @@ def test_random_dbos_payloads_decode_identically_in_c_and_python() -> None:
         payload_bytes = bytes(payload)
 
         c_result: Any = None
-        c_error: BaseException | None = None
+        native_error: BaseException | None = None
         try:
             c_result = _decode_c(payload_bytes)
         except BaseException as exc:  # noqa: BLE001  (categories are compared below)
-            c_error = exc
+            native_error = exc
         py_result: Any = None
         py_error: BaseException | None = None
         try:
@@ -185,13 +185,13 @@ def test_random_dbos_payloads_decode_identically_in_c_and_python() -> None:
         except BaseException as exc:  # noqa: BLE001
             py_error = exc
 
-        if c_error is None and py_error is None:
+        if native_error is None and py_error is None:
             assert c_result == py_result[0], f"case {case}: value mismatch"
-        elif isinstance(c_error, BufferError):
+        elif isinstance(native_error, BufferError):
             assert isinstance(py_error, InterfaceError), f"case {case}: {py_error!r}"
-        elif isinstance(c_error, UnicodeDecodeError):
+        elif isinstance(native_error, UnicodeDecodeError):
             assert isinstance(py_error, DataError), f"case {case}: {py_error!r}"
         else:
-            pytest.fail(f"case {case}: C={c_error!r} Python={py_error!r} payload={payload_bytes!r}")
+            pytest.fail(f"case {case}: native={native_error!r} Python={py_error!r} payload={payload_bytes!r}")
         checked += 1
     assert checked == 400

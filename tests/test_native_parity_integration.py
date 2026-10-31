@@ -1,15 +1,15 @@
 """
-test_c_python_parity_integration.py
+test_native_parity_integration.py
 ====================================
-Integration-level parity tests that verify C extension and pure-Python
+Integration-level parity tests that verify native extension and pure-Python
 implementations return identical results for real database queries.
 
-Each test case is run twice: once with C extension enabled and once
+Each test case is run twice: once with native extension enabled and once
 with it disabled (via monkeypatch). The results are compared for strict
 equality of types and values.
 
 Run:
-    pytest tests/test_c_python_parity_integration.py -v
+    pytest tests/test_native_parity_integration.py -v
 """
 
 import datetime
@@ -26,27 +26,27 @@ pytestmark = pytest.mark.full
 # Fixtures
 # ---------------------------------------------------------------------------
 
-_CEXT_ORIGINAL_FLAG = None
+_NATIVE_ORIGINAL_FLAG = None
 
 
 @pytest.fixture
-def is_c_extension_available():
-    import nzpy_extended._cstate as _cstate
-    return getattr(_cstate, "_HAVE_C_EXT", False)
+def is_native_extension_available():
+    import nzpy_extended._native as _native
+    return getattr(_native, "_HAVE_NATIVE", False)
 
 
-@pytest.fixture(params=[pytest.param(True, id="C_ext_enabled"), pytest.param(False, id="pure_python")])
-def cext_mode(request, monkeypatch):
-    import nzpy_extended._cstate as _cstate
+@pytest.fixture(params=[pytest.param(True, id="native"), pytest.param(False, id="python")])
+def native_mode(request, monkeypatch):
+    import nzpy_extended._native as _native
 
-    global _CEXT_ORIGINAL_FLAG
-    if _CEXT_ORIGINAL_FLAG is None:
-        _CEXT_ORIGINAL_FLAG = getattr(_cstate, "_HAVE_C_EXT", False)
+    global _NATIVE_ORIGINAL_FLAG
+    if _NATIVE_ORIGINAL_FLAG is None:
+        _NATIVE_ORIGINAL_FLAG = getattr(_native, "_HAVE_NATIVE", False)
 
-    use_c_ext = request.param
-    monkeypatch.setattr(_cstate, "_HAVE_C_EXT", use_c_ext)
-    yield use_c_ext
-    monkeypatch.setattr(_cstate, "_HAVE_C_EXT", _CEXT_ORIGINAL_FLAG)
+    use_native_ext = request.param
+    monkeypatch.setattr(_native, "_HAVE_NATIVE", use_native_ext)
+    yield use_native_ext
+    monkeypatch.setattr(_native, "_HAVE_NATIVE", _NATIVE_ORIGINAL_FLAG)
 
 
 # ---------------------------------------------------------------------------
@@ -90,12 +90,12 @@ async def _fetch_all(conn, sql):
     ("SELECT -9223372036854775808::BIGINT", int, -9223372036854775808),
     ("SELECT 0::INTEGER", int, 0),
 ])
-async def test_integer_type(con_cext, cext_mode, sql, expected_type, expected_val):
-    row = await _fetch_one(con_cext, sql)
+async def test_integer_type(con_native, native_mode, sql, expected_type, expected_val):
+    row = await _fetch_one(con_native, sql)
     assert row is not None
     val = row[0]
-    assert isinstance(val, expected_type), f"Expected {expected_type}, got {type(val).__name__} [{cext_mode}]"
-    assert val == expected_val, f"Expected {expected_val}, got {val} [{cext_mode}]"
+    assert isinstance(val, expected_type), f"Expected {expected_type}, got {type(val).__name__} [{native_mode}]"
+    assert val == expected_val, f"Expected {expected_val}, got {val} [{native_mode}]"
 
 
 # ---------------------------------------------------------------------------
@@ -110,11 +110,11 @@ async def test_integer_type(con_cext, cext_mode, sql, expected_type, expected_va
     ("SELECT 0.0::FLOAT", float),
     ("SELECT 0.0::DOUBLE PRECISION", float),
 ])
-async def test_float_type(con_cext, cext_mode, sql, expected_type):
-    row = await _fetch_one(con_cext, sql)
+async def test_float_type(con_native, native_mode, sql, expected_type):
+    row = await _fetch_one(con_native, sql)
     assert row is not None
     val = row[0]
-    assert isinstance(val, expected_type), f"Expected {expected_type}, got {type(val).__name__} [{cext_mode}]"
+    assert isinstance(val, expected_type), f"Expected {expected_type}, got {type(val).__name__} [{native_mode}]"
     assert val is not None
 
 
@@ -130,12 +130,12 @@ async def test_float_type(con_cext, cext_mode, sql, expected_type):
     ("SELECT 12345678901234.5678::NUMERIC(20,4)", "12345678901234.5678"),
     ("SELECT -123.45::NUMERIC(10,2)", "-123.45"),
 ])
-async def test_numeric_type(con_cext, cext_mode, sql, expected_str):
-    row = await _fetch_one(con_cext, sql)
+async def test_numeric_type(con_native, native_mode, sql, expected_str):
+    row = await _fetch_one(con_native, sql)
     assert row is not None
     val = row[0]
-    assert isinstance(val, Decimal), f"Expected Decimal, got {type(val).__name__} [{cext_mode}]"
-    assert str(val) == expected_str, f"Expected {expected_str}, got {val} [{cext_mode}]"
+    assert isinstance(val, Decimal), f"Expected Decimal, got {type(val).__name__} [{native_mode}]"
+    assert str(val) == expected_str, f"Expected {expected_str}, got {val} [{native_mode}]"
 
 
 # ---------------------------------------------------------------------------
@@ -159,11 +159,11 @@ async def test_numeric_type(con_cext, cext_mode, sql, expected_str):
     ("SELECT '2024-12-11 14:30:00'::TIMESTAMP", datetime.datetime),
     ("SELECT '2000-01-01 00:00:00'::TIMESTAMP", datetime.datetime),
 ])
-async def test_date_time_type(con_cext, cext_mode, sql, expected_type):
-    row = await _fetch_one(con_cext, sql)
+async def test_date_time_type(con_native, native_mode, sql, expected_type):
+    row = await _fetch_one(con_native, sql)
     assert row is not None
     val = row[0]
-    assert isinstance(val, expected_type), f"Expected {expected_type}, got {type(val).__name__} [{cext_mode}]"
+    assert isinstance(val, expected_type), f"Expected {expected_type}, got {type(val).__name__} [{native_mode}]"
     assert val is not None
 
 
@@ -179,12 +179,12 @@ async def test_date_time_type(con_cext, cext_mode, sql, expected_type):
     ("SELECT 1=1", True),
     ("SELECT 1=0", False),
 ])
-async def test_bool_type(con_cext, cext_mode, sql, expected):
-    row = await _fetch_one(con_cext, sql)
+async def test_bool_type(con_native, native_mode, sql, expected):
+    row = await _fetch_one(con_native, sql)
     assert row is not None
     val = row[0]
-    assert isinstance(val, bool), f"Expected bool, got {type(val).__name__} [{cext_mode}]"
-    assert val is expected, f"Expected {expected}, got {val} [{cext_mode}]"
+    assert isinstance(val, bool), f"Expected bool, got {type(val).__name__} [{native_mode}]"
+    assert val is expected, f"Expected {expected}, got {val} [{native_mode}]"
 
 
 # ---------------------------------------------------------------------------
@@ -200,12 +200,12 @@ async def test_bool_type(con_cext, cext_mode, sql, expected):
     ("SELECT 'abc'::NVARCHAR(10)", "abc"),
     ("SELECT ''::VARCHAR(10)", ""),
 ])
-async def test_string_type(con_cext, cext_mode, sql, expected):
-    row = await _fetch_one(con_cext, sql)
+async def test_string_type(con_native, native_mode, sql, expected):
+    row = await _fetch_one(con_native, sql)
     assert row is not None
     val = row[0]
-    assert isinstance(val, str), f"Expected str, got {type(val).__name__} [{cext_mode}]"
-    assert val == expected, f"Expected {expected!r}, got {val!r} [{cext_mode}]"
+    assert isinstance(val, str), f"Expected str, got {type(val).__name__} [{native_mode}]"
+    assert val == expected, f"Expected {expected!r}, got {val!r} [{native_mode}]"
 
 
 # ---------------------------------------------------------------------------
@@ -219,11 +219,11 @@ async def test_string_type(con_cext, cext_mode, sql, expected):
     ("SELECT 'café'::VARCHAR(50)", "café"),
     ("SELECT 'zażółć'::NVARCHAR(50)", "zażółć"),
 ])
-async def test_unicode_string(con_cext, cext_mode, sql, expected_substring):
-    row = await _fetch_one(con_cext, sql)
+async def test_unicode_string(con_native, native_mode, sql, expected_substring):
+    row = await _fetch_one(con_native, sql)
     assert row is not None
     val = row[0]
-    assert expected_substring in val, f"Expected {expected_substring} in {val!r} [{cext_mode}]"
+    assert expected_substring in val, f"Expected {expected_substring} in {val!r} [{native_mode}]"
 
 
 # ---------------------------------------------------------------------------
@@ -241,11 +241,11 @@ async def test_unicode_string(con_cext, cext_mode, sql, expected_substring):
     "SELECT NULL::TIMESTAMP",
     "SELECT NULL::NUMERIC(10,2)",
 ])
-async def test_null_handling(con_cext, cext_mode, sql):
-    row = await _fetch_one(con_cext, sql)
+async def test_null_handling(con_native, native_mode, sql):
+    row = await _fetch_one(con_native, sql)
     assert row is not None
     val = row[0]
-    assert val is None, f"Expected None, got {val!r} [{cext_mode}]"
+    assert val is None, f"Expected None, got {val!r} [{native_mode}]"
 
 
 # ---------------------------------------------------------------------------
@@ -254,9 +254,9 @@ async def test_null_handling(con_cext, cext_mode, sql):
 
 
 @pytest.mark.asyncio
-async def test_multi_column(con_cext, cext_mode):
+async def test_multi_column(con_native, native_mode):
     sql = "SELECT 1::INTEGER, 3.14::DOUBLE, 'abc'::VARCHAR(10), NULL, true::BOOLEAN"
-    row = await _fetch_one(con_cext, sql)
+    row = await _fetch_one(con_native, sql)
     assert row is not None
     assert len(row) == 5
 
@@ -278,9 +278,9 @@ async def test_multi_column(con_cext, cext_mode):
 
 
 @pytest.mark.asyncio
-async def test_multi_row_consistency(con_cext, cext_mode):
+async def test_multi_row_consistency(con_native, native_mode):
     # Create temp table, insert, select, compare
-    cur = con_cext.cursor()
+    cur = con_native.cursor()
     try:
         await cur.execute(
             "CREATE TEMP TABLE IF NOT EXISTS parity_test "
@@ -317,9 +317,9 @@ async def test_multi_row_consistency(con_cext, cext_mode):
 
 
 @pytest.mark.asyncio
-async def test_processed_table_vs_literal(con_cext, cext_mode):
+async def test_processed_table_vs_literal(con_native, native_mode):
     row_direct = await _fetch_one(
-        con_cext,
+        con_native,
         "SELECT 1::INTEGER, 'abc'::VARCHAR(10), 3.14::DOUBLE, true::BOOLEAN",
     )
     assert row_direct is not None
@@ -335,15 +335,15 @@ async def test_processed_table_vs_literal(con_cext, cext_mode):
 
 
 @pytest.mark.asyncio
-async def test_interval_type(con_cext, cext_mode):
-    row = await _fetch_one(con_cext, "SELECT INTERVAL '2:30:00' HOUR TO SECOND")
+async def test_interval_type(con_native, native_mode):
+    row = await _fetch_one(con_native, "SELECT INTERVAL '2:30:00' HOUR TO SECOND")
     assert row is not None
     val = row[0]
     assert isinstance(val, nzpy.Interval), (
-        f"Expected Interval, got {type(val).__name__} [{cext_mode}]"
+        f"Expected Interval, got {type(val).__name__} [{native_mode}]"
     )
     assert val.microseconds == 9000000000, (
-        f"Expected 9000000000 µs (2.5 h), got {val.microseconds} [{cext_mode}]"
+        f"Expected 9000000000 µs (2.5 h), got {val.microseconds} [{native_mode}]"
     )
     assert val.months == 0
     assert val.days == 0
@@ -355,14 +355,14 @@ async def test_interval_type(con_cext, cext_mode):
 
 
 @pytest.mark.asyncio
-async def test_varbinary_type(con_cext, cext_mode):
+async def test_varbinary_type(con_native, native_mode):
     row = await _fetch_one(
-        con_cext, "SELECT CAST('hello' AS BYTEA)"
+        con_native, "SELECT CAST('hello' AS BYTEA)"
     )
     assert row is not None
     val = row[0]
     assert isinstance(val, (str, bytes)), (
-        f"Expected str or bytes, got {type(val).__name__} [{cext_mode}]"
+        f"Expected str or bytes, got {type(val).__name__} [{native_mode}]"
     )
 
 
@@ -373,15 +373,15 @@ async def test_varbinary_type(con_cext, cext_mode):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("val", [-1, -128, 0, 1, 127])
-async def test_byteint_boundary(con_cext, cext_mode, val):
-    row = await _fetch_one(con_cext, f"SELECT {val}::BYTEINT")
+async def test_byteint_boundary(con_native, native_mode, val):
+    row = await _fetch_one(con_native, f"SELECT {val}::BYTEINT")
     assert row is not None
     result = row[0]
     assert isinstance(result, int), (
-        f"Expected int, got {type(result).__name__} [{cext_mode}]"
+        f"Expected int, got {type(result).__name__} [{native_mode}]"
     )
     assert result == val, (
-        f"Expected {val}, got {result} (signedness check) [{cext_mode}]"
+        f"Expected {val}, got {result} (signedness check) [{native_mode}]"
     )
 
 
@@ -391,13 +391,13 @@ async def test_byteint_boundary(con_cext, cext_mode, val):
 
 
 @pytest.mark.asyncio
-async def test_varfixedchar_type(con_cext, cext_mode):
-    row = await _fetch_one(con_cext, "SELECT 'fixed'::CHAR(10)")
+async def test_varfixedchar_type(con_native, native_mode):
+    row = await _fetch_one(con_native, "SELECT 'fixed'::CHAR(10)")
     assert row is not None
     val = row[0]
     assert isinstance(val, str), (
-        f"Expected str, got {type(val).__name__} [{cext_mode}]"
+        f"Expected str, got {type(val).__name__} [{native_mode}]"
     )
     assert val == "fixed     ", (
-        f"Expected space-padded char, got {val!r} [{cext_mode}]"
+        f"Expected space-padded char, got {val!r} [{native_mode}]"
     )

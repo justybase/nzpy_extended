@@ -5,7 +5,7 @@ and alternates driver order. This avoids comparing two imported versions in
 one interpreter and excludes process startup and connection setup from the
 query-and-fetch timing.
 
-Example (both source roots must have a built C extension)::
+Example (both source roots must have a built native extension)::
 
     python tools/examples/benchmark_dbos_ab.py \
         --baseline-root /tmp/nzpy-baseline \
@@ -99,15 +99,15 @@ async def _worker(args: argparse.Namespace) -> dict[str, Any]:
     if not (source_root / "nzpy_extended" / "__init__.py").is_file():
         raise RuntimeError(f"driver source root not found: {source_root}")
     sys.path.insert(0, str(source_root))
-    if args.disable_cext:
-        os.environ["NZPY_EXTENDED_NO_CEXT"] = "1"
+    if args.disable_native:
+        os.environ["NZPY_EXTENDED_NO_NATIVE"] = "1"
 
     import nzpy_extended as nzpy
-    from nzpy_extended import _cstate
+    from nzpy_extended import _native
 
-    if _cstate._HAVE_C_EXT == args.disable_cext:
-        expected = "disabled" if args.disable_cext else "enabled"
-        raise RuntimeError(f"C extension should be {expected} in {source_root}")
+    if _native._HAVE_NATIVE == args.disable_native:
+        expected = "disabled" if args.disable_native else "enabled"
+        raise RuntimeError(f"native extension should be {expected} in {source_root}")
 
     connect_start = time.perf_counter()
     conn = await nzpy.connect(
@@ -145,7 +145,7 @@ async def _worker(args: argparse.Namespace) -> dict[str, Any]:
         "query_seconds": query_seconds,
         "rows_per_second": row_count / query_seconds if query_seconds else 0.0,
         "peak_rss_mb": _peak_rss_mb(),
-        "cext_enabled": _cstate._HAVE_C_EXT,
+        "native_enabled": _native._HAVE_NATIVE,
     }
 
 
@@ -163,7 +163,7 @@ def _run_sample(
     mode: str,
     source_table: str,
     rows: int,
-    disable_cext: bool,
+    disable_native: bool,
 ) -> dict[str, Any]:
     command = [
         sys.executable,
@@ -180,8 +180,8 @@ def _run_sample(
         "--rows",
         str(rows),
     ]
-    if disable_cext:
-        command.append("--disable-cext")
+    if disable_native:
+        command.append("--disable-native")
     completed = subprocess.run(command, capture_output=True, text=True, check=False)
     if completed.returncode:
         raise RuntimeError(
@@ -220,7 +220,7 @@ def _main(args: argparse.Namespace) -> int:
                         mode,
                         args.source_table,
                         args.rows,
-                        args.disable_cext,
+                        args.disable_native,
                     )
                     if sample["rows"] != args.rows:
                         raise RuntimeError(
@@ -292,7 +292,7 @@ def main() -> int:
     parser.add_argument("--rounds", type=int, default=7)
     parser.add_argument("--scenario", choices=tuple(SCENARIOS))
     parser.add_argument("--mode", choices=MODES)
-    parser.add_argument("--disable-cext", action="store_true")
+    parser.add_argument("--disable-native", action="store_true")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--root", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()

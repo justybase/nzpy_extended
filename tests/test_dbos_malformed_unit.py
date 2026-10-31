@@ -1,7 +1,7 @@
 """Malformed DBOS payloads: layout faults close, value faults defer.
 
-The pure-Python decoder and the C extension must agree on every payload here.
-Layout faults surface as InterfaceError (BufferError at the C boundary); value
+The pure-Python decoder and the native extension must agree on every payload here.
+Layout faults surface as InterfaceError (BufferError at the native boundary); value
 faults surface as DataError.
 """
 
@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from nzpy_extended import _cstate
+from nzpy_extended import _native
 from nzpy_extended._dbos import DbosParser
 from nzpy_extended.exceptions import DataError, InterfaceError
 from nzpy_extended.protocol import NzTypeInt, NzTypeVarChar
@@ -20,7 +20,7 @@ from nzpy_extended.types import DbosTupleDesc
 
 pytestmark = pytest.mark.unit
 
-needs_c_ext = pytest.mark.skipif(not _cstate._HAVE_C_EXT, reason="C extension is not built")
+needs_native = pytest.mark.skipif(not _native._HAVE_NATIVE, reason="native extension is not built")
 
 
 def _descriptor(phys: list[int] | None = None) -> DbosTupleDesc:
@@ -64,7 +64,7 @@ def _decode_python(payload: bytes, desc: DbosTupleDesc | None = None) -> list[ob
 
 def _decode_c(payload: bytes, desc: DbosTupleDesc | None = None) -> list[object]:
     desc = desc or _descriptor()
-    return _cstate._c_ext.process_dbos_row(  # type: ignore[union-attr]
+    return _native._native_ext.process_dbos_row(  # type: ignore[union-attr]
         payload,
         desc.field_type,
         desc.field_size,
@@ -89,7 +89,7 @@ VALID_PAYLOADS = [
 
 
 @pytest.mark.parametrize("payload", VALID_PAYLOADS)
-@needs_c_ext
+@needs_native
 def test_valid_rows_decode_identically_in_c_and_python(payload: bytes) -> None:
     assert _decode_c(payload) == _decode_python(payload)[0]
 
@@ -110,7 +110,7 @@ def test_malformed_layout_is_framing_error_in_python(name: str) -> None:
 
 
 @pytest.mark.parametrize("name", sorted(MALFORMED_LAYOUTS))
-@needs_c_ext
+@needs_native
 def test_malformed_layout_is_buffer_error_in_c(name: str) -> None:
     payload = MALFORMED_LAYOUTS[name]
     with pytest.raises(BufferError, match="reconnect is required"):
@@ -133,7 +133,7 @@ def test_null_index_outside_field_table_is_framing_error() -> None:
         _decode_python(payload, bad)
 
 
-@needs_c_ext
+@needs_native
 def test_null_index_outside_field_table_is_buffer_error_in_c() -> None:
     payload = _row(1, _varying(b"a"), bitmap=0)
     bad = _descriptor(phys=[0, 9])
@@ -151,7 +151,7 @@ def test_invalid_text_is_data_error_through_parser() -> None:
     assert cursor.cached_rows == []
 
 
-@needs_c_ext
+@needs_native
 def test_invalid_text_is_data_error_in_c_parser() -> None:
     cursor = SimpleNamespace(cached_rows=[])
     with pytest.raises(DataError):
@@ -159,7 +159,7 @@ def test_invalid_text_is_data_error_in_c_parser() -> None:
     assert cursor.cached_rows == []
 
 
-@needs_c_ext
+@needs_native
 def test_invalid_text_raises_unicode_error_from_c_codec() -> None:
     with pytest.raises(UnicodeDecodeError):
         _decode_c(INVALID_UTF8_PAYLOAD)
@@ -170,13 +170,13 @@ def _frame(payload: bytes) -> bytes:
     return b"Y" + b"\x00" * 4 + b"\x00" * 4 + struct.pack(">i", len(payload)) + payload
 
 
-@needs_c_ext
+@needs_native
 def test_batch_raises_on_value_fault_so_caller_falls_back_to_row_path() -> None:
     desc = _descriptor()
     good = _frame(_row(1, _varying(b"a")))
     bad = _frame(INVALID_UTF8_PAYLOAD)
     with pytest.raises(UnicodeDecodeError):
-        _cstate._c_ext.process_dbos_batch(  # type: ignore[union-attr]
+        _native._native_ext.process_dbos_batch(  # type: ignore[union-attr]
             memoryview(good + bad),
             desc.field_type,
             desc.field_size,
@@ -193,12 +193,12 @@ def test_batch_raises_on_value_fault_so_caller_falls_back_to_row_path() -> None:
         )
 
 
-@needs_c_ext
+@needs_native
 def test_batch_layout_fault_raises_buffer_error() -> None:
     desc = _descriptor()
     frame = _frame(MALFORMED_LAYOUTS["varying length past end"])
     with pytest.raises(BufferError):
-        _cstate._c_ext.process_dbos_batch(  # type: ignore[union-attr]
+        _native._native_ext.process_dbos_batch(  # type: ignore[union-attr]
             memoryview(frame),
             desc.field_type,
             desc.field_size,

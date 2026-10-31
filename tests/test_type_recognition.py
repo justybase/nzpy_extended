@@ -96,7 +96,7 @@ EXPECTED_PYTHON_TYPES = {
     2530:  str,                 # NVARCHAR
 }
 
-# OID 23 (INTEGER) — returned as int by the C extension
+# OID 23 (INTEGER) — returned as int by the native extension
 # OID 1184 (TIMESTAMPTZ) — returned as string currently (see KNOWN gaps)
 # OID 1186 (INTERVAL) — returned as Interval object
 # OID 1266 (TIMETZ) — returned as string currently

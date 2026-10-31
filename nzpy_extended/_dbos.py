@@ -1,8 +1,8 @@
 """DBOS (Database Operating System) binary row parsing.
 
 Two code paths are provided:
-  1. **C extension** (fast) — delegates to ``c_ext.process_dbos_row`` /
-     ``c_ext.process_dbos_batch``
+  1. **native extension** (fast) — delegates to ``rust_ext.process_dbos_row`` /
+     ``rust_ext.process_dbos_batch``
   2. **Pure-Python fallback** — ``_build_dbos_row_python``, a line-by-line
      reimplementation that handles every NzType variant.
 
@@ -16,7 +16,7 @@ from datetime import date, datetime as Datetime, time
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any
 
-from . import _cstate
+from . import _native
 from .exceptions import DataError, InterfaceError
 from .protocol import (
     NzTypeBool,
@@ -142,7 +142,7 @@ class DbosParser:
         tupdesc.DateStyle = i_unpack(data, data_idx)[0]
         tupdesc.EuroDates = i_unpack(data, data_idx + 4)[0]
 
-    # ----- Single-row dispatch (C-ext / pure-Python) ------------------------
+    # ----- Single-row dispatch (native-ext / pure-Python) ------------------------
 
     def _process_dbos_payload(
         self,
@@ -155,10 +155,10 @@ class DbosParser:
         """
         conn = self._conn
 
-        if _cstate._HAVE_C_EXT:
-            assert _cstate._c_ext is not None
+        if _native._HAVE_NATIVE:
+            assert _native._native_ext is not None
             try:
-                row = _cstate._c_ext.process_dbos_row(  # pyright: ignore[reportUnknownMemberType]
+                row = _native._native_ext.process_dbos_row(  # pyright: ignore[reportUnknownMemberType]
                     data,
                     tupdesc.field_type,
                     tupdesc.field_size,

@@ -16,7 +16,7 @@ SQL_FACTPRODUCT = "select * from JUST_DATA..FACTPRODUCTINVENTORY limit 100000"
 ROW_LIST_LEN = 7
 
 # Thresholds (tune if the test environment changes)
-# C-ext baseline Decimal fluctuation: 3146–3755; threshold 4500 => ~700 margin.
+# native-ext baseline Decimal fluctuation: 3146–3755; threshold 4500 => ~700 margin.
 MAX_DECIMALS = 4500
 MAX_ROW_LISTS = 4500
 
@@ -42,11 +42,11 @@ _ISOLATED_RSS_WORKER = r'''
 import asyncio, gc, json, os, sys
 sys.path.insert(0, sys.argv[1])
 from tests._memory_helpers import collect_snapshot
-api, mode, iters, fetch_rows, sql, cext_on = (
+api, mode, iters, fetch_rows, sql, native_on = (
     sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5]), sys.argv[6], sys.argv[7] == "1"
 )
-import nzpy_extended._cstate as _cstate
-_cstate._HAVE_C_EXT = cext_on
+import nzpy_extended._native as _native
+_native._HAVE_NATIVE = native_on
 NZ = dict(
     user=os.environ.get("NZ_DEV_USER", "admin"),
     password=os.environ.get("NZ_DEV_PASSWORD", "password"),
@@ -122,10 +122,10 @@ def collect_snapshot() -> tuple[float, int, int]:
     return rss_mb(), dec, rl
 
 
-def set_cext(enabled: bool, monkeypatch: pytest.MonkeyPatch) -> None:
-    import nzpy_extended._cstate as _cstate
+def set_native(enabled: bool, monkeypatch: pytest.MonkeyPatch) -> None:
+    import nzpy_extended._native as _native
 
-    monkeypatch.setattr(_cstate, "_HAVE_C_EXT", enabled)
+    monkeypatch.setattr(_native, "_HAVE_NATIVE", enabled)
 
 
 def assert_memory_stable(
@@ -179,7 +179,7 @@ def run_isolated_rss_benchmark(
     sql: str,
     *,
     fetch_rows: int = FETCH_ROWS_DEFAULT,
-    cext_on: bool = True,
+    native_on: bool = True,
     project_root: str | None = None,
 ) -> list[float]:
     """Run memory workload in a fresh subprocess (fair async vs sync comparison)."""
@@ -200,7 +200,7 @@ def run_isolated_rss_benchmark(
             str(iterations),
             str(fetch_rows),
             sql,
-            "1" if cext_on else "0",
+            "1" if native_on else "0",
         ],
         text=True,
     )

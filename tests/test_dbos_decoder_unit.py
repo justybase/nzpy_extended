@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from nzpy_extended import _cstate
+from nzpy_extended import _native
 from nzpy_extended._dbos import DbosParser
 from nzpy_extended.core import Connection
 from nzpy_extended.types import DbosTupleDesc
@@ -57,7 +57,7 @@ def _parser() -> DbosParser:
 
 
 def test_dbos_python_fallback_decodes_memoryview_payload(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(_cstate, "_HAVE_C_EXT", False)
+    monkeypatch.setattr(_native, "_HAVE_NATIVE", False)
     cursor = SimpleNamespace(cached_rows=[])
     payload = memoryview(_row_payload(42, "café"))
 
@@ -66,7 +66,7 @@ def test_dbos_python_fallback_decodes_memoryview_payload(monkeypatch: pytest.Mon
     assert cursor.cached_rows == [[42, "café"]]
 
 
-@pytest.mark.skipif(not _cstate._HAVE_C_EXT, reason="C extension is not built")
+@pytest.mark.skipif(not _native._HAVE_NATIVE, reason="native extension is not built")
 def test_dbos_c_row_decoder_accepts_memoryview_payload() -> None:
     cursor = SimpleNamespace(cached_rows=[])
     payload = memoryview(_row_payload(-7, "wide λ"))
@@ -76,7 +76,7 @@ def test_dbos_c_row_decoder_accepts_memoryview_payload() -> None:
     assert cursor.cached_rows == [[-7, "wide λ"]]
 
 
-@pytest.mark.skipif(not _cstate._HAVE_C_EXT, reason="C extension is not built")
+@pytest.mark.skipif(not _native._HAVE_NATIVE, reason="native extension is not built")
 def test_dbos_batch_decodes_varying_offsets_and_leaves_partial_frame() -> None:
     desc = _descriptor()
     payloads = [
@@ -89,7 +89,7 @@ def test_dbos_batch_decodes_varying_offsets_and_leaves_partial_frame() -> None:
     # Keep the frame header intact while leaving part of its payload unread.
     view = memoryview(complete + incomplete)
 
-    rows, consumed = _cstate._c_ext.process_dbos_batch(
+    rows, consumed = _native._native_ext.process_dbos_batch(
         view,
         desc.field_type,
         desc.field_size,

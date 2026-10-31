@@ -95,47 +95,47 @@ def is_java():
 
 
 # ---------------------------------------------------------------------------
-# C Extension parity fixture
+# Native extension parity fixture
 # ---------------------------------------------------------------------------
 
-_CEXT_ORIGINAL_FLAG = None
+_NATIVE_ORIGINAL_FLAG = None
 
 
 @pytest.fixture(params=[
-    pytest.param(True, id="C_ext"),
-    pytest.param(False, id="pure_python"),
+    pytest.param(True, id="native"),
+    pytest.param(False, id="python"),
 ])
-def cext_mode(request, monkeypatch):
+def native_mode(request, monkeypatch):
     """
-    Fixture parametrizing C extension usage.
+    Fixture parametrizing native extension usage.
 
-    Yields bool indicating whether C extension should be used.
-    When ``False``, monkeypatches ``nzpy_extended._cstate._HAVE_C_EXT``
+    Yields bool indicating whether native extension should be used.
+    When ``False``, monkeypatches ``nzpy_extended._native._HAVE_NATIVE``
     so that DBOS payload processing falls back to pure Python.
     """
-    import nzpy_extended._cstate as _cstate
+    import nzpy_extended._native as _native
 
-    use_c_ext = request.param
+    use_native_ext = request.param
 
     # Global cache so the second parametrized run retains the original flag
-    global _CEXT_ORIGINAL_FLAG
-    if _CEXT_ORIGINAL_FLAG is None:
-        _CEXT_ORIGINAL_FLAG = getattr(_cstate, "_HAVE_C_EXT", False)
+    global _NATIVE_ORIGINAL_FLAG
+    if _NATIVE_ORIGINAL_FLAG is None:
+        _NATIVE_ORIGINAL_FLAG = getattr(_native, "_HAVE_NATIVE", False)
 
-    if use_c_ext:
-        monkeypatch.setattr(_cstate, "_HAVE_C_EXT", True)
+    if use_native_ext:
+        monkeypatch.setattr(_native, "_HAVE_NATIVE", True)
     else:
-        monkeypatch.setattr(_cstate, "_HAVE_C_EXT", False)
+        monkeypatch.setattr(_native, "_HAVE_NATIVE", False)
 
-    yield use_c_ext
+    yield use_native_ext
 
     # Restore original after test
-    monkeypatch.setattr(_cstate, "_HAVE_C_EXT", _CEXT_ORIGINAL_FLAG)
+    monkeypatch.setattr(_native, "_HAVE_NATIVE", _NATIVE_ORIGINAL_FLAG)
 
 
 @pytest.fixture
-async def con_cext(db_kwargs_fn, cext_mode):
-    """Connection with pure-Python and C-ext parametrization, closed after test."""
+async def con_native(db_kwargs_fn, native_mode):
+    """Connection with pure-Python and native-ext parametrization, closed after test."""
     conn = await nzpy.connect(**db_kwargs_fn)
     yield conn
     try:

@@ -10,7 +10,7 @@ if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 
 import nzpy_extended
-from nzpy_extended import _cstate as nzpy_cstate
+from nzpy_extended import _native as nzpy_native
 
 # Official nzpy is required for comparison
 import nzpy
@@ -286,8 +286,8 @@ DRIVER_NAMES = [
     "pyodbc",
     "nzpy_extended_async",
     "nzpy_extended_sync",
-    "nzpy_extended_async_nocext",
-    "nzpy_extended_sync_nocext",
+    "nzpy_extended_async_nonative",
+    "nzpy_extended_sync_nonative",
 ]
 
 
@@ -361,8 +361,8 @@ async def _run_sync_driver(label, connect_fn, query, results_dict):
         conn = connect_fn()
         ct = time.perf_counter() - start_conn
         flags = []
-        if not nzpy_cstate._HAVE_C_EXT:
-            flags.append("C ext disabled")
+        if not nzpy_native._HAVE_NATIVE:
+            flags.append("native ext disabled")
         tag = f" ({', '.join(flags)})" if flags else ""
         out(f"  {label}: Connected in {ct:.4f}s{tag}")
         _run_sync_query(conn, label, query, results_dict)
@@ -380,8 +380,8 @@ async def _run_async_driver_extended(label, query, results_dict):
         )
         ct = time.perf_counter() - start_conn
         flags = []
-        if not nzpy_cstate._HAVE_C_EXT:
-            flags.append("C ext disabled")
+        if not nzpy_native._HAVE_NATIVE:
+            flags.append("native ext disabled")
         tag = f" ({', '.join(flags)})" if flags else ""
         out(f"  {label}: Connected in {ct:.4f}s{tag}")
         await _run_async_query(conn, label, query, results_dict)
@@ -425,10 +425,10 @@ async def run_single_type(type_name, query):
             results,
         )
 
-    # nzpy_extended async (with C extension)
+    # nzpy_extended async (with native extension)
     await _run_async_driver_extended("nzpy_extended_async", query, results)
 
-    # nzpy_extended sync (with C extension)
+    # nzpy_extended sync (with native extension)
     await _run_sync_driver(
         "nzpy_extended_sync",
         lambda: nzpy_extended.sync.connect(
@@ -438,20 +438,20 @@ async def run_single_type(type_name, query):
         results,
     )
 
-    # nzpy_extended async (pure Python, no C extension)
-    original_cext = nzpy_cstate._HAVE_C_EXT
-    nzpy_cstate._HAVE_C_EXT = False
+    # nzpy_extended async (pure Python, no native extension)
+    original_native = nzpy_native._HAVE_NATIVE
+    nzpy_native._HAVE_NATIVE = False
     try:
-        await _run_async_driver_extended("nzpy_extended_async_nocext", query, results)
+        await _run_async_driver_extended("nzpy_extended_async_nonative", query, results)
     finally:
-        nzpy_cstate._HAVE_C_EXT = original_cext
+        nzpy_native._HAVE_NATIVE = original_native
 
-    # nzpy_extended sync (pure Python, no C extension)
-    original_cext = nzpy_cstate._HAVE_C_EXT
-    nzpy_cstate._HAVE_C_EXT = False
+    # nzpy_extended sync (pure Python, no native extension)
+    original_native = nzpy_native._HAVE_NATIVE
+    nzpy_native._HAVE_NATIVE = False
     try:
         await _run_sync_driver(
-            "nzpy_extended_sync_nocext",
+            "nzpy_extended_sync_nonative",
             lambda: nzpy_extended.sync.connect(
                 user=USER, password=PASSWORD, host=HOST, port=PORT, database=DATABASE
             ),
@@ -459,7 +459,7 @@ async def run_single_type(type_name, query):
             results,
         )
     finally:
-        nzpy_cstate._HAVE_C_EXT = original_cext
+        nzpy_native._HAVE_NATIVE = original_native
 
     return results
 
