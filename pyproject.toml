@@ -7,7 +7,7 @@ name = "nzpy_extended"
 dynamic = ["version"]
 description = "IBM Netezza python driver - extended fork"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "krzysztof-d"},
@@ -17,9 +17,11 @@ classifiers = [
     "Intended Audience :: Developers",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Programming Language :: Python :: Implementation :: CPython",
     "Operating System :: OS Independent",
     "Topic :: Database :: Front-Ends",
@@ -42,6 +44,7 @@ test = [
     "pytest-asyncio",
     "pytest-timeout",
     "pytest-cov",
+    "psutil",
 ]
 lint = [
     "mypy>=1.13",
@@ -52,7 +55,7 @@ lint = [
 include = ["nzpy_extended*"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.11"
 strict = true
 warn_return_any = true
 warn_unused_ignores = true
@@ -74,7 +77,7 @@ module = "nzpy_extended.c_ext"
 ignore_errors = true
 
 [tool.pyright]
-pythonVersion = "3.12"
+pythonVersion = "3.11"
 typeCheckingMode = "strict"
 exclude = ["nzpy_extended/_version.py"]
 reportUnknownParameterType = "warning"
