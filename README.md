@@ -6,7 +6,7 @@
 
 | Feature | nzpy (IBM) | nzpy_extended |
 |---|---|---|
-| Row parsing performance (mixed types, macOS) | ~10 000 rows/s | ~63 000 rows/s (no native ext) → **~93 000 rows/s** (+ native ext) |
+| Row parsing performance (mixed types, macOS; C decoder 0.7.x) | ~10 000 rows/s | ~63 000 rows/s (no native ext) → **~93 000 rows/s** (+ native ext) |
 | Supported Python | 3.11+ | **3.11, 3.12, 3.13, 3.14, 3.15** |
 | Platform wheels | ❌ None | ✅ Linux x64, macOS ARM, Windows x64 (pre-built) |
 | Async support | ❌ | ✅ Fully async API |
@@ -28,16 +28,18 @@ _Measured with the previous C decoder (0.7.x); not re-measured with the Rust dec
 
 ### WSL2 (Linux x86_64)
 
-Measured with nzpy_extended 0.8.0 (Rust decoder) on 2026-10-31 using `tools/examples/performance_test.py`: 100 000 rows, median of three runs. The nzpy_extended columns average the async and sync medians. Run-to-run spread is about 5% for most cells and up to about 24% for a few.
+Measured with nzpy_extended 0.8.0 (Rust decoder) on 2026-10-31 using `tools/examples/performance_test.py`: 100 000 rows, median of three runs, after the text fast path and the bad-value batch fix. The nzpy_extended columns average the async and sync medians. Run-to-run spread is about 5% for most cells and up to about 15% for a few.
 
 | Data type | official nzpy | nzpy_extended (no native ext) | nzpy_extended (+ native ext) | vs. ODBC |
 |---|---|---|---|---|
-| INTEGER | ~32 k rows/s | ~194 k rows/s | **~712 k rows/s** | ~115 k rows/s |
-| NUMERIC | ~15 k rows/s | ~86 k rows/s | **~192 k rows/s** | ~76 k rows/s |
-| STRING | ~30 k rows/s | ~107 k rows/s | **~192 k rows/s** | ~99 k rows/s |
-| DATETIME | ~30 k rows/s | ~156 k rows/s | **~859 k rows/s** | ~147 k rows/s |
-| BOOLEAN | ~37 k rows/s | ~261 k rows/s | **~932 k rows/s** | ~230 k rows/s |
-| Mixed | ~8 k rows/s | ~41 k rows/s | **~92 k rows/s** | ~27 k rows/s |
+| INTEGER | ~32 k rows/s | ~191 k rows/s | **~721 k rows/s** | ~114 k rows/s |
+| NUMERIC | ~17 k rows/s | ~87 k rows/s | **~188 k rows/s** | ~76 k rows/s |
+| STRING | ~32 k rows/s | ~111 k rows/s | **~192 k rows/s** | ~96 k rows/s |
+| DATETIME | ~30 k rows/s | ~150 k rows/s | **~836 k rows/s** | ~147 k rows/s |
+| BOOLEAN | ~42 k rows/s | ~250 k rows/s | **~935 k rows/s** | ~226 k rows/s |
+| Mixed | ~8 k rows/s | ~42 k rows/s | **~91 k rows/s** | ~27 k rows/s |
+
+On WSL2 the native extension is about 3.8x faster than pure Python for integer columns, 2.2x for numeric, 1.7x for string, 5.6x for datetime and 3.7x for boolean (ratios of the averaged columns). String columns gain less because the server spends most of the time before the first row arrives: the benchmark query computes its values on the server, so the decoder is about 7% of the end-to-end time for that query (about 15% before the text fast path). A live interleaved check (`tools/examples/benchmark_native_vs_python.py`, 153 600 mixed rows, five rounds) measured pure Python at about 4.5x the native time.
 
 Note: WSL2 results were obtained on the same Netezza server as Windows 11 (192.168.0.144). ODBC results use a ctypes-based ANSI-ODBC fallback (because pyodbc's Unicode API is incompatible with the Netezza ODBC driver on Linux). This wrapper fetches every cell individually via `SQLGetData`, so ODBC numbers on WSL2 are **understated** vs. native pyodbc on Windows (which uses `SQLBindCol` batch fetching). The real ODBC-vs-native gap on Linux is likely smaller.
 
@@ -55,8 +57,6 @@ Benchmarks run on a Mac mini (Apple M4, 16 GB RAM) — same Netezza server at 
 | DATETIME | ~42 k rows/s | ~253 k rows/s | **~683 k rows/s** |
 | BOOLEAN | ~53 k rows/s | ~449 k rows/s | **~786 k rows/s** |
 | Mixed | ~10 k rows/s | ~63 k rows/s | **~93 k rows/s** |
-
-The native extension accelerates integer, decimal, datetime, and boolean parsing by avoiding Python object allocations per field and `struct.unpack` overhead. String parsing is primarily network-bound, so the native extension offers minimal benefit there.
 
 If the compiled extension is not available (unsupported platform or Python version), the driver **gracefully falls back** to pure Python with identical semantics.
 
