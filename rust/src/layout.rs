@@ -58,11 +58,15 @@ pub fn resolve_starts(
         return fail("varying field count is invalid");
     }
 
-    let mut var_offsets: Vec<i64> = Vec::with_capacity(shape.num_varying as usize);
+    // Each varying entry takes at least two bytes, so the row length bounds the
+    // count; the header count alone must not drive the allocation.
+    let mut var_offsets: Vec<i64> =
+        Vec::with_capacity((shape.num_varying as usize).min(row.len() / 2));
     let mut cur = shape.fixed_fields_size;
     for _ in 0..shape.num_varying {
         var_offsets.push(cur);
-        if cur + 2 > len {
+        // `len >= 2` here (checked above), so the subtraction cannot underflow.
+        if cur > len - 2 {
             return fail("varying field length is truncated");
         }
         let vlen = u16_le(row, cur as usize) as i64;
@@ -180,7 +184,9 @@ fn check_span(
         }
         _ => 0,
     };
-    if start + need > len {
+    // `start` is within the row here, so `len - start` cannot underflow; adding
+    // `need` could overflow for a hostile size.
+    if need > len - start {
         return fail(format!("field {i} extends beyond the row"));
     }
     Ok(())
@@ -250,6 +256,55 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err.0, "varying field length is invalid");
+    }
+
+    #[test]
+    fn huge_varying_count_is_bounded_by_the_row() {
+        // Regression (found by fuzzing): the header count sized an allocation
+        // before any bounds check. A count of i32::MAX must fail cleanly.
+        let shape = RowShape {
+            num_fields: 0,
+            nulls_allowed: false,
+            fixed_fields_size: 2,
+            num_varying: i64::from(i32::MAX),
+        };
+        let err = resolve_starts(&shape, &[], &[0u8, 0]).unwrap_err();
+        assert_eq!(err.0, "varying field length is truncated");
+    }
+
+    #[test]
+    fn huge_fixed_offset_does_not_overflow() {
+        // Regression (found by review): `cur + 2` wrapped for a near-i64::MAX offset.
+        let shape = RowShape {
+            num_fields: 0,
+            nulls_allowed: false,
+            fixed_fields_size: i64::MAX,
+            num_varying: 1,
+        };
+        let err = resolve_starts(&shape, &[], &[0u8, 0]).unwrap_err();
+        assert_eq!(err.0, "varying field length is truncated");
+    }
+
+    #[test]
+    fn huge_field_size_does_not_overflow() {
+        // Regression (found by review): `start + need` wrapped for a hostile size.
+        let row = [0u8; 16];
+        let shape = RowShape {
+            num_fields: 1,
+            nulls_allowed: false,
+            fixed_fields_size: 2,
+            num_varying: 0,
+        };
+        let f = FieldMeta {
+            phys: 0,
+            ftype: t::CHAR,
+            size: i64::MAX,
+            true_size: 0,
+            offset: 2,
+            fixed: 0,
+        };
+        let err = resolve_starts(&shape, &[f], &row).unwrap_err();
+        assert_eq!(err.0, "field 0 extends beyond the row");
     }
 
     #[test]

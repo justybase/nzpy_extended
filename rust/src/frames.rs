@@ -5,12 +5,13 @@
 /// Returns `(payload_start, payload_len)` of the next complete `Y` frame at `pos`,
 /// or `None` for a non-`Y` byte, an incomplete header, or an incomplete payload.
 pub fn next_row_frame(buf: &[u8], pos: usize) -> Option<(usize, usize)> {
-    if pos + 13 > buf.len() || buf[pos] != b'Y' {
+    // `get` rejects `pos` past the end without any arithmetic on `pos`.
+    let rest = buf.get(pos..)?;
+    if rest.len() < 13 || rest[0] != b'Y' {
         return None;
     }
-    let len =
-        u32::from_be_bytes([buf[pos + 9], buf[pos + 10], buf[pos + 11], buf[pos + 12]]) as usize;
-    if len > buf.len() - pos - 13 {
+    let len = u32::from_be_bytes([rest[9], rest[10], rest[11], rest[12]]) as usize;
+    if len > rest.len() - 13 {
         return None;
     }
     Some((pos + 13, len))
@@ -36,6 +37,15 @@ mod tests {
         buf.extend_from_slice(&frame(b"partial")[..15]);
         assert_eq!(next_row_frame(&buf, 0), Some((13, 3)));
         assert_eq!(next_row_frame(&buf, complete), None);
+    }
+
+    #[test]
+    fn position_past_the_end_is_not_a_frame() {
+        // Regression (found by review): `pos + 13` could wrap for a huge `pos`.
+        let buf = frame(b"abc");
+        assert_eq!(next_row_frame(&buf, usize::MAX), None);
+        assert_eq!(next_row_frame(&buf, buf.len() + 1), None);
+        assert_eq!(next_row_frame(&buf, buf.len()), None);
     }
 
     #[test]

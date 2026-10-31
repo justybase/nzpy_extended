@@ -144,3 +144,7 @@ cython_debug/
 *~
 NUL
 *.pyd
+
+# cargo-fuzz generated corpus and crash artifacts (target/ is ignored above)
+rust/fuzz/corpus/
+rust/fuzz/artifacts/

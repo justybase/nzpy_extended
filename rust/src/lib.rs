@@ -7,8 +7,12 @@
 //! - `TypeError`: metadata is not a list.
 
 mod fields;
-mod frames;
-mod layout;
+// Public only so the cargo-fuzz targets in `rust/fuzz` can reach the pure
+// framing and layout code. Not part of the documented API.
+#[doc(hidden)]
+pub mod frames;
+#[doc(hidden)]
+pub mod layout;
 mod numeric;
 mod nztype;
 mod pycache;
