@@ -33,7 +33,7 @@ All notable changes to `nzpy_extended` are documented in this file.
   4-byte `TIME`) decode as the reference does.
 - The environment variable `NZPY_EXTENDED_NO_CEXT` is renamed to
   `NZPY_EXTENDED_NO_NATIVE`. The old name still selects pure Python in this
-  release but emits a `FutureWarning`; it will be removed in 0.8.
+  release but emits a `FutureWarning`; it will be removed in 0.9.
 - If the native decoder cannot be imported, the driver emits a `RuntimeWarning`
   and falls back to the much slower pure-Python decoder. Setting
   `NZPY_EXTENDED_NO_NATIVE=1` selects pure Python deliberately, without a warning.

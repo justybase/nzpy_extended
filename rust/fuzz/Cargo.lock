@@ -77,7 +77,7 @@ dependencies = [
 
 [[package]]
 name = "nzpy_rust_ext"
-version = "0.7.3"
+version = "0.8.0"
 dependencies = [
  "pyo3",
 ]
