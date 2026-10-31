@@ -148,3 +148,6 @@ NUL
 # cargo-fuzz generated corpus and crash artifacts (target/ is ignored above)
 rust/fuzz/corpus/
 rust/fuzz/artifacts/
+
+# local Claude Code workspace (not project content)
+.commandcode/
