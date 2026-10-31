@@ -2,6 +2,7 @@ name: Test
 
 # CI runs without a live Netezza instance: unit tests, type checks, and import smoke only.
 # Integration tests (markers smoke/full) require NZ_DEV_* env vars and must be run locally.
+# The package builds with maturin, so every job needs a Rust toolchain.
 
 on:
   push:
@@ -15,15 +16,23 @@ jobs:
     name: Unit tests (Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     env:
-      NZPY_EXTENDED_NO_CEXT: ${{ matrix.no-cext }}
+      NZPY_EXTENDED_NO_NATIVE: ${{ matrix.no-native }}
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
         os: [ubuntu-latest, windows-latest, macos-latest]
-        no-cext: ["0", "1"]
+        no-native: ["0", "1"]
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -37,21 +46,57 @@ jobs:
 
       - name: Run unit tests
         run: |
-          python -c "import os; from nzpy_extended._cstate import _HAVE_C_EXT; assert _HAVE_C_EXT == (os.environ['NZPY_EXTENDED_NO_CEXT'] == '0')"
+          python -c "import os; from nzpy_extended._native import _HAVE_NATIVE; assert _HAVE_NATIVE == (os.environ['NZPY_EXTENDED_NO_NATIVE'] == '0')"
           pytest tests -m unit -v --tb=short --strict-config --cov=nzpy_extended --cov-branch --cov-report=term --cov-report=xml
         shell: bash
 
       - name: Upload coverage
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-${{ matrix.os }}-${{ matrix.python-version }}-${{ matrix.no-cext }}
+          name: coverage-${{ matrix.os }}-${{ matrix.python-version }}-${{ matrix.no-native }}
           path: coverage.xml
+
+  rust:
+    name: Rust crate (fmt, clippy, unit tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: fmt
+        working-directory: rust
+        run: cargo fmt --check
+
+      - name: clippy
+        working-directory: rust
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo test
+        working-directory: rust
+        run: cargo test --lib
 
   lint:
     name: Type check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -75,6 +120,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -91,10 +144,11 @@ jobs:
         run: |
           python -c "
           import nzpy_extended
-          from nzpy_extended._cstate import _HAVE_C_EXT
+          from nzpy_extended import _native
           print('version:', nzpy_extended.__version__)
-          print('C extension:', _HAVE_C_EXT)
-          assert _HAVE_C_EXT
+          print('native decoder:', _native._native_ext.__name__ if _native._native_ext else None)
+          assert _native._HAVE_NATIVE
+          assert _native._native_ext.__name__ == 'nzpy_extended.rust_ext'
           assert nzpy_extended.__version__ != '0+unknown'
           "
 

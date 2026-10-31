@@ -11,11 +11,27 @@ jobs:
   quality:
     uses: ./.github/workflows/test.yaml
   build-wheels:
-    name: Build wheels on ${{ matrix.os }}
+    name: Build wheels on ${{ matrix.os }} (${{ matrix.archs }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            archs: x86_64
+            rust_targets: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            archs: arm64 universal2
+            rust_targets: aarch64-apple-darwin x86_64-apple-darwin
+          - os: windows-latest
+            archs: AMD64
+            rust_targets: x86_64-pc-windows-msvc
+          # Cross-compiled: cargo must target ARM64 explicitly, otherwise the
+          # DLL is built for the AMD64 host and cannot load in an ARM64 Python.
+          - os: windows-latest
+            archs: ARM64
+            rust_targets: aarch64-pc-windows-msvc
+            cargo_target: aarch64-pc-windows-msvc
 
     steps:
       - uses: actions/checkout@v4
@@ -26,17 +42,24 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.23
         env:
-          CIBW_ARCHS_LINUX: x86_64
-          CIBW_ARCHS_MACOS: arm64 universal2
-          CIBW_ARCHS_WINDOWS: AMD64 ARM64
+          CIBW_ARCHS: ${{ matrix.archs }}
           CIBW_BUILD: cp311-* cp312-* cp313-* cp314-* cp315-*
+          # The manylinux build container has no Rust; install it inside.
+          CIBW_BEFORE_ALL_LINUX: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          CIBW_ENVIRONMENT_LINUX: PATH="$HOME/.cargo/bin:$PATH"
+          CIBW_ENVIRONMENT: ${{ matrix.cargo_target && format('CARGO_BUILD_TARGET={0}', matrix.cargo_target) || '' }}
 
       - uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.os }}
+          name: wheels-${{ matrix.os }}-${{ strategy.job-index }}
           path: ./wheelhouse/*.whl
 
   build-sdist:
@@ -53,7 +76,7 @@ jobs:
 
       - name: Build sdist
         run: |
-          pip install build setuptools wheel
+          pip install build
           python -m build --sdist
 
       - uses: actions/upload-artifact@v4
@@ -80,12 +103,21 @@ jobs:
       - name: List distributions
         run: ls -la dist/
 
-      - name: Verify sdist installs with correct version
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify sdist installs with correct version and Rust decoder
         run: |
           python -m venv /tmp/sdist-test-venv
           /tmp/sdist-test-venv/bin/pip install --upgrade pip
           SDIST=$(ls dist/*.tar.gz | head -1)
           /tmp/sdist-test-venv/bin/pip install "$SDIST" --no-binary nzpy-extended
-          /tmp/sdist-test-venv/bin/python -c "import nzpy_extended; v=nzpy_extended.__version__; assert v and v != '0+unknown', v"
+          /tmp/sdist-test-venv/bin/python -c "
+          import nzpy_extended
+          from nzpy_extended import _native
+          v = nzpy_extended.__version__
+          assert v and v != '0+unknown', v
+          assert _native._native_ext is not None and _native._native_ext.__name__ == 'nzpy_extended.rust_ext', _native._native_ext
+          "
 
       - uses: pypa/gh-action-pypi-publish@release/v1
