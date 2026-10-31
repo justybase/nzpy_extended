@@ -1,12 +1,12 @@
 # nzpy_extended: High-performance IBM Netezza driver for Python
 
-**nzpy_extended** is a hard fork of [IBM nzpy](https://github.com/IBM/nzpy) — enriched with new features, major performance improvements via a C extension, and expanded platform support.
+**nzpy_extended** is a hard fork of [IBM nzpy](https://github.com/IBM/nzpy) — enriched with new features, major performance improvements via a native extension, and expanded platform support.
 
 ## Key differences from upstream nzpy
 
 | Feature | nzpy (IBM) | nzpy_extended |
 |---|---|---|
-| Row parsing performance (mixed types, macOS) | ~10 000 rows/s | ~63 000 rows/s (no C ext) → **~93 000 rows/s** (+ C ext) |
+| Row parsing performance (mixed types, macOS) | ~10 000 rows/s | ~63 000 rows/s (no native ext) → **~93 000 rows/s** (+ native ext) |
 | Supported Python | 3.11+ | **3.11, 3.12, 3.13, 3.14, 3.15** |
 | Platform wheels | ❌ None | ✅ Linux x64, macOS ARM, Windows x64 (pre-built) |
 | Async support | ❌ | ✅ Fully async API |
@@ -15,7 +15,7 @@
 
 ### Windows 11
 
-| Data type | official nzpy | nzpy_extended (no C ext) | nzpy_extended (+ C ext) | vs. ODBC |
+| Data type | official nzpy | nzpy_extended (no native ext) | nzpy_extended (+ native ext) | vs. ODBC |
 |---|---|---|---|---|
 | INTEGER | ~18 k rows/s | ~196 k rows/s | **~256 k rows/s** | ≈ ODBC (~239 k) |
 | NUMERIC | ~10 k rows/s | ~75 k rows/s | **~97 k rows/s** | ≈ ODBC (~90 k) |
@@ -26,7 +26,7 @@
 
 ### WSL2 (Linux x86_64)
 
-| Data type | official nzpy | nzpy_extended (no C ext) | nzpy_extended (+ C ext) | vs. ODBC |
+| Data type | official nzpy | nzpy_extended (no native ext) | nzpy_extended (+ native ext) | vs. ODBC |
 |---|---|---|---|---|
 | INTEGER | ~21 k rows/s | ~203 k rows/s | **~640 k rows/s** | ~92 k rows/s |
 | NUMERIC | ~11 k rows/s | ~79 k rows/s | **~150 k rows/s** | ~63 k rows/s |
@@ -41,7 +41,7 @@ Note: WSL2 results were obtained on the same Netezza server as Windows 11 (192.1
 
 Benchmarks run on a Mac mini (Apple M4, 16 GB RAM) — same Netezza server at 192.168.0.144. 100 k rows per query.
 
-| Data type | official nzpy | nzpy_extended (no C ext) | nzpy_extended (+ C ext) |
+| Data type | official nzpy | nzpy_extended (no native ext) | nzpy_extended (+ native ext) |
 |---|---|---|---|
 | INTEGER | ~44 k rows/s | ~356 k rows/s | **~726 k rows/s** |
 | NUMERIC | ~22 k rows/s | ~122 k rows/s | **~195 k rows/s** |
@@ -50,7 +50,7 @@ Benchmarks run on a Mac mini (Apple M4, 16 GB RAM) — same Netezza server at 
 | BOOLEAN | ~53 k rows/s | ~449 k rows/s | **~786 k rows/s** |
 | Mixed | ~10 k rows/s | ~63 k rows/s | **~93 k rows/s** |
 
-The C extension accelerates integer, decimal, datetime, and boolean parsing by avoiding Python object allocations per field and `struct.unpack` overhead. String parsing is primarily network-bound, so the C extension offers minimal benefit there.
+The native extension accelerates integer, decimal, datetime, and boolean parsing by avoiding Python object allocations per field and `struct.unpack` overhead. String parsing is primarily network-bound, so the native extension offers minimal benefit there.
 
 If the compiled extension is not available (unsupported platform or Python version), the driver **gracefully falls back** to pure Python with identical semantics.
 
@@ -70,7 +70,7 @@ Pre-built wheels are provided for:
 | macOS | ARM64 (Apple Silicon) | 3.11 / 3.12 / 3.13 / 3.14 / 3.15 |
 | Windows | x86_64 | 3.11 / 3.12 / 3.13 / 3.14 / 3.15 |
 
-For other platforms or Python versions, `pip install` will compile the C extension from source (requires a C compiler: GCC, Clang, or MSVC). On systems without a compiler the install will fail — use a supported platform or version.
+For other platforms or Python versions, `pip install` builds the native decoder from source with [maturin](https://www.maturin.rs/). This requires a stable Rust toolchain (install it with [rustup](https://rustup.rs)). Without one the install fails — use a supported platform or install Rust first.
 
 ## Quick Start
 
@@ -461,7 +461,7 @@ asyncio.run(main())
 ## Requirements
 
 - Python ≥ 3.11 (tested on 3.11 through 3.15)
-- CPython (PyPy not supported for C extension, pure-Python fallback only)
+- CPython (PyPy not supported for native extension, pure-Python fallback only)
 
 ## Testing
 
@@ -477,7 +477,7 @@ name wins when both are set. See `CHANGELOG.md` for unreleased compatibility fix
 
 Pull requests run **without a live Netezza database**:
 
-- Unit tests (`paramstyle`, regressions, C/Python parity, buffer pool/stream, pool, csv_import)
+- Unit tests (`paramstyle`, regressions, native/Python parity, buffer pool/stream, pool, csv_import)
 - `mypy` and `pyright`
 - Wheel and sdist import smoke
 
@@ -520,7 +520,7 @@ pytest tests/ -v
 CI-equivalent (no database):
 ```shell
 pytest tests/test_paramstyle.py tests/test_typeobjects.py tests/test_regressions_unit.py \
-  tests/test_c_python_parity_unit.py tests/test_buffer_pool.py tests/test_buffered_stream.py \
+  tests/test_native_parity_unit.py tests/test_buffer_pool.py tests/test_buffered_stream.py \
   tests/test_csv_import_unit.py tests/test_pool_unit.py -v
 ```
 
@@ -540,36 +540,34 @@ await nzpy.connect(
 
 See [CHANGELOG.md](CHANGELOG.md) for the full list of changes.
 
-### C Extension / Pure Python parity
+### Native decoder / pure Python parity
 
-The C extension and pure-Python fallback must produce identical results for all data types. Parity tests verify this in two ways:
+The native DBOS decoder (`nzpy_extended.rust_ext`, source in `rust/`) and the pure-Python decoder must produce identical results for all data types.
 
-**Unit tests** (`tests/test_c_python_parity_unit.py`) — compare individual C parser functions against Python reference implementations byte-by-byte. No database required.
+**Unit tests** (`tests/test_native_parity_unit.py`) — compare the native decoders against the Python reference on generated rows: appliance-shaped, mutated, and out-of-spec widths. No database required.
 
 ```shell
-pytest tests/test_c_python_parity_unit.py -v
+pytest tests/test_native_parity_unit.py -v
 ```
 
-**Integration tests** (`tests/test_c_python_parity_integration.py`) — run real SQL queries through both code paths and verify results match. Requires a database.
+**Integration tests** (`tests/test_native_parity_integration.py`) — run real SQL queries through both code paths and verify results match. Requires a database.
 
 ```shell
-pytest tests/test_c_python_parity_integration.py -v
+pytest tests/test_native_parity_integration.py -v
 ```
 
-**Verification script** — runs both test suites in C-extension and pure-Python modes side-by-side:
+**Verification script** — runs the decoder tests against the selected native module and in pure-Python mode:
 
 ```shell
-python tools/verify_c_python_parity.py
+python tools/verify_native_parity.py
 ```
 
-**Disabling C extension at runtime:**
+**Disabling the native decoder at runtime:**
 
-Set the environment variable `NZPY_EXTENDED_NO_CEXT=1` to force pure-Python mode even when the compiled extension is available. Useful for debugging or verifying fallback correctness.
+Set the environment variable `NZPY_EXTENDED_NO_NATIVE=1` to force pure-Python mode even when the native module is installed. Useful for debugging or verifying fallback correctness.
 
 ```shell
-NZPY_EXTENDED_NO_CEXT=1 pip install nzpy_extended
-# or at runtime:
-NZPY_EXTENDED_NO_CEXT=1 python -c "import nzpy_extended.core; print(nzpy_extended.core._HAVE_C_EXT)"  # False
+NZPY_EXTENDED_NO_NATIVE=1 python -c "from nzpy_extended import _native; print(_native._HAVE_NATIVE)"  # False
 ```
 
 ## Reproducing benchmark results
@@ -637,7 +635,7 @@ export NZ_ROWS=100000  # Linux/macOS
 
 ### What the script does
 
-1. Connects using each driver: `official_nzpy` (always), `pyodbc` (via ANSI-ODBC ctypes fallback on Linux), `nzpy_extended` (async + sync, with and without C extension).
+1. Connects using each driver: `official_nzpy` (always), `pyodbc` (via ANSI-ODBC ctypes fallback on Linux), `nzpy_extended` (async + sync, with and without native extension).
 2. Runs six query categories: `integer_types`, `numeric_types`, `string_types`, `datetime_types`, `boolean_types`, and `all_types` (mixed).
 3. Prints per-query timing, a compact DRIVER × TYPE comparison table (matching the README layout), and visual bar charts.
 
@@ -656,7 +654,7 @@ python tools/examples/performance_test.py
 ### Force pure-Python mode
 
 ```shell
-set NZPY_EXTENDED_NO_CEXT=1
+set NZPY_EXTENDED_NO_NATIVE=1
 python tools/examples/performance_test.py
 ```
 

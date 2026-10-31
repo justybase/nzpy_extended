@@ -14,11 +14,25 @@ All notable changes to `nzpy_extended` are documented in this file.
 - Golden wire fixtures captured from a real appliance (`tests/data/wire`) are
   replayed offline under several fragmentation sizes, and every truncation point
   must fail with a driver error.
-- Seeded fuzz and property tests for malformed responses and the C/pure-Python
-  DBOS decoders (`tests/test_wire_fuzz_unit.py`).
+- Seeded fuzz and property tests for malformed responses and the native and
+  pure-Python DBOS decoders (`tests/test_wire_fuzz_unit.py`).
 
 ### Changed
 
+- The DBOS row decoder has a native implementation in Rust (PyO3, `rust/`),
+  built with maturin as `nzpy_extended.rust_ext`. It is used by default.
+  `NZPY_EXTENDED_NO_NATIVE=1` selects the pure-Python decoder instead. Both
+  decoders produce the same results; the pure-Python decoder is the reference.
+  Inputs outside the widths a Netezza 11.2 appliance sends (for example a 12-byte
+  `NUMERIC` chunk, a `TIMESTAMP` that is not 8 bytes, `CHAR` size 0, or a negative
+  4-byte `TIME`) decode as the reference does.
+- The environment variable `NZPY_EXTENDED_NO_CEXT` is renamed to
+  `NZPY_EXTENDED_NO_NATIVE`. The old name is no longer read.
+- Packaging uses the maturin build backend. The version is read from
+  `rust/Cargo.toml`; `setup.py`, `setup.cfg`, `MANIFEST.in` and versioneer are
+  removed, and `nzpy_extended.__version__` is read from the installed
+  distribution metadata. Installing from a source distribution needs a Rust
+  toolchain.
 - Handshake option decisions (option order, authentication payloads, version
   downgrade rules) moved into `nzpy_extended/_handshake_plan.py`, a pure module
   that mirrors the Rust driver's shared handshake planning. `handshake.py` now
@@ -27,13 +41,16 @@ All notable changes to `nzpy_extended` are documented in this file.
 
 ### Fixed
 
+- `CHAR`/`NCHAR` values containing non-Latin-1 text were corrupted by padding:
+  the result was built as a 1-byte-kind string, so `ż` came back as `|`. Found on
+  a live Netezza 11.2 appliance; the native decoder keeps the text intact.
 - Handshake sent `REMOTE_PID` twice on the version-6 path. The option sequence
   now matches the reference driver.
 - DBOS `NUMERIC` values with more than 28 significant digits were rounded by the
   decimal context. Values are now built exactly from their unscaled digits and
-  scale, in both the C extension and the pure-Python decoder.
-- DBOS empty `VARCHAR` values decode as `""` in the C extension, which returned
-  `None` before. Only the presence bitmap produces `NULL`.
+  scale, in both the native and the pure-Python decoder.
+- DBOS empty `VARCHAR` values decode as `""`; they used to come back as `None`.
+  Only the presence bitmap produces `NULL`.
 - DBOS `SMALLINT` values were read unsigned in the pure-Python decoder, so `-32768`
   came back as `32768`.
 - A `DataError` from a value that fails to decode was dropped by `fetchall` and
@@ -49,8 +66,8 @@ All notable changes to `nzpy_extended` are documented in this file.
   resynchronizing it. Connections are also closed on any protocol framing fault.
 - Value decode errors in result rows raise `DataError` at `ReadyForQuery` and
   leave the session usable. A server error takes precedence over them.
-- Harden DBOS row decoding in the C extension: layout checks run before any
-  value is read, and decode failures propagate instead of becoming `None`.
+- Harden DBOS row decoding: layout checks run before any value is read, and
+  decode failures propagate instead of becoming `None`.
 - Pools probe idle sockets on checkout and never return a closed or desynced
   connection to the pool on release.
 

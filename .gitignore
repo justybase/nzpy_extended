@@ -3,7 +3,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# C extensions
+# native extensions (Rust/maturin build output)
 *.so
 
 # Distribution / packaging
@@ -143,3 +143,4 @@ cython_debug/
 *.swo
 *~
 NUL
+*.pyd

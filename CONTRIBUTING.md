@@ -10,7 +10,7 @@ cd nzpy_extended
 python -m pip install -e ".[test,lint]"
 ```
 
-Python **3.11+** and a C compiler are required to build the optional C extension. Set `NZPY_EXTENDED_NO_CEXT=1` to skip the extension during development.
+Python **3.11+** and a stable **Rust toolchain** (via [rustup](https://rustup.rs)) are required: the native DBOS decoder is built with maturin from `rust/`. Set `NZPY_EXTENDED_NO_NATIVE=1` at runtime to force the pure-Python decoder; it no longer skips a build step.
 
 ## Running tests
 
@@ -18,12 +18,28 @@ The current offline CI command discovers every test marked `unit`:
 
 ```shell
 pytest tests -m unit --strict-config --cov=nzpy_extended --cov-branch
-NZPY_EXTENDED_NO_CEXT=1 pytest tests -m unit --strict-config
+NZPY_EXTENDED_NO_NATIVE=1 pytest tests -m unit --strict-config
 ```
 
-Install `.[test]` first; this includes the timeout and coverage plugins. The C
-job asserts that the compiled extension is available before testing. CI runs both
-implementations on Python 3.12–3.14 and Linux, macOS and Windows.
+Install `.[test]` first; this includes the timeout and coverage plugins. The unit
+job asserts that the native extension (`rust_ext`) is loaded unless
+`NZPY_EXTENDED_NO_NATIVE=1` is set. CI runs both implementations on Python
+3.11–3.15 and Linux, macOS and Windows.
+
+### Rust crate
+
+The native decoder lives in `rust/` (crate `nzpy_rust_ext`, module `nzpy_extended.rust_ext`).
+Run its checks from that directory:
+
+```shell
+cd rust
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test --lib
+```
+
+`cargo test` covers the pure-Rust logic (layout, framing, numeric, temporal).
+Python-level behaviour is covered by the parity tests in `tests/test_native_parity_unit.py`.
 
 Live tests require explicit credentials and a database in the environment.
 `NZ_DEV_DATABASE` takes precedence over the legacy `NZ_DEV_DB` alias. Without
@@ -46,7 +62,7 @@ These tests run on every GitHub Actions push/PR. **No live Netezza instance is a
 pytest tests/test_paramstyle.py \
   tests/test_typeobjects.py \
   tests/test_regressions_unit.py \
-  tests/test_c_python_parity_unit.py \
+  tests/test_native_parity_unit.py \
   tests/test_buffer_pool.py \
   tests/test_buffered_stream.py \
   tests/test_csv_import_unit.py \
@@ -61,10 +77,10 @@ mypy nzpy_extended
 pyright nzpy_extended
 ```
 
-C/Python parity shortcut:
+Native/Python parity shortcut:
 
 ```shell
-python tools/verify_c_python_parity.py
+python tools/verify_native_parity.py
 ```
 
 ### Local integration (requires Netezza)
@@ -114,4 +130,7 @@ Defined in `pytest.ini`:
 
 ## Release
 
-Releases are tagged `vX.Y.Z` and published via `.github/workflows/publish.yaml` (cibuildwheel + PyPI OIDC).
+Releases are tagged `vX.Y.Z` and published via `.github/workflows/publish.yaml`
+(cibuildwheel driving the maturin build backend, with a Rust toolchain installed on
+each platform, then PyPI OIDC). The version is read from `rust/Cargo.toml`, so bump
+it there together with the tag. Source distributions need a Rust toolchain to install.
