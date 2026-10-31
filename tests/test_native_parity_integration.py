@@ -26,27 +26,14 @@ pytestmark = pytest.mark.full
 # Fixtures
 # ---------------------------------------------------------------------------
 
-_NATIVE_ORIGINAL_FLAG = None
-
-
 @pytest.fixture
 def is_native_extension_available():
     import nzpy_extended._native as _native
     return getattr(_native, "_HAVE_NATIVE", False)
 
 
-@pytest.fixture(params=[pytest.param(True, id="native"), pytest.param(False, id="python")])
-def native_mode(request, monkeypatch):
-    import nzpy_extended._native as _native
-
-    global _NATIVE_ORIGINAL_FLAG
-    if _NATIVE_ORIGINAL_FLAG is None:
-        _NATIVE_ORIGINAL_FLAG = getattr(_native, "_HAVE_NATIVE", False)
-
-    use_native_ext = request.param
-    monkeypatch.setattr(_native, "_HAVE_NATIVE", use_native_ext)
-    yield use_native_ext
-    monkeypatch.setattr(_native, "_HAVE_NATIVE", _NATIVE_ORIGINAL_FLAG)
+# The ``native_mode`` fixture (native / python parametrization, skipping native
+# when the extension is not loaded) comes from tests/conftest.py.
 
 
 # ---------------------------------------------------------------------------

@@ -123,6 +123,10 @@ def native_mode(request, monkeypatch):
         _NATIVE_ORIGINAL_FLAG = getattr(_native, "_HAVE_NATIVE", False)
 
     if use_native_ext:
+        # Forcing the flag on without a loaded module (NZPY_EXTENDED_NO_NATIVE=1,
+        # or the import failed) would make the decoder assert; skip instead.
+        if _native._native_ext is None:
+            pytest.skip("native extension is not loaded in this run")
         monkeypatch.setattr(_native, "_HAVE_NATIVE", True)
     else:
         monkeypatch.setattr(_native, "_HAVE_NATIVE", False)
