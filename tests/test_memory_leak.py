@@ -29,7 +29,10 @@ from tests._memory_helpers import (
     MAX_RSS_GROWTH_FETCHALL_MB,
     MAX_RSS_GROWTH_PER_ITER_CANCEL_MB,
     MAX_RSS_GROWTH_PER_ITER_FETCHALL_MB,
+    MAX_STEADY_GROWTH_MB,
+    MAX_STEADY_GROWTH_PER_ITER_MB,
     SQL_FACTPRODUCT,
+    WARMUP_ITERATIONS_STEADY,
     assert_memory_stable,
     collect_snapshot,
     count_leaked_objects,
@@ -603,9 +606,17 @@ def test_no_memory_leak_close_without_cancel(
     native_mode: bool,
     db_kwargs_mem: dict[str, Any],
 ) -> None:
-    """Closing cursor after partial read (no explicit cancel) must not leak."""
+    """Closing cursor after partial read (no explicit cancel) must not leak.
+
+    RSS is measured only after WARMUP_ITERATIONS_STEADY iterations. Raw RSS
+    climbs during allocator warm-up (glibc arenas) and then goes flat, so the
+    first window would measure warm-up rather than steady state. Object counts
+    are checked at the end of the whole run, since a leaked object stays alive
+    regardless of when it was created.
+    """
     gc.collect()
     print(f"\n[{api=} {native_mode=}]  close-without-cancel test")
+    total = WARMUP_ITERATIONS_STEADY + ITERATIONS_CANCEL
 
     if api == "async":
         import asyncio
@@ -615,7 +626,7 @@ def test_no_memory_leak_close_without_cancel(
             conn = await nzpy.connect(**db_kwargs_mem)
             try:
                 return await _run_close_without_cancel_async(
-                    conn, SQL_FACTPRODUCT, ITERATIONS_CANCEL, FETCH_ROWS_DEFAULT
+                    conn, SQL_FACTPRODUCT, total, FETCH_ROWS_DEFAULT
                 )
             finally:
                 await conn.close()
@@ -627,19 +638,23 @@ def test_no_memory_leak_close_without_cancel(
         conn = nzpy_sync.connect(**db_kwargs_mem)
         try:
             rss_per_iter, dec_final, rl_final = _run_close_without_cancel_sync(
-                conn, SQL_FACTPRODUCT, ITERATIONS_CANCEL, FETCH_ROWS_DEFAULT
+                conn, SQL_FACTPRODUCT, total, FETCH_ROWS_DEFAULT
             )
         finally:
             conn.close()
 
+    steady_rss = rss_per_iter[WARMUP_ITERATIONS_STEADY:]
     assert_memory_stable(
-        rss_per_iter,
+        steady_rss,
         dec_final=dec_final,
         rl_final=rl_final,
-        max_rss_growth_mb=MAX_RSS_GROWTH_CANCEL_MB,
-        max_rss_growth_per_iter_mb=MAX_RSS_GROWTH_PER_ITER_CANCEL_MB,
+        max_rss_growth_mb=MAX_STEADY_GROWTH_MB,
+        max_rss_growth_per_iter_mb=MAX_STEADY_GROWTH_PER_ITER_MB,
         iterations=ITERATIONS_CANCEL,
-        label=f"{api}/native={native_mode}/close-no-cancel",
+        label=(
+            f"{api}/native={native_mode}/close-no-cancel "
+            f"(steady window after {WARMUP_ITERATIONS_STEADY} warm-up iterations)"
+        ),
     )
 
 

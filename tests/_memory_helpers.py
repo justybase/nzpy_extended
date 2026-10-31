@@ -24,13 +24,18 @@ MAX_ROW_LISTS = 4500
 MAX_RSS_GROWTH_FETCHALL_MB = 50.0
 MAX_RSS_GROWTH_PER_ITER_FETCHALL_MB = 6.0
 
-# cancel: tighter bounds (fewer objects per iteration). Raised after measuring
-# the close-without-cancel loop (10 iterations, 5 rows each) on all decoders:
-# pre-Rust C 2.23–2.36 MB/iter, Rust native 31 MB total, pure Python 2.2–2.5
-# MB/iter. Object counts stay flat in every case; the residual growth is RSS.
-# The old 2.0 / 30 MB limits failed on the unchanged C baseline too.
-MAX_RSS_GROWTH_CANCEL_MB = 40.0
-MAX_RSS_GROWTH_PER_ITER_CANCEL_MB = 3.0
+# cancel: tighter bounds (fewer objects per iteration)
+MAX_RSS_GROWTH_CANCEL_MB = 30.0
+MAX_RSS_GROWTH_PER_ITER_CANCEL_MB = 2.0
+
+# Steady-state check for the close-without-cancel loop. Raw RSS climbs during
+# warm-up and is flat from about iteration 50 on (probe: iterations 0-9 grow
+# 37 MB, 50-59 grow 0.0 MB, 60-69 grow 0.1 MB). The test runs the warm-up first
+# and asserts only on the measured window, so a real leak still shows up at a
+# limit about 10x above the measured steady state.
+WARMUP_ITERATIONS_STEADY = 50
+MAX_STEADY_GROWTH_MB = 5.0
+MAX_STEADY_GROWTH_PER_ITER_MB = 0.5
 
 FETCH_ROWS_DEFAULT = 5
 ITERATIONS_FETCHALL = 5
