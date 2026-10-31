@@ -185,12 +185,12 @@ Types are inferred from the first `sample_size` data rows, and the rest of the f
 
 ## Performance
 
-`load_data` sends the rows in one external table transfer, so the appliance does not run one statement per row. Measured on the reference Netezza 11.2 appliance:
+`load_data` sends the rows in one external table transfer, so the appliance does not run one statement per row. Measured on 2026-10-31 on the reference Netezza appliance, from a Mac mini (Apple M4) and from WSL2; full results are in [benchmarks.md](benchmarks.md).
 
-| Method | Rows | Time |
+| Method | Rows | Time (Mac mini / WSL2) |
 |---|---|---|
-| `executemany("INSERT ...")` | 2,000 | ~87 s |
-| `load_data()` | 2,000 | ~0.7 s |
-| `load_data()` (current driver, streamed) | 50,000 | ~1.5 s |
+| `executemany("INSERT ...")` | 1,000 | ~45 ms per row (about 45 s) |
+| `load_data()`, list of rows | 100,000 | ~1.9 s / ~2.0 s |
+| `load_data()`, generator | 100,000 | ~1.7 s / ~1.6 s |
 
 `executemany` remains the right tool for a few statements, and for statements that are not plain inserts.

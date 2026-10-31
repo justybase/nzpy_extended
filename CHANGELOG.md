@@ -6,6 +6,9 @@ All notable changes to `nzpy_extended` are documented in this file.
 
 ### Added
 
+- `tools/examples/benchmark_load_data.py` times `load_data` against `executemany`
+  on a live appliance. `docs/benchmarks.md` records the results for a Mac mini (M4)
+  and for WSL2, with the commands to reproduce them.
 - Support Python 3.11 through 3.15. Wheels and CI matrices now cover all five
   versions on Linux, macOS and Windows.
 - Offline Netezza wire-protocol mock (`tests/mock_netezza.py`) used by new unit
