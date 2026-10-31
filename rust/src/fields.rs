@@ -3,7 +3,9 @@
 //! Each arm mirrors `DbosParser._build_dbos_row_python` in
 //! `nzpy_extended/_dbos.py`, which is the reference behaviour.
 
+use std::collections::HashMap;
 use std::ffi::CStr;
+use std::sync::Mutex;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::ffi;
@@ -14,50 +16,119 @@ use crate::layout::FieldMeta;
 use crate::nztype as t;
 use crate::{numeric, pycache, temporal};
 
+/// How text in one codec is decoded. Chosen once per codec name, from the
+/// canonical name the codec registry reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextKind {
+    /// UTF-8: valid input is decoded directly.
+    Utf8,
+    /// ISO-8859-1: every byte is a code point, so no codec lookup is needed.
+    Latin1,
+    /// ASCII-compatible single-byte codec: ASCII input is valid UTF-8 and decodes
+    /// the same under any of these codecs.
+    AsciiCompatible,
+    /// Anything else, and names the registry does not know: the codec path.
+    Other,
+}
+
+/// Classify a canonical codec name (the `name` attribute of `codecs.lookup`).
+///
+/// The list is explicit on purpose: every entry is an ASCII-compatible codec.
+/// `tests/test_text_codec_unit.py` checks the ASCII identity for each entry.
+pub fn classify(canonical: &str) -> TextKind {
+    match canonical {
+        "utf-8" => TextKind::Utf8,
+        "iso8859-1" => TextKind::Latin1,
+        "ascii" => TextKind::AsciiCompatible,
+        c if c.starts_with("iso8859-") || c.starts_with("cp125") => TextKind::AsciiCompatible,
+        _ => TextKind::Other,
+    }
+}
+
+/// Canonical name from the codec registry, or `None` when the registry does not know it.
+fn canonical_codec_name(py: Python<'_>, name: &str) -> Option<String> {
+    let codecs = py.import("codecs").ok()?;
+    let info = codecs.call_method1("lookup", (name,)).ok()?;
+    info.getattr("name").ok()?.extract::<String>().ok()
+}
+
+/// Cached `classify(canonical_codec_name(name))`, keyed by the name as given.
+///
+/// The lock is not held across the registry call, which can import code.
+fn text_kind(py: Python<'_>, name: &str) -> TextKind {
+    static KINDS: Mutex<Option<HashMap<String, TextKind>>> = Mutex::new(None);
+    if let Ok(guard) = KINDS.lock() {
+        if let Some(kind) = guard.as_ref().and_then(|m| m.get(name)) {
+            return *kind;
+        }
+    }
+    let kind =
+        canonical_codec_name(py, name).map_or(TextKind::Other, |canonical| classify(&canonical));
+    if let Ok(mut guard) = KINDS.lock() {
+        guard
+            .get_or_insert_with(HashMap::new)
+            .insert(name.to_owned(), kind);
+    }
+    kind
+}
+
 /// Client and CHAR/VARCHAR codecs, as NUL-terminated names for `PyUnicode_Decode`.
 pub struct Codecs {
     pub char_enc: std::ffi::CString,
     pub client_enc: std::ffi::CString,
-    char_is_utf8: bool,
-    client_is_utf8: bool,
+    char_kind: TextKind,
+    client_kind: TextKind,
 }
 
 impl Codecs {
-    pub fn new(char_enc: &str, client_enc: &str) -> PyResult<Self> {
+    pub fn new(py: Python<'_>, char_enc: &str, client_enc: &str) -> PyResult<Self> {
         let to_c = |s: &str| {
             std::ffi::CString::new(s)
                 .map_err(|_| PyValueError::new_err("encoding name contains NUL"))
         };
         Ok(Codecs {
-            char_is_utf8: is_utf8_name(char_enc),
-            client_is_utf8: is_utf8_name(client_enc),
+            char_kind: text_kind(py, char_enc),
+            client_kind: text_kind(py, client_enc),
             char_enc: to_c(char_enc)?,
             client_enc: to_c(client_enc)?,
         })
     }
 }
 
-fn is_utf8_name(name: &str) -> bool {
-    matches!(
-        name.to_ascii_lowercase().as_str(),
-        "utf-8" | "utf8" | "utf_8"
-    )
-}
-
 /// Strict decode, the same as `str(bytes, encoding)`.
 ///
-/// UTF-8 input that is valid skips the codec machinery entirely. Anything
-/// else (including invalid UTF-8, so that the exact codec error is raised)
-/// goes through `PyUnicode_Decode`, the same codec path Python uses.
+/// Fast paths only where the result is identical to the codec's: valid UTF-8,
+/// ASCII under an ASCII-compatible codec, and any byte under ISO-8859-1.
+/// Everything else (including invalid UTF-8, so that the exact codec error is
+/// raised) goes through `PyUnicode_Decode`, the same codec path Python uses.
 fn decode<'py>(
     py: Python<'py>,
     bytes: &[u8],
     enc: &CStr,
-    is_utf8: bool,
+    kind: TextKind,
 ) -> PyResult<Bound<'py, PyString>> {
-    if is_utf8 {
+    let utf8_fast = match kind {
+        TextKind::Utf8 => true,
+        TextKind::AsciiCompatible => bytes.is_ascii(),
+        TextKind::Latin1 | TextKind::Other => false,
+    };
+    if utf8_fast {
         if let Ok(s) = std::str::from_utf8(bytes) {
             return Ok(PyString::new(py, s));
+        }
+    }
+    // SAFETY: `bytes` is valid for `len` bytes for the duration of the call.
+    // ISO-8859-1 maps every byte, so this cannot fail on content.
+    if kind == TextKind::Latin1 {
+        unsafe {
+            let ptr = ffi::PyUnicode_DecodeLatin1(
+                bytes.as_ptr().cast(),
+                bytes.len() as ffi::Py_ssize_t,
+                std::ptr::null(),
+            );
+            return Bound::from_owned_ptr_or_err(py, ptr)?
+                .cast_into::<PyString>()
+                .map_err(Into::into);
         }
     }
     // SAFETY: `bytes` is valid for `len` bytes for the duration of the call,
@@ -142,7 +213,7 @@ pub fn decode_field<'py>(
                 py,
                 &row[off..off + width],
                 &codecs.char_enc,
-                codecs.char_is_utf8,
+                codecs.char_kind,
             )?;
             pad_text(py, text, width)
         }
@@ -152,7 +223,7 @@ pub fn decode_field<'py>(
                 py,
                 &row[off + 2..off + 2 + cursize],
                 &codecs.client_enc,
-                codecs.client_is_utf8,
+                codecs.client_kind,
             )?;
             if ftype == t::NCHAR {
                 pad_text(py, text, f.size.max(0) as usize)
@@ -173,7 +244,7 @@ pub fn decode_field<'py>(
                 py,
                 &row[off + 2..off + 2 + cursize],
                 &codecs.char_enc,
-                codecs.char_is_utf8,
+                codecs.char_kind,
             )?;
             Ok(text.into_any())
         }
@@ -258,5 +329,23 @@ pub fn decode_field<'py>(
             pycache::timetz_out(py)?.call1((time, zone))
         }
         _ => Ok(py.None().into_bound(py)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifies_registry_names() {
+        assert_eq!(classify("utf-8"), TextKind::Utf8);
+        assert_eq!(classify("iso8859-1"), TextKind::Latin1);
+        assert_eq!(classify("ascii"), TextKind::AsciiCompatible);
+        assert_eq!(classify("iso8859-15"), TextKind::AsciiCompatible);
+        assert_eq!(classify("cp1252"), TextKind::AsciiCompatible);
+        // Not ASCII-compatible: must keep the full codec path.
+        assert_eq!(classify("utf-16"), TextKind::Other);
+        assert_eq!(classify("cp037"), TextKind::Other);
+        assert_eq!(classify("shift_jis"), TextKind::Other);
     }
 }

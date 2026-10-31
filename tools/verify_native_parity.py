@@ -24,6 +24,7 @@ TEST_FILES = [
     "tests/test_wire_fuzz_unit.py",
     "tests/test_regressions_unit.py",
     "tests/test_native_parity_unit.py",
+    "tests/test_text_codec_unit.py",
 ]
 
 MODES: tuple[tuple[str, dict[str, str]], ...] = (

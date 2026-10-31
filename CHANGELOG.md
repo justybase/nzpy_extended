@@ -48,6 +48,13 @@ All notable changes to `nzpy_extended` are documented in this file.
   only performs socket I/O.
 - `psutil` is part of the `test` extra so the memory-leak tests are collected.
 
+### Performance
+
+- CHAR, VARCHAR and NVARCHAR values decode on fast paths when the codec is UTF-8,
+  ISO-8859-1 (`latin` is the default `char_varchar_encoding`) or ASCII-compatible
+  and the bytes are ASCII. Results are unchanged; a text-heavy 100k-row fetch
+  spends about half as long in the decoder.
+
 ### Fixed
 
 - While a large result streamed from a fast server, the event loop got no turns

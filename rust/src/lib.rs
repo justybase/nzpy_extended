@@ -42,6 +42,7 @@ struct Metadata {
 
 #[allow(clippy::too_many_arguments)]
 fn load_metadata(
+    py: Python<'_>,
     field_type: &Bound<'_, PyAny>,
     field_size: &Bound<'_, PyAny>,
     field_true_size: &Bound<'_, PyAny>,
@@ -101,7 +102,7 @@ fn load_metadata(
             num_varying: num_varying as i64,
         },
         fields,
-        codecs: Codecs::new(char_enc, client_enc)?,
+        codecs: Codecs::new(py, char_enc, client_enc)?,
     })
 }
 
@@ -148,6 +149,7 @@ fn process_dbos_row<'py>(
     client_enc: &str,
 ) -> PyResult<Bound<'py, PyList>> {
     let meta = load_metadata(
+        py,
         field_type,
         field_size,
         field_true_size,
@@ -186,6 +188,7 @@ fn process_dbos_batch<'py>(
     client_enc: &str,
 ) -> PyResult<Bound<'py, PyTuple>> {
     let meta = load_metadata(
+        py,
         field_type,
         field_size,
         field_true_size,

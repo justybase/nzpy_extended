@@ -12,6 +12,8 @@ methods that previously lived on ``Connection``.
 
 from __future__ import annotations
 
+import codecs
+import functools
 from datetime import date, datetime as Datetime, time
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any
@@ -82,6 +84,21 @@ def _layout_error(message: str) -> InterfaceError:
     """A malformed row layout is a framing fault: the session must be retired."""
     return InterfaceError(
         f"Invalid RowStandard payload: {message}; reconnect is required.")
+
+
+@functools.lru_cache(maxsize=16)
+def _text_codec(name: str) -> str:
+    """Codec name for ``str(data, name)``.
+
+    ``latin`` and ``latin-1`` are the same codec, but CPython decodes ``latin-1``
+    on a fast path and ``latin`` through the general codec lookup (about 6x
+    slower). Unknown names are returned unchanged so the caller raises as before.
+    """
+    try:
+        canonical = codecs.lookup(name).name
+    except LookupError:
+        return name
+    return "latin-1" if canonical == "iso8859-1" else name
 
 
 class DbosParser:
@@ -359,13 +376,13 @@ class DbosParser:
 
                 if fldtype == NzTypeChar:
                     fldlen = tupdesc.field_size[cur_field]
-                    value = str(mv[offset: offset + fldlen], conn._char_varchar_encoding)
+                    value = str(mv[offset: offset + fldlen], _text_codec(conn._char_varchar_encoding))
                     value = value.rstrip("\x00").ljust(fldlen)
                     row.append(value)
                 elif fldtype in (NzTypeNChar, NzTypeNVarChar):
                     cursize = h_le_unpack(data, offset)[0] - 2
                     value = str(
-                        mv[offset + 2: offset + cursize + 2], conn._client_encoding
+                        mv[offset + 2: offset + cursize + 2], _text_codec(conn._client_encoding)
                     )
                     if fldtype == NzTypeNChar:
                         value = value.rstrip("\x00").ljust(tupdesc.field_size[cur_field])
@@ -382,7 +399,7 @@ class DbosParser:
                 ):
                     cursize = h_le_unpack(data, offset)[0] - 2
                     value = str(
-                        mv[offset + 2: offset + cursize + 2], conn._char_varchar_encoding
+                        mv[offset + 2: offset + cursize + 2], _text_codec(conn._char_varchar_encoding)
                     )
                     row.append(value)
                 elif fldtype == NzTypeInt8:
