@@ -18,7 +18,11 @@ async def _ready_generator() -> AsyncIterator[str]:
 
 
 def _cursor() -> Cursor:
-    conn = SimpleNamespace(_closed=False, _stream=None)
+    conn = SimpleNamespace(
+        _closed=False,
+        _stream=None,
+        _take_deferred_decode_error=lambda: None,
+    )
     return Cursor(conn)  # type: ignore[arg-type]
 
 

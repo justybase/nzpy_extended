@@ -178,6 +178,7 @@ async def test_explicit_client_encoding_latin9():
 
 
 @pytest.mark.asyncio
+@pytest.mark.observe
 @pytest.mark.parametrize("test_value, col_type", [
     ("Süßes Café", "VARCHAR(100)"),
     ("Hello World", "VARCHAR(100)"),

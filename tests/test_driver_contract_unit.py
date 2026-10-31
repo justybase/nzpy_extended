@@ -317,3 +317,57 @@ async def test_real_tls_roundtrip_and_hostname_verification(tmp_path, hostname):
         await server.wait_closed()
         if hostname == 'localhost':
             await asyncio.wait_for(done.wait(), 5)
+
+
+def test_handshake_rejects_non_decreasing_version_downgrade():
+    hs = SyncHandshake(MagicMock(spec=socket.socket), None, logging.getLogger('test'))
+    hs._write = MagicMock()
+    hs._flush = MagicMock()
+    hs._read = MagicMock(side_effect=[b'M', b'5', b'M', b'5'])
+    assert hs.conn_handshake_negotiate(None, None) is False
+    # Two writes per attempt (length prefix + payload): v6 and v5 were sent,
+    # the repeated v5 was rejected before a third attempt.
+    assert hs._write.call_count == 4
+
+
+def test_handshake_accepts_chained_strict_downgrades():
+    hs = SyncHandshake(MagicMock(spec=socket.socket), None, logging.getLogger('test'))
+    hs._write = MagicMock()
+    hs._flush = MagicMock()
+    hs._read = MagicMock(side_effect=[b'M', b'5', b'M', b'4', b'N'])
+    assert hs.conn_handshake_negotiate(None, None) is True
+    assert hs._hsVersion == 4
+    # Two writes per attempt (length prefix + payload), three attempts.
+    assert hs._write.call_count == 6
+
+
+def test_handshake_rejects_unknown_authentication_method_before_reading():
+    from nzpy_extended.utils import i_pack
+    hs = SyncHandshake(MagicMock(spec=socket.socket), None, logging.getLogger('test'))
+    hs._read = MagicMock(side_effect=[b'R', i_pack(4)])
+    with pytest.raises(nz.InterfaceError, match="Unsupported authentication type"):
+        hs.conn_authenticate(b'secret')
+    assert hs._read.call_count == 2
+
+
+def test_handshake_rejects_truncated_authentication_salt():
+    from nzpy_extended.utils import i_pack
+    hs = SyncHandshake(MagicMock(spec=socket.socket), None, logging.getLogger('test'))
+    hs._read = MagicMock(side_effect=[b'R', i_pack(6), b'\x01'])
+    with pytest.raises(nz.InterfaceError, match="malformed SHA256 authentication salt"):
+        hs.conn_authenticate(b'secret')
+
+
+def test_handshake_sha256_digest_is_unpadded():
+    import base64
+    from hashlib import sha256
+    from nzpy_extended.utils import i_pack
+    hs = SyncHandshake(MagicMock(spec=socket.socket), None, logging.getLogger('test'))
+    hs._read = MagicMock(side_effect=[b'R', i_pack(6), b'\xaa\xbb'])
+    hs._write = MagicMock()
+    hs._flush = MagicMock()
+    assert hs.conn_authenticate(b'secret') is True
+    response = hs._write.call_args_list[1].args[0]
+    expected = base64.standard_b64encode(sha256(b'\xaa\xbbsecret').digest()).rstrip(b'=')
+    assert response == expected + b'\x00'
+    assert b'=' not in response

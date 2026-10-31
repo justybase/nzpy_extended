@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nzpy_extended.buffered_stream import NzBufferedStream
+from nzpy_extended.exceptions import InterfaceError
 
 pytestmark = pytest.mark.unit
 
@@ -62,7 +63,7 @@ def test_read_available_view_returns_remaining(stream_sock: MagicMock) -> None:
 @pytest.mark.asyncio
 async def test_read_rejects_oversized_request(stream_sock: MagicMock) -> None:
     stream = NzBufferedStream(stream_sock, max_size=1024, buffer_size=1024)
-    with pytest.raises(ValueError, match="exceeds maximum allowed"):
+    with pytest.raises(InterfaceError, match="exceeds maximum allowed"):
         await stream.read(100 * 1024 * 1024 + 1)
 
 

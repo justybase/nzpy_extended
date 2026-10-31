@@ -40,6 +40,7 @@ from tests._memory_helpers import (
 pytestmark = [
     pytest.mark.smoke,
     pytest.mark.full,
+    pytest.mark.observe,
     pytest.mark.timeout(600),
 ]
 
