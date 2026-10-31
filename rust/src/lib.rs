@@ -3,7 +3,8 @@
 //! Exposes `process_dbos_row` and `process_dbos_batch` with the same arguments
 //! and exception contract:
 //! - `BufferError`: row layout fault (the caller retires the connection);
-//! - `ValueError` / `UnicodeDecodeError` / `OverflowError`: value fault;
+//! - `ValueError` / `UnicodeDecodeError` / `OverflowError`: value fault
+//!   (`process_dbos_row` raises it; `process_dbos_batch` stops before the row);
 //! - `TypeError`: metadata is not a list.
 
 mod fields;
@@ -206,8 +207,15 @@ fn process_dbos_batch<'py>(
     let rows = PyList::empty(py);
     let mut pos = 0usize;
     while let Some((start, len)) = frames::next_row_frame(&data, pos) {
-        let row = decode_row(py, &meta, &data[start..start + len])?;
-        rows.append(row)?;
+        match decode_row(py, &meta, &data[start..start + len]) {
+            Ok(row) => rows.append(row)?,
+            // A layout fault retires the connection. Any other failure is a value
+            // that does not decode: stop in front of this row and leave it
+            // unconsumed. The caller decodes that row alone, which defers the
+            // error, so no row is decoded twice.
+            Err(e) if e.is_instance_of::<PyBufferError>(py) => return Err(e),
+            Err(_) => break,
+        }
         pos = start + len;
     }
     PyTuple::new(py, [rows.into_any(), pos.into_pyobject(py)?.into_any()])

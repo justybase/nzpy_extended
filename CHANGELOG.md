@@ -57,6 +57,10 @@ All notable changes to `nzpy_extended` are documented in this file.
 
 ### Fixed
 
+- A value that fails to decode in a large result made the native batch decoder
+  rescan the rest of the buffer once per row, so one bad row cost time quadratic in
+  the rows before it. The batch now stops in front of that row and each row is
+  decoded once. The error is still deferred to `ReadyForQuery` as before.
 - While a large result streamed from a fast server, the event loop got no turns
   until the whole result had been decoded. A `cancel()` or timer issued during the
   read (for example after `asyncio.sleep`) was delayed, and the pure-Python decoder

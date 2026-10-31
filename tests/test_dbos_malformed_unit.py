@@ -171,25 +171,34 @@ def _frame(payload: bytes) -> bytes:
 
 
 @needs_native
-def test_batch_raises_on_value_fault_so_caller_falls_back_to_row_path() -> None:
+def test_batch_stops_in_front_of_value_fault_so_caller_falls_back_to_row_path() -> None:
     desc = _descriptor()
     good = _frame(_row(1, _varying(b"a")))
     bad = _frame(INVALID_UTF8_PAYLOAD)
+    args = (
+        desc.field_type,
+        desc.field_size,
+        desc.field_trueSize,
+        desc.field_offset,
+        desc.field_fixedSize,
+        desc.field_physField,
+        desc.numFields,
+        desc.nullsAllowed,
+        desc.fixedFieldsSize,
+        desc.numVaryingFields,
+        "utf-8",
+        "utf-8",
+    )
+    # The batch keeps the rows before the fault and leaves the faulty frame unconsumed.
+    rows, consumed = _native._native_ext.process_dbos_batch(  # type: ignore[union-attr]
+        memoryview(good + bad), *args
+    )
+    assert len(rows) == 1
+    assert consumed == len(good)
+    # Alone, the faulty row raises; the reader defers that error.
     with pytest.raises(UnicodeDecodeError):
-        _native._native_ext.process_dbos_batch(  # type: ignore[union-attr]
-            memoryview(good + bad),
-            desc.field_type,
-            desc.field_size,
-            desc.field_trueSize,
-            desc.field_offset,
-            desc.field_fixedSize,
-            desc.field_physField,
-            desc.numFields,
-            desc.nullsAllowed,
-            desc.fixedFieldsSize,
-            desc.numVaryingFields,
-            "utf-8",
-            "utf-8",
+        _native._native_ext.process_dbos_row(  # type: ignore[union-attr]
+            memoryview(INVALID_UTF8_PAYLOAD), *args
         )
 
 
