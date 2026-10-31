@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import os
 import stat
+from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, Type
 
 from .exceptions import (
@@ -70,6 +71,15 @@ from .utils import (
 from ._serializers import build_pg_types, build_py_types
 from . import _cstate
 
+
+def _backend_text(data: bytes, encoding: str) -> str:
+    """Decode informational server text (notices, errors, logs) without raising.
+
+    The length prefix has already been consumed, so the session stays in sync;
+    a bad byte must not turn an informational message into a bare Python error.
+    """
+    return str(data, encoding, "replace")
+
 if TYPE_CHECKING:
     from .core import Connection, Cursor
 
@@ -111,8 +121,8 @@ class ProtocolHandler:
         conn = self._conn
         msg = dict(
             (
-                s[:1].decode(conn._client_encoding),
-                s[1:].decode(conn._client_encoding),
+                s[:1].decode(conn._client_encoding, errors="replace"),
+                s[1:].decode(conn._client_encoding, errors="replace"),
             )
             for s in data.split(NULL_BYTE)
             if s != b""
@@ -212,11 +222,20 @@ class ProtocolHandler:
 
     async def handle_ROW_DESCRIPTION(self, data: bytes, cursor: Cursor) -> None:
         conn = self._conn
+        if len(data) < 2:
+            raise InterfaceError(
+                "Invalid RowDescription payload: field count is truncated; "
+                "reconnect is required.")
         count = h_unpack(data)[0]
         idx = 2
         for _ in range(count):
-            name = data[idx: data.find(NULL_BYTE, idx)]
-            idx += len(name) + 1
+            name_end = data.find(NULL_BYTE, idx)
+            if name_end < 0 or name_end + 1 + 11 > len(data):
+                raise InterfaceError(
+                    "Invalid RowDescription payload: field descriptor is "
+                    "truncated; reconnect is required.")
+            name = data[idx:name_end]
+            idx = name_end + 1
             field: dict[str, Any] = dict(
                 zip(
                     ("type_oid", "type_size", "type_modifier", "format"),
@@ -248,40 +267,76 @@ class ProtocolHandler:
 
     async def handle_DATA_ROW(self, data: bytes, cursor: Cursor) -> None:
         from .types import decimalToBinary as _decimalToBinary
-        from .utils import ihic_unpack as _ihic_unpack
 
-        numberofcol = len(cursor.ps["row_desc"])  # type: ignore[index]
+        row_desc = cursor.ps["row_desc"]  # type: ignore[index]
+        input_funcs = cursor.ps["input_funcs"]  # type: ignore[index]
+        numberofcol = len(row_desc)
+        if len(input_funcs) != numberofcol:
+            raise InterfaceError(
+                "Invalid DataRow: column metadata is inconsistent; "
+                "reconnect is required.")
         bitmaplen = numberofcol // 8
         if numberofcol % 8 > 0:
             bitmaplen += 1
 
-        hex_str = data[0:bitmaplen].hex()
-        dec = int(hex_str, 16)
-        bitmap = _decimalToBinary(dec, bitmaplen * 8)
-        bitmap.reverse()
+        if len(data) < bitmaplen:
+            raise InterfaceError(
+                f"Invalid DataRow payload: truncated NULL bitmap "
+                f"({len(data)} < {bitmaplen} bytes); reconnect is required.")
 
+        if bitmaplen:
+            dec = int(data[0:bitmaplen].hex(), 16)
+            bitmap = _decimalToBinary(dec, bitmaplen * 8)
+            bitmap.reverse()
+        else:
+            bitmap = []
+
+        # Validate every cell boundary before decoding any value: a malformed
+        # value in an early column must not hide truncated framing in a later
+        # one and leave the connection reusable.
+        spans: list[tuple[int, int, int]] = []
         data_idx = bitmaplen
-        row: list[Any] = []
-        row_desc = cursor.ps["row_desc"]  # type: ignore[index]
-        for i, func in enumerate(cursor.ps["input_funcs"]):  # type: ignore[index]
+        for i in range(numberofcol):
             if bitmap[i] == 0:
-                row.append(None)
-            else:
-                vlen = i_unpack(data, data_idx)[0]
-                data_idx += 4
-                if vlen < 4:
-                    raise InterfaceError(
-                        f"Invalid data row: vlen={vlen} for column {i} (min 4 expected)"
-                    )
-                val = func(data, data_idx, vlen - 4)
-                data_idx += vlen - 4
-                if row_desc[i]["type_oid"] == 1042:
-                    mod = row_desc[i]["type_modifier"]
-                    if mod > 0:
-                        pad_to = (mod >> 16) & 0xFFFF
-                        if pad_to > 0:
-                            val = val.rstrip("\x00").ljust(pad_to)
-                row.append(val)
+                continue
+            if data_idx + 4 > len(data):
+                raise InterfaceError(
+                    f"Invalid DataRow payload: column {i} length prefix is "
+                    "truncated; reconnect is required.")
+            vlen = i_unpack(data, data_idx)[0]
+            data_idx += 4
+            if vlen < 4:
+                raise InterfaceError(
+                    f"Invalid data row: vlen={vlen} for column {i} "
+                    "(min 4 expected); reconnect is required.")
+            value_len = vlen - 4
+            if data_idx + value_len > len(data):
+                raise InterfaceError(
+                    f"Invalid DataRow payload: column {i} value extends beyond "
+                    "the payload; reconnect is required.")
+            spans.append((i, data_idx, value_len))
+            data_idx += value_len
+        if data_idx != len(data):
+            raise InterfaceError(
+                f"Invalid DataRow payload: {len(data) - data_idx} trailing "
+                "byte(s) after the last column; reconnect is required.")
+
+        row: list[Any] = [None] * numberofcol
+        for i, start, value_len in spans:
+            func = input_funcs[i]
+            try:
+                val = func(data, start, value_len)
+            except Exception as exc:
+                raise DataError(
+                    f"cannot decode value for column {i} "
+                    f"({row_desc[i].get('name', b'')!r}): {exc}") from exc
+            if row_desc[i]["type_oid"] == 1042:
+                mod = row_desc[i]["type_modifier"]
+                if mod > 0:
+                    pad_to = (mod >> 16) & 0xFFFF
+                    if pad_to > 0:
+                        val = val.rstrip("\x00").ljust(pad_to)
+            row[i] = val
         cursor.cached_rows.append(row)
 
     async def handle_PARAMETER_STATUS(self, data: bytes, ps: Any) -> None:
@@ -366,10 +421,16 @@ class ProtocolHandler:
             code, data_len = ci_unpack(await conn._read(5))
             if not isinstance(code, bytes):
                 raise InterfaceError("protocol message code missing")
-            await self.message_types[code](await conn._read(data_len - 4), cursor)
+            try:
+                await self.message_types[code](await conn._read(data_len - 4), cursor)
+            except DataError as exc:
+                conn._defer_decode_error(exc)
 
         if conn.error is not None:
             raise conn.error
+        deferred = conn._take_deferred_decode_error()
+        if deferred is not None:
+            raise deferred
 
     async def close_prepared_statement(self, statement_name_bin: bytes) -> None:
         conn = self._conn
@@ -382,7 +443,23 @@ class ProtocolHandler:
     # Protocol generators
     # ------------------------------------------------------------------
 
-    async def _connNextResultSetGenerator(self, cursor: Cursor) -> Any:
+    async def _connNextResultSetGenerator(self, cursor: Cursor) -> AsyncGenerator[str, None]:
+        """Yield protocol states for one result set.
+
+        A framing fault leaves the byte stream untrustworthy, so the connection
+        is closed here instead of being left for a later drain to misread.
+        Value errors are not framing faults; handlers defer those.
+        """
+        conn = self._conn
+        try:
+            async for state in self._read_result_frames(cursor):
+                yield state
+        except InterfaceError:
+            conn.log.warning("Protocol framing error; closing connection")
+            await conn.close()
+            raise
+
+    async def _read_result_frames(self, cursor: Cursor) -> AsyncGenerator[str, None]:
         conn = self._conn
         stream = conn._stream
         assert stream is not None
@@ -395,7 +472,12 @@ class ProtocolHandler:
                 header = conn._cached_header
                 conn._cached_header = None
             else:
+                # Nothing of the next message has been consumed yet, so a cancel
+                # during this read leaves the stream at a message boundary.
+                conn._frame_in_progress = False
                 header = await conn._read(5)
+            # From here until ReadyForQuery the message body may still be unread.
+            conn._frame_in_progress = True
             response = header[:1]
 
             if response == COMMAND_COMPLETE:
@@ -404,18 +486,20 @@ class ProtocolHandler:
                 await self.handle_COMMAND_COMPLETE(data, cursor)
                 conn.log.debug(
                     "Response received from backend: %s",
-                    str(data, conn._client_encoding),
+                    _backend_text(data, conn._client_encoding),
                 )
                 yield "COMMAND_COMPLETE"
                 continue
             if response == READY_FOR_QUERY:
                 conn._dirty_socket = False
+                conn._frame_in_progress = False
                 conn._active_generator = None
                 conn._active_cursor = None
                 yield "READY_FOR_QUERY"
                 return
             if response == b"L":
                 conn._dirty_socket = False
+                conn._frame_in_progress = False
                 conn._active_generator = None
                 conn._active_cursor = None
                 yield "READY_FOR_QUERY"
@@ -435,7 +519,7 @@ class ProtocolHandler:
                 length = i_unpack(await conn._read(4))[0]
                 conn.log.debug(
                     "Response received from backend:%s",
-                    str(await conn._read(length), conn._client_encoding),
+                    _backend_text(await conn._read(length), conn._client_encoding),
                 )
                 continue
             if response == ERROR_RESPONSE:
@@ -456,7 +540,11 @@ class ProtocolHandler:
                 yield "ROW_DESCRIPTION"
             if response == DATA_ROW:
                 length = i_unpack(await conn._read(4))[0]
-                await self.handle_DATA_ROW(await conn._read(length), cursor)
+                data = await conn._read(length)
+                try:
+                    await self.handle_DATA_ROW(data, cursor)
+                except DataError as exc:
+                    conn._defer_decode_error(exc)
                 cursor.has_rows = True
                 yield "DATA_ROW"
             if response == b"X":
@@ -486,31 +574,46 @@ class ProtocolHandler:
                 data = stream.read_view_sync(tup_len)
                 if data is None:
                     data = await stream.read_view(tup_len)
-                conn._dbos._process_dbos_payload(cursor, conn.tupdesc, data)
+                try:
+                    conn._dbos._process_dbos_payload(cursor, conn.tupdesc, data)
+                except DataError as exc:
+                    conn._defer_decode_error(exc)
 
                 if _cstate._HAVE_C_EXT:
                     assert _cstate._c_ext is not None
                     view = stream.read_available_view()
                     if view is not None and len(view) > 13:
-                        rows, consumed = _cstate._c_ext.process_dbos_batch(
-                            view,
-                            conn.tupdesc.field_type,
-                            conn.tupdesc.field_size,
-                            conn.tupdesc.field_trueSize,
-                            conn.tupdesc.field_offset,
-                            conn.tupdesc.field_fixedSize,
-                            conn.tupdesc.field_physField,
-                            conn.tupdesc.numFields,
-                            conn.tupdesc.nullsAllowed,
-                            conn.tupdesc.fixedFieldsSize,
-                            conn.tupdesc.numVaryingFields,
-                            conn._char_varchar_encoding,
-                            conn._client_encoding,
-                        )
+                        try:
+                            rows, consumed = _cstate._c_ext.process_dbos_batch(
+                                view,
+                                conn.tupdesc.field_type,
+                                conn.tupdesc.field_size,
+                                conn.tupdesc.field_trueSize,
+                                conn.tupdesc.field_offset,
+                                conn.tupdesc.field_fixedSize,
+                                conn.tupdesc.field_physField,
+                                conn.tupdesc.numFields,
+                                conn.tupdesc.nullsAllowed,
+                                conn.tupdesc.fixedFieldsSize,
+                                conn.tupdesc.numVaryingFields,
+                                conn._char_varchar_encoding,
+                                conn._client_encoding,
+                            )
+                        except BufferError as exc:
+                            raise InterfaceError(
+                                f"Invalid RowStandard payload: {exc}; "
+                                "reconnect is required.") from exc
+                        except (UnicodeDecodeError, ValueError, OverflowError):
+                            # Leave the bytes unconsumed. The next pass reads
+                            # them one row at a time, where the value error is
+                            # deferred instead of aborting the batch.
+                            rows, consumed = [], 0
                         if rows:
                             cursor.cached_rows.extend(rows)
                             stream.advance_head(consumed)
 
+                # The row body is fully consumed, so this read starts a new message.
+                conn._frame_in_progress = False
                 header = stream.read_view_sync(5)
                 if header is None:
                     header = await conn._read(5)
@@ -576,7 +679,7 @@ class ProtocolHandler:
 
             if response == NOTICE_RESPONSE:
                 length = i_unpack(await conn._read(4))[0]
-                notice = str(await conn._read(length), conn._client_encoding)
+                notice = _backend_text(await conn._read(length), conn._client_encoding)
                 if notice.startswith("NOTICE:"):
                     notice = notice[len("NOTICE:"):]
                 notice = notice.strip().rstrip("\x00")
@@ -585,7 +688,7 @@ class ProtocolHandler:
 
             if response == b"I":
                 length = i_unpack(await conn._read(4))[0]
-                notice = str(await conn._read(length), conn._client_encoding)
+                notice = _backend_text(await conn._read(length), conn._client_encoding)
                 if notice.startswith("NOTICE:"):
                     notice = notice[len("NOTICE:"):]
                 notice = notice.strip().rstrip("\x00")
@@ -600,7 +703,8 @@ class ProtocolHandler:
     async def _drain_socket(self) -> None:
         """Consume orphaned backend messages up to ReadyForQuery.
 
-        Raises InterfaceError if ReadyForQuery is not reached within ~2s.
+        Raises InterfaceError if ReadyForQuery is not reached within ~2s. The
+        connection is closed on any failure, since the stream is then unusable.
         """
         conn = self._conn
         assert conn._stream is not None
@@ -757,9 +861,12 @@ class ProtocolHandler:
                 if length > 0:
                     await _read_exact(length)
 
-        except InterfaceError:
+        except (asyncio.CancelledError, InterfaceError):
+            # A partly drained response cannot be resynchronized: retire the socket.
+            await conn.close()
             raise
         except Exception as e:
+            await conn.close()
             raise InterfaceError(
                 f"Connection protocol out of sync while draining orphaned response: {e}. "
                 "Reconnect required."

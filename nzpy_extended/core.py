@@ -100,6 +100,10 @@ class Connection:
     _flush: Callable[[], Any]
     _backend_key_data: Any
     _dirty_socket: bool
+    # True from a response header until ReadyForQuery: the body may be unread.
+    _frame_in_progress: bool
+    # First DataError seen while reading a result; raised at ReadyForQuery.
+    _deferred_decode_error: DataError | None
     pg_types: defaultdict[Any, Any]
     py_types: dict[Any, Any] = {}
     inspect_funcs: dict[Any, Any] = {}
@@ -180,6 +184,8 @@ class Connection:
         self.sock = None
         self._usock = None
         self._stream = None
+        self._frame_in_progress = False
+        self._deferred_decode_error = None
         self.in_transaction = False
         self.error = None
         self._ext_table_source = None
@@ -363,6 +369,8 @@ class Connection:
         self._flush = _flush
         self._backend_key_data = None
         self._dirty_socket = False
+        self._frame_in_progress = False
+        self._deferred_decode_error = None
 
         if hs.server_client_encoding is not None:
             encoding_lower = hs.server_client_encoding
@@ -737,6 +745,64 @@ class Connection:
         finally:
             self._active_generator = None
 
+    def _defer_decode_error(self, exc: DataError) -> None:
+        """Keep the first value error and keep reading the result set.
+
+        The row's bytes were already consumed, so the stream stays in sync.
+        """
+        if self._deferred_decode_error is None:
+            self._deferred_decode_error = exc
+
+    def _take_deferred_decode_error(self) -> DataError | None:
+        """Pop the deferred value error to raise at ReadyForQuery.
+
+        A server ErrorResponse takes precedence, so the value error is dropped.
+        """
+        exc = self._deferred_decode_error
+        self._deferred_decode_error = None
+        return None if self.error is not None else exc
+
+    async def _retire_if_desynced(self) -> bool:
+        """Close the connection if a read stopped mid-frame; return True if closed.
+
+        The unread rest of such a frame cannot be re-framed, so draining it would
+        read payload bytes as message headers.
+        """
+        stream = self._stream
+        if not self._frame_in_progress and not (stream is not None and stream.partial_read):
+            return False
+        self.log.warning("Connection interrupted mid-frame; closing it")
+        await self.close()
+        return True
+
+    def _is_reusable(self) -> bool:
+        """False once the connection is closed or a read was cut mid-frame."""
+        stream = self._stream
+        return not self._closed and stream is not None and not stream.partial_read
+
+    def _idle_socket_is_healthy(self) -> bool:
+        """Non-blocking check that an idle connection shows no EOF or stray bytes.
+
+        Such a socket would fail the ping query only after a round trip, and
+        stray bytes mean the connection is already out of sync.
+        """
+        usock = self._usock
+        if not self._is_reusable() or usock is None or self._stream is None:
+            return False
+        if self._stream.has_buffered_non_null():
+            return False
+        if isinstance(usock, ssl_module.SSLSocket):
+            # MSG_PEEK is not supported on TLS sockets; the ping query covers them.
+            return True
+        try:
+            usock.recv(1, socket.MSG_PEEK)
+        except (BlockingIOError, InterruptedError):
+            return True
+        except OSError:
+            return False
+        # b"" means the peer closed the socket; any byte is an unread response.
+        return False
+
     def _peek_socket_bytes(self) -> bytes:
         """Non-blocking peek of bytes sitting on the OS socket (not yet buffered)."""
         usock = getattr(self, '_usock', None)
@@ -778,6 +844,16 @@ class Connection:
                 stale_cursor.generator = None
                 self._active_cursor = None
 
+        # Results of the previous statement are discarded, and so is its deferred error.
+        self._deferred_decode_error = None
+        # Only a read cut mid-payload leaves bytes that cannot be re-framed. A
+        # flag left set by a drained result is not a reason to close the socket.
+        _s = self._stream
+        if _s is not None and _s.partial_read:
+            await self.close()
+            raise ConnectionClosedError(
+                "connection was interrupted mid-frame; reconnect is required")
+
         if getattr(self, '_dirty_socket', False) or self._has_unread_non_null_bytes():
             await self._protocol._drain_socket()
 
@@ -809,6 +885,8 @@ class Connection:
 
         query_bytes = query.encode('utf8')
         buf.extend(query_bytes + NULL_BYTE)
+        # A cancel during the write leaves a partial query on the wire.
+        self._frame_in_progress = True
         await self._write(buf)
         await self._flush()
 
@@ -851,6 +929,10 @@ class Connection:
 
         if self.error is not None:
             raise self.error
+        if response == "READY_FOR_QUERY":
+            deferred = self._take_deferred_decode_error()
+            if deferred is not None:
+                raise deferred
 
         if response == "ROW_DESCRIPTION" and len(cursor.ps.get('row_desc', [])) > 0:
             cursor.has_rows = True

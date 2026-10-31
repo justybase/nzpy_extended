@@ -123,6 +123,8 @@ class NzPool:
             return False
         if self.max_uses > 0 and pc.use_count >= self.max_uses:
             return False
+        if not pc.conn._idle_socket_is_healthy():
+            return False
         if self.ping_query:
             try:
                 cursor = pc.conn.cursor()
@@ -258,7 +260,7 @@ class NzPool:
     async def release(self, conn: Connection) -> None:
         conn_id = id(conn)
 
-        if not conn.autocommit and conn.in_transaction:
+        if conn._is_reusable() and not conn.autocommit and conn.in_transaction:
             try:
                 await conn.rollback()
             except Exception as exc:
@@ -270,6 +272,7 @@ class NzPool:
 
         _clear_stale_cursor(conn)
 
+        discard = False
         async with self._cond:
             if self._closed:
                 await conn.close()
@@ -280,12 +283,22 @@ class NzPool:
                 )
             self._checked_out.pop(conn_id)
 
-            now = time.monotonic()
-            created = getattr(conn, '_nzpy_pool_created', now)
-            uses = getattr(conn, '_nzpy_pool_uses', 0)
-            pc = _PooledConnection(conn, created, now, uses)
-            self._pool.append(pc)
-            self._cond.notify(1)
+            if not conn._is_reusable():
+                # Never hand a closed or desynced connection to the next caller.
+                discard = True
+                self._created = max(0, self._created - 1)
+                self._cond.notify(1)
+            else:
+                now = time.monotonic()
+                created = getattr(conn, '_nzpy_pool_created', now)
+                uses = getattr(conn, '_nzpy_pool_uses', 0)
+                pc = _PooledConnection(conn, created, now, uses)
+                self._pool.append(pc)
+                self._cond.notify(1)
+
+        if discard:
+            self._log.debug("Dropping unusable connection on release")
+            await conn.close()
 
     @asynccontextmanager
     async def connection(self) -> AsyncGenerator[Connection, None]:
@@ -392,6 +405,9 @@ class SyncPool:
         if self.max_lifetime > 0 and (now - pc.created_at) > self.max_lifetime:
             return False
         if self.max_uses > 0 and pc.use_count >= self.max_uses:
+            return False
+        async_conn = getattr(pc.conn, "_conn", None)
+        if async_conn is not None and not async_conn._idle_socket_is_healthy():
             return False
         if self.ping_query:
             try:
@@ -540,17 +556,30 @@ class SyncPool:
                         self._created -= 1
             else:
                 async_conn = getattr(conn, '_conn', None)
-                if async_conn is not None and not async_conn.autocommit and async_conn.in_transaction:
+                if async_conn is not None and not async_conn._is_reusable():
+                    # Never hand a closed or desynced connection to the next caller.
+                    if self._created > 0:
+                        self._created -= 1
                     try:
-                        conn.rollback()
+                        conn.close()
                     except Exception as exc:
                         self._log.debug(
-                            "Error rolling back sync connection on release: %s",
+                            "Error closing unusable connection on release: %s",
                             exc,
                             exc_info=True,
                         )
-                pc.last_used = time.monotonic()
-                self._pool.append(pc)
+                else:
+                    if async_conn is not None and not async_conn.autocommit and async_conn.in_transaction:
+                        try:
+                            conn.rollback()
+                        except Exception as exc:
+                            self._log.debug(
+                                "Error rolling back sync connection on release: %s",
+                                exc,
+                                exc_info=True,
+                            )
+                    pc.last_used = time.monotonic()
+                    self._pool.append(pc)
         self._sem.release()
 
     @contextmanager

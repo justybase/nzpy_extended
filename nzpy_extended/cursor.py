@@ -41,6 +41,18 @@ class Cursor:
         if self._c._stream is not None and self._c._stream.view is None:
             raise ConnectionClosedError()
 
+    def _raise_deferred_value_error(self) -> None:
+        """Raise a value error deferred from the result that just reached ReadyForQuery.
+
+        The rows that failed to decode were never stored, so reading past this
+        point would silently return a short result. The session is in sync.
+        """
+        if self._c is None:
+            return
+        deferred = self._c._take_deferred_decode_error()
+        if deferred is not None:
+            raise deferred
+
     async def __aexit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
         await self.close()
 
@@ -144,6 +156,7 @@ class Cursor:
                         await asyncio.wait_for(coro, timeout=timeout)
                     except asyncio.TimeoutError:
                         await self._c.cancel(exec_gen=exec_gen)
+                        await self._c._retire_if_desynced()
                         raise OperationalError("Command execution timeout")
                 else:
                     await coro
@@ -236,6 +249,7 @@ class Cursor:
                     return rows
                 elif state == "READY_FOR_QUERY":
                     self.generator = None
+                    self._raise_deferred_value_error()
                     return rows
                 elif state == "ERROR":
                     err = self._c.error if self._c is not None else None
@@ -283,6 +297,7 @@ class Cursor:
             except asyncio.TimeoutError:
                 if self._c is not None:
                     await self._c.cancel(exec_gen=getattr(self, '_exec_gen', None))
+                    await self._c._retire_if_desynced()
                 raise OperationalError("Command fetch timeout")
         else:
             row = await self._anext_internal()
@@ -309,6 +324,7 @@ class Cursor:
                         continue
                     elif state == "READY_FOR_QUERY":
                         self.generator = None
+                        self._raise_deferred_value_error()
                         raise StopAsyncIteration()
                     elif state == "ERROR":
                         err = self._c.error if self._c is not None else None
@@ -368,6 +384,7 @@ class Cursor:
                 continue
             elif state == "READY_FOR_QUERY":
                 self.generator = None
+                self._raise_deferred_value_error()
                 return None
             elif state == "ERROR":
                 err = self._c.error if self._c is not None else None

@@ -7,6 +7,8 @@ from .exceptions import InterfaceError, OperationalError
 from ._constants import DEFAULT_BUFFER_SIZE
 from .buffer_pool import global_pool
 
+MAX_PROTOCOL_READ = 100 * 1024 * 1024
+
 
 class NzBufferedStream:
     def __init__(self, sock: _socket.socket, max_size: int = DEFAULT_BUFFER_SIZE,
@@ -28,6 +30,14 @@ class NzBufferedStream:
         self.head = 0
         self.tail = 0
         self.loop = asyncio.get_event_loop()
+        # True when a read consumed part of its payload and then failed or was
+        # cancelled. The remaining bytes cannot be re-framed, so the connection
+        # must be retired rather than resynchronized.
+        self.partial_read = False
+
+    def _mark_partial_read(self, bytes_read: int) -> None:
+        if bytes_read > 0:
+            self.partial_read = True
 
     async def _handle_fatal_eof(self) -> None:
         self.close()
@@ -127,22 +137,26 @@ class NzBufferedStream:
         result_buffer = bytearray(n)
         res_view = memoryview(result_buffer)
         bytes_read = 0
-        while bytes_read < n:
-            avail = self.tail - self.head
-            if avail > 0:
-                view = self.view
-                if view is None:
-                    raise InterfaceError("Stream is closed")
-                to_copy = min(n - bytes_read, avail)
-                res_view[bytes_read:bytes_read + to_copy] = view[self.head:self.head + to_copy]
-                self.head += to_copy
-                bytes_read += to_copy
+        try:
+            while bytes_read < n:
+                avail = self.tail - self.head
+                if avail > 0:
+                    view = self.view
+                    if view is None:
+                        raise InterfaceError("Stream is closed")
+                    to_copy = min(n - bytes_read, avail)
+                    res_view[bytes_read:bytes_read + to_copy] = view[self.head:self.head + to_copy]
+                    self.head += to_copy
+                    bytes_read += to_copy
 
-            if bytes_read < n:
-                await self._fill_buffer()
-                if self.tail == self.head:
-                    await self._handle_fatal_eof()
-                    raise OperationalError("Unexpected EOF while reading protocol payload")
+                if bytes_read < n:
+                    await self._fill_buffer()
+                    if self.tail == self.head:
+                        await self._handle_fatal_eof()
+                        raise OperationalError("Unexpected EOF while reading protocol payload")
+        except BaseException:
+            self._mark_partial_read(bytes_read)
+            raise
 
         return memoryview(result_buffer)
 
@@ -151,16 +165,16 @@ class NzBufferedStream:
             raise InterfaceError("Negative protocol read length")
         if self.view is None:
             raise InterfaceError("Stream is closed")
-        if n > 100 * 1024 * 1024:
-            raise ValueError(f"Requested read size {n} exceeds maximum allowed 104857600")
+        if n > MAX_PROTOCOL_READ:
+            # A length this large can only come from a corrupt frame header.
+            raise InterfaceError(
+                f"Requested read size {n} exceeds maximum allowed {MAX_PROTOCOL_READ}; "
+                "reconnect is required."
+            )
         if n == 0:
             return b""
 
         if n > self.max_size:
-            if n > 100 * 1024 * 1024:
-                raise ValueError(
-                    f"Requested read size {n} exceeds maximum allowed 104857600"
-                )
             result = bytearray(n)
             res_view = memoryview(result)
             bytes_read = 0
@@ -175,12 +189,16 @@ class NzBufferedStream:
                 self.head += to_copy
                 bytes_read += to_copy
 
-            while bytes_read < n:
-                chunk_len = await self._recv_into(res_view[bytes_read:])
-                if not chunk_len:
-                    await self._handle_fatal_eof()
-                    raise OperationalError("Unexpected EOF while reading protocol payload")
-                bytes_read += chunk_len
+            try:
+                while bytes_read < n:
+                    chunk_len = await self._recv_into(res_view[bytes_read:])
+                    if not chunk_len:
+                        await self._handle_fatal_eof()
+                        raise OperationalError("Unexpected EOF while reading protocol payload")
+                    bytes_read += chunk_len
+            except BaseException:
+                self._mark_partial_read(bytes_read)
+                raise
             return bytes(result)
 
         avail = self.tail - self.head
@@ -196,22 +214,26 @@ class NzBufferedStream:
         res_view = memoryview(result)
         bytes_read = 0
 
-        while bytes_read < n:
-            avail = self.tail - self.head
-            if avail > 0:
-                view = self.view
-                if view is None:
-                    return bytes(result)
-                to_copy = min(n - bytes_read, avail)
-                res_view[bytes_read:bytes_read+to_copy] = view[self.head:self.head+to_copy]
-                self.head += to_copy
-                bytes_read += to_copy
+        try:
+            while bytes_read < n:
+                avail = self.tail - self.head
+                if avail > 0:
+                    view = self.view
+                    if view is None:
+                        return bytes(result)
+                    to_copy = min(n - bytes_read, avail)
+                    res_view[bytes_read:bytes_read+to_copy] = view[self.head:self.head+to_copy]
+                    self.head += to_copy
+                    bytes_read += to_copy
 
-            if bytes_read < n:
-                await self._fill_buffer()
-                if self.tail == self.head:
-                    await self._handle_fatal_eof()
-                    raise OperationalError("Unexpected EOF while reading protocol payload")
+                if bytes_read < n:
+                    await self._fill_buffer()
+                    if self.tail == self.head:
+                        await self._handle_fatal_eof()
+                        raise OperationalError("Unexpected EOF while reading protocol payload")
+        except BaseException:
+            self._mark_partial_read(bytes_read)
+            raise
 
         return bytes(result)
 
