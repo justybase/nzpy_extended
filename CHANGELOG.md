@@ -57,6 +57,24 @@ All notable changes to `nzpy_extended` are documented in this file.
 
 ### Fixed
 
+- The sync API no longer masks errors. When a coroutine raised `RuntimeError`,
+  `runner.run()` re-submitted the already-finished coroutine and surfaced
+  `cannot reuse already awaited coroutine` instead of the real error.
+- `executemany` keeps the DB-API error class of the failing statement
+  (`IntegrityError` stays `IntegrityError`). Only non-DB errors are wrapped in
+  `ProgrammingError`. The failing index is now in `error.__notes__`
+  (`"executemany failed at param set i/n"`), and `str(error)` is unchanged.
+  Code that matched the message text must read the note instead.
+- `float('nan')`, `float('inf')` and `float('-inf')` parameters are sent as
+  `CAST('NaN' AS DOUBLE PRECISION)` and similar, not as bare `nan`/`inf`, which
+  Netezza rejects as unknown identifiers. A `Decimal` NaN or infinity raises
+  `NotSupportedError`, because NUMERIC has no such values.
+- Netezza has no `E'...'` escape strings, so the placeholder scanner no longer
+  treats them specially. A backslash before a closing quote no longer hides the
+  `?` or `$n` placeholders that follow it.
+- A password sent over a plaintext session (`securityLevel` below 2, server
+  without TLS) is logged as a warning. It is not blocked, so existing setups keep
+  working.
 - A value that fails to decode in a large result made the native batch decoder
   rescan the rest of the buffer once per row, so one bad row cost time quadratic in
   the rows before it. The batch now stops in front of that row and each row is

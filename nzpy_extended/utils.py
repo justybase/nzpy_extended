@@ -1,5 +1,6 @@
 import datetime
 import enum
+import math
 import re
 from collections.abc import Callable, Generator, Iterable, AsyncIterable, Sequence
 from decimal import Decimal
@@ -8,7 +9,7 @@ from struct import Struct
 from typing import Any
 from uuid import UUID
 
-from .exceptions import (InterfaceError, ProgrammingError,
+from .exceptions import (InterfaceError, NotSupportedError, ProgrammingError,
                          ArrayDimensionsNotConsistentError)
 
 
@@ -80,7 +81,6 @@ def convert_paramstyle(style: str, query: str) -> tuple[str, Callable[[object], 
     OUTSIDE = 0
     INSIDE_SQ = 1
     INSIDE_QI = 2
-    INSIDE_ES = 3
     INSIDE_CO = 4
 
     output_query: list[str] = []
@@ -104,7 +104,7 @@ def convert_paramstyle(style: str, query: str) -> tuple[str, Callable[[object], 
         if state == OUTSIDE:
             if c == "'":
                 output_query.append(c)
-                state = INSIDE_ES if prev_c == 'E' else INSIDE_SQ
+                state = INSIDE_SQ
                 prev_c = c
                 i += 1
                 continue
@@ -185,11 +185,6 @@ def convert_paramstyle(style: str, query: str) -> tuple[str, Callable[[object], 
             if c == '"':
                 state = OUTSIDE
 
-        elif state == INSIDE_ES:
-            output_query.append(c)
-            if c == "'" and prev_c != "\\":
-                state = OUTSIDE
-
         elif state == INSIDE_CO:
             output_query.append(c)
             if c == "\n":
@@ -227,9 +222,23 @@ def _sql_literal(value: object) -> str:
         return "NULL"
     if isinstance(value, bool):
         return "TRUE" if value else "FALSE"
-    if isinstance(value, (int, Decimal)) and not isinstance(value, bool):
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            # NUMERIC has no NaN or Infinity on Netezza; the server rejects them.
+            raise NotSupportedError(
+                "Decimal NaN/Infinity cannot be sent as NUMERIC; "
+                "pass a float if DOUBLE PRECISION semantics are intended")
+        return str(value)
+    if isinstance(value, int):
         return str(value)
     if isinstance(value, float):
+        # Netezza accepts these only as typed casts. A bare nan/inf is an
+        # unknown identifier.
+        if math.isnan(value):
+            return "CAST('NaN' AS DOUBLE PRECISION)"
+        if math.isinf(value):
+            return "CAST('Infinity' AS DOUBLE PRECISION)" if value > 0 \
+                else "CAST('-Infinity' AS DOUBLE PRECISION)"
         return repr(value)
     if isinstance(value, datetime.datetime):
         return _quote_text_literal(value.isoformat(sep=" "))
@@ -254,12 +263,10 @@ def render_prepared_statement(statement: str, args: tuple[Any, ...]) -> tuple[st
     OUTSIDE = 0
     INSIDE_SQ = 1
     INSIDE_QI = 2
-    INSIDE_ES = 3
     INSIDE_CO = 4
 
     output_query: list[str] = []
     state = OUTSIDE
-    prev_c: str | None = None
     i = 0
     max_index = 0
 
@@ -270,20 +277,17 @@ def render_prepared_statement(statement: str, args: tuple[Any, ...]) -> tuple[st
         if state == OUTSIDE:
             if c == "'":
                 output_query.append(c)
-                state = INSIDE_ES if prev_c == 'E' else INSIDE_SQ
-                prev_c = c
+                state = INSIDE_SQ
                 i += 1
                 continue
             if c == '"':
                 output_query.append(c)
                 state = INSIDE_QI
-                prev_c = c
                 i += 1
                 continue
             if c == '-' and next_c == '-':
                 output_query.extend((c, next_c))
                 state = INSIDE_CO
-                prev_c = next_c
                 i += 2
                 continue
             if c == "$" and next_c is not None and next_c.isdigit():
@@ -297,7 +301,6 @@ def render_prepared_statement(statement: str, args: tuple[Any, ...]) -> tuple[st
                     )
                 max_index = max(max_index, param_index)
                 output_query.append(_sql_literal(args[param_index - 1]))
-                prev_c = statement[j - 1]
                 i = j
                 continue
             output_query.append(c)
@@ -307,7 +310,6 @@ def render_prepared_statement(statement: str, args: tuple[Any, ...]) -> tuple[st
             if c == "'":
                 if next_c == "'":
                     output_query.append(next_c)
-                    prev_c = next_c
                     i += 2
                     continue
                 state = OUTSIDE
@@ -317,17 +319,11 @@ def render_prepared_statement(statement: str, args: tuple[Any, ...]) -> tuple[st
             if c == '"':
                 state = OUTSIDE
 
-        elif state == INSIDE_ES:
-            output_query.append(c)
-            if c == "'" and prev_c != "\\":
-                state = OUTSIDE
-
         elif state == INSIDE_CO:
             output_query.append(c)
             if c == "\n":
                 state = OUTSIDE
 
-        prev_c = c
         i += 1
 
     return ''.join(output_query), max_index

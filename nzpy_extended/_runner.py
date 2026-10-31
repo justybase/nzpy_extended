@@ -23,6 +23,7 @@ class _SyncRunner:
     def __init__(self) -> None:
         if hasattr(self, '_loop'):
             return
+        self._lock = threading.Lock()
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(
             target=self._loop.run_forever,
@@ -33,15 +34,22 @@ class _SyncRunner:
         atexit.register(self._atexit_cleanup)
 
     def run(self, coro: Coroutine[Any, Any, Any] | asyncio.Future[Any]) -> Any:
-        for attempt in range(2):
+        with self._lock:
             if not self._loop.is_running():
                 self._restart()
-            try:
-                return asyncio.run_coroutine_threadsafe(coro, self._loop).result()  # type: ignore[arg-type]
-            except RuntimeError:
-                if attempt == 0:
-                    continue
-                raise
+            loop = self._loop
+        try:
+            future = asyncio.run_coroutine_threadsafe(coro, loop)  # type: ignore[arg-type]
+        except RuntimeError:
+            # The loop stopped between the check and the submit. Submission failed
+            # before the coroutine started, so it can still run on a fresh loop.
+            with self._lock:
+                self._restart()
+                loop = self._loop
+            future = asyncio.run_coroutine_threadsafe(coro, loop)  # type: ignore[arg-type]
+        # Errors raised by the coroutine itself propagate unchanged. Retrying here
+        # would re-submit a coroutine that already ran.
+        return future.result()
 
     def _restart(self) -> None:
         try:

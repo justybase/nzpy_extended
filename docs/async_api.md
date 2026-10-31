@@ -149,6 +149,14 @@ async def read(conn=Depends(nz_fastapi.get_connection)):
 - **One active cursor per connection** — a new `execute()` drains the previous result set.
 - **threadsafety = 1** — do not share a connection across threads; use a pool instead.
 - **Paramstyle** — wire protocol uses `qmark`; other styles are rendered client-side.
+- **Parameters are rendered client-side** — values are written into the SQL text as
+  literals, not bound by the server. Strings are quoted with `''`; a backslash is an
+  ordinary character, because Netezza has no `E'...'` escape strings.
+- **Special floats** — `float('nan')` and `float('inf')` are sent as
+  `CAST(... AS DOUBLE PRECISION)`. Netezza refuses to store NaN in a column
+  (`Float8 result is a NaN`). `Decimal` NaN and infinity raise `NotSupportedError`.
+  A `-inf` that is returned directly in a SELECT list comes back as `+inf`. The same
+  value read from a table column keeps its sign. This is server behaviour.
 - **KRB5** — not supported.
 
 See [pep249_compliance.md](pep249_compliance.md) for DB-API details and known deviations.

@@ -69,7 +69,7 @@ Exception
 | `.callproc(procname[, params])` | ✅ | Optional per spec. `CALL proc(args)` with parameter binding |
 | `.close()` | ✅ | |
 | `.execute(operation[, params])` | ✅ | Returns cursor (enables chaining). `params` as sequence |
-| `.executemany(operation, seq)` | ✅ | Partial failure preserves rowcount, enriches error with index |
+| `.executemany(operation, seq)` | ✅ | Partial failure preserves rowcount and the error class; the failing index is in `error.__notes__` |
 | `.fetchone()` | ✅ | Returns row or `None` |
 | `.fetchmany([size])` | ✅ | Default size from `arraysize` |
 | `.fetchall()` | ✅ | |

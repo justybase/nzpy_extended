@@ -69,6 +69,9 @@ class SyncHandshake:
         self.backend_key: int | None = None
         self.server_client_encoding: str | None = None
         self.last_error: str = ""
+        # True only after a successful TLS upgrade. Used to warn before a password
+        # goes out on a plaintext session.
+        self.secured: bool = False
 
         self.guardium_clientOS: str = system()
         self.guardium_clientOSUser: str = getuser()
@@ -278,6 +281,7 @@ class SyncHandshake:
                 self.log.warning("Problem establishing secured session")
                 return False
             self.log.info("Secured Connect Success")
+            self.secured = True
             # The acknowledgement for SSL_CONNECT is the first byte after the handshake TLS.
             ack = self._read(1)
             if ack == UNSECURED_ACK:
@@ -334,6 +338,11 @@ class SyncHandshake:
                 "but no password was provided")
         response = auth_response(areq, password, salt)
         if response is not None:
+            if not self.secured:
+                self.log.warning(
+                    "Sending the password over an UNENCRYPTED connection (%s). "
+                    "Use securityLevel=2 with TLS to protect it.",
+                    auth_method_name(areq))
             self._send_response(response)
         return True
 

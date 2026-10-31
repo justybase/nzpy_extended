@@ -305,11 +305,12 @@ class TestSyncExecutemany:
         _drop_table(synccon, self.TABLE)
         with synccon.cursor() as cur:
             cur.execute(f"CREATE TABLE {self.TABLE} (id INT)")
-            with pytest.raises(nzpy.ProgrammingError, match=r"param set 3/5"):
+            with pytest.raises(nzpy.Error) as info:
                 cur.executemany(
                     f"INSERT INTO {self.TABLE} VALUES (?)",
                     [(1,), (2,), ("not_an_int",), (4,), (5,)]
                 )
+            assert info.value.__notes__ == ["executemany failed at param set 3/5"]
             assert cur.rowcount == 2
         _drop_table(synccon, self.TABLE)
 
@@ -317,11 +318,12 @@ class TestSyncExecutemany:
         _drop_table(synccon, self.TABLE)
         with synccon.cursor() as cur:
             cur.execute(f"CREATE TABLE {self.TABLE} (id INT)")
-            with pytest.raises(nzpy.ProgrammingError, match=r"param set 2/3"):
+            with pytest.raises(nzpy.Error) as info:
                 cur.executemany(
                     f"INSERT INTO {self.TABLE} VALUES (?)",
                     [(1,), ("bad_int",), (3,)]
                 )
+            assert info.value.__notes__ == ["executemany failed at param set 2/3"]
             assert cur.rowcount == 1
         _drop_table(synccon, self.TABLE)
 
@@ -331,11 +333,12 @@ class TestSyncExecutemany:
         cur = con.cursor()
         await cur.execute(f"CREATE TABLE {TABLE} (id INT)")
         try:
-            with pytest.raises(nzpy.ProgrammingError, match=r"param set 2/3"):
+            with pytest.raises(nzpy.Error) as info:
                 await cur.executemany(
                     f"INSERT INTO {TABLE} VALUES (?)",
                     [(1,), ("bad",), (3,)]
                 )
+            assert info.value.__notes__ == ["executemany failed at param set 2/3"]
             assert cur.rowcount == 1
         finally:
             await cur.execute(f"DROP TABLE {TABLE}")

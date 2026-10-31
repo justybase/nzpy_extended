@@ -5,7 +5,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 from warnings import warn
 
-from .exceptions import (ConnectionClosedError, InterfaceError,
+from .exceptions import (ConnectionClosedError, Error, InterfaceError,
                          OperationalError, ProgrammingError)
 
 if TYPE_CHECKING:
@@ -178,9 +178,13 @@ class Cursor:
                 await self.execute(operation, parameters)
             except Exception as e:
                 self.row_count = -1 if -1 in rowcounts else sum(rowcounts)
-                raise ProgrammingError(
-                    f"executemany failed at param set {i + 1}/{len(param_sets)}: {e}"
-                ) from e
+                note = f"executemany failed at param set {i + 1}/{len(param_sets)}"
+                if isinstance(e, Error):
+                    # Keep the DB-API class (IntegrityError stays IntegrityError).
+                    # The index goes into a note, so str(e) is unchanged.
+                    e.add_note(note)
+                    raise
+                raise ProgrammingError(f"{note}: {e}") from e
             rowcounts.append(self.row_count)
 
         self.row_count = -1 if -1 in rowcounts else sum(rowcounts)

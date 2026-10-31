@@ -157,7 +157,7 @@ cur.executemany(
 )
 ```
 
-On partial failure: sets `rowcount` to successful count, enriches error with param set index.
+On partial failure: sets `rowcount` to successful count. The error keeps its DB-API class (for example `IntegrityError`). The failing index is in `error.__notes__` (`executemany failed at param set i/n`), not in `str(error)`.
 
 #### `callproc(procname, parameters=None) → list | None`
 
