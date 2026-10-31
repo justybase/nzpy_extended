@@ -15,6 +15,8 @@
 
 ### Windows 11
 
+_Measured with the previous C decoder (0.7.x); not re-measured with the Rust decoder._
+
 | Data type | official nzpy | nzpy_extended (no native ext) | nzpy_extended (+ native ext) | vs. ODBC |
 |---|---|---|---|---|
 | INTEGER | ~18 k rows/s | ~196 k rows/s | **~256 k rows/s** | ≈ ODBC (~239 k) |
@@ -26,18 +28,22 @@
 
 ### WSL2 (Linux x86_64)
 
+Measured with nzpy_extended 0.8.0 (Rust decoder) on 2026-10-31 using `tools/examples/performance_test.py`: 100 000 rows, median of three runs. The nzpy_extended columns average the async and sync medians. Run-to-run spread is about 5% for most cells and up to about 24% for a few.
+
 | Data type | official nzpy | nzpy_extended (no native ext) | nzpy_extended (+ native ext) | vs. ODBC |
 |---|---|---|---|---|
-| INTEGER | ~21 k rows/s | ~203 k rows/s | **~640 k rows/s** | ~92 k rows/s |
-| NUMERIC | ~11 k rows/s | ~79 k rows/s | **~150 k rows/s** | ~63 k rows/s |
-| STRING | ~22 k rows/s | ~71 k rows/s | **~160 k rows/s** | ~80 k rows/s |
-| DATETIME | ~21 k rows/s | ~126 k rows/s | **~407 k rows/s** | ~111 k rows/s |
-| BOOLEAN | ~25 k rows/s | ~186 k rows/s | **~418 k rows/s** | ~192 k rows/s |
-| Mixed | ~5.4 k rows/s | ~33 k rows/s | **~49 k rows/s** | ~20 k rows/s |
+| INTEGER | ~32 k rows/s | ~194 k rows/s | **~712 k rows/s** | ~115 k rows/s |
+| NUMERIC | ~15 k rows/s | ~86 k rows/s | **~192 k rows/s** | ~76 k rows/s |
+| STRING | ~30 k rows/s | ~107 k rows/s | **~192 k rows/s** | ~99 k rows/s |
+| DATETIME | ~30 k rows/s | ~156 k rows/s | **~859 k rows/s** | ~147 k rows/s |
+| BOOLEAN | ~37 k rows/s | ~261 k rows/s | **~932 k rows/s** | ~230 k rows/s |
+| Mixed | ~8 k rows/s | ~41 k rows/s | **~92 k rows/s** | ~27 k rows/s |
 
-Note: WSL2 results were obtained on the same Netezza server as Windows 11 (192.168.0.144) — the higher throughput reflects Linux network stack efficiency. ODBC results use a ctypes-based ANSI-ODBC fallback (because pyodbc's Unicode API is incompatible with the Netezza ODBC driver on Linux). This wrapper fetches every cell individually via `SQLGetData`, so ODBC numbers on WSL2 are **understated** vs. native pyodbc on Windows (which uses `SQLBindCol` batch fetching). The real ODBC-vs-native gap on Linux is likely smaller.
+Note: WSL2 results were obtained on the same Netezza server as Windows 11 (192.168.0.144). ODBC results use a ctypes-based ANSI-ODBC fallback (because pyodbc's Unicode API is incompatible with the Netezza ODBC driver on Linux). This wrapper fetches every cell individually via `SQLGetData`, so ODBC numbers on WSL2 are **understated** vs. native pyodbc on Windows (which uses `SQLBindCol` batch fetching). The real ODBC-vs-native gap on Linux is likely smaller.
 
 ### macOS ARM64 (Apple M4)
+
+_Measured with the previous C decoder (0.7.x); not re-measured with the Rust decoder._
 
 Benchmarks run on a Mac mini (Apple M4, 16 GB RAM) — same Netezza server at 192.168.0.144. 100 k rows per query.
 
