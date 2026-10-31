@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import socket
 import struct
+import time
 
 import pytest
 
@@ -296,6 +297,24 @@ async def test_async_pool_replaces_a_connection_the_server_closed() -> None:
     assert len(server.connections) == 2
 
 
+def _wait_until_idle_socket_sees_eof(pool: SyncPool, timeout: float = 5.0) -> None:
+    """Wait until the server's close is visible on every idle client socket.
+
+    The FIN from a shutdown that runs on another thread is not guaranteed to be
+    visible at once (it is not on macOS), and the pool's health check only sees
+    what has arrived. Waiting makes the test about replacement, not timing.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        with pool._lock:
+            idle = [pc.conn._conn for pc in pool._pool]
+        if idle and all(not c._idle_socket_is_healthy() for c in idle):
+            return
+        if time.monotonic() >= deadline:
+            raise AssertionError("the server's close never became visible on the idle socket")
+        time.sleep(0.01)
+
+
 def test_sync_pool_replaces_a_connection_the_server_closed() -> None:
     with MockNetezzaServer(responder=_ints_and_text_responder) as server:
         pool = SyncPool(min_size=1, max_size=2, ping_query=None, **server.connect_kwargs())
@@ -304,6 +323,7 @@ def test_sync_pool_replaces_a_connection_the_server_closed() -> None:
             pool.release(conn)
 
             server.sessions[0].sock.shutdown(socket.SHUT_RDWR)
+            _wait_until_idle_socket_sees_eof(pool)
             conn = pool.acquire()
             cursor = conn.cursor()
             cursor.execute(SELECT_ABC)
