@@ -23,12 +23,29 @@ except ImportError:
     pyodbc = None
     PYODBC_AVAILABLE = False
 
-# Connection configuration (retrieved from environment variables or default values)
-HOST = os.getenv("NZ_HOST", "192.168.0.144")
-PORT = int(os.getenv("NZ_PORT", "5480"))
-USER = os.getenv("NZ_USER", "admin")
-PASSWORD = os.getenv("NZ_PASSWORD", "password")
-DATABASE = os.getenv("NZ_DATABASE", "SYSTEM")
+# Connection settings come from NZ_DEV_* (the project's live-test variables) or the
+# legacy NZ_* names. There are no host, user or password defaults; main() refuses
+# to run when a setting is missing.
+def _setting(*names: str) -> str:
+    for name in names:
+        value = os.getenv(name)
+        if value:
+            return value
+    return ""
+
+
+_SETTING_NAMES = {
+    "host": ("NZ_DEV_HOST", "NZ_HOST"),
+    "port": ("NZ_DEV_PORT", "NZ_PORT"),
+    "user": ("NZ_DEV_USER", "NZ_USER"),
+    "password": ("NZ_DEV_PASSWORD", "NZ_PASSWORD"),
+    "database": ("NZ_DEV_DATABASE", "NZ_DATABASE"),
+}
+HOST = _setting(*_SETTING_NAMES["host"])
+PORT = int(_setting(*_SETTING_NAMES["port"]) or "0")
+USER = _setting(*_SETTING_NAMES["user"])
+PASSWORD = _setting(*_SETTING_NAMES["password"])
+DATABASE = _setting(*_SETTING_NAMES["database"])
 ROW_LIMIT = int(os.getenv("NZ_ROWS", "100000"))
 
 ODBC_DRIVER_NAME = os.getenv("NZ_ODBC_DRIVER", "NetezzaSQL")
@@ -556,4 +573,12 @@ if __name__ == "__main__":
         default=os.getenv("NZ_OUTPUT"),
     )
     args = parser.parse_args()
+    missing = [
+        names[0] for key, names in _SETTING_NAMES.items()
+        if not _setting(*names) or (key == "port" and PORT <= 0)
+    ]
+    if missing:
+        raise SystemExit(
+            "missing connection settings (set the NZ_DEV_* variable): " + ", ".join(missing)
+        )
     asyncio.run(run_performance_test(output_path=args.output))

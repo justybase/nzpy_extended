@@ -627,7 +627,7 @@ export NZ_PASSWORD=password
 export NZ_DATABASE=JUST_DATA
 ```
 
-All variables have defaults — only `NZ_HOST` is required if your setup differs from the defaults.
+The script has no host, user or password defaults. Set `NZ_DEV_HOST`, `NZ_DEV_PORT`, `NZ_DEV_USER`, `NZ_DEV_PASSWORD` and `NZ_DEV_DATABASE` (the legacy `NZ_*` names are accepted as fallbacks). It exits with the list of missing settings otherwise.
 
 ODBC driver name can be set separately:
 ```shell
