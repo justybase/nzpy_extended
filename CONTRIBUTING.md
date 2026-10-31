@@ -10,7 +10,7 @@ cd nzpy_extended
 python -m pip install -e ".[test,lint]"
 ```
 
-Python **3.12+** and a C compiler are required to build the optional C extension. Set `NZPY_EXTENDED_NO_CEXT=1` to skip the extension during development.
+Python **3.11+** and a C compiler are required to build the optional C extension. Set `NZPY_EXTENDED_NO_CEXT=1` to skip the extension during development.
 
 ## Running tests
 

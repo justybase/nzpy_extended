@@ -4,6 +4,56 @@ All notable changes to `nzpy_extended` are documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Support Python 3.11 through 3.15. Wheels and CI matrices now cover all five
+  versions on Linux, macOS and Windows.
+- Offline Netezza wire-protocol mock (`tests/mock_netezza.py`) used by new unit
+  tests for the handshake, query phase, pool probing and cancel/timeout recovery,
+  with no database required.
+- Golden wire fixtures captured from a real appliance (`tests/data/wire`) are
+  replayed offline under several fragmentation sizes, and every truncation point
+  must fail with a driver error.
+- Seeded fuzz and property tests for malformed responses and the C/pure-Python
+  DBOS decoders (`tests/test_wire_fuzz_unit.py`).
+
+### Changed
+
+- Handshake option decisions (option order, authentication payloads, version
+  downgrade rules) moved into `nzpy_extended/_handshake_plan.py`, a pure module
+  that mirrors the Rust driver's shared handshake planning. `handshake.py` now
+  only performs socket I/O.
+- `psutil` is part of the `test` extra so the memory-leak tests are collected.
+
+### Fixed
+
+- Handshake sent `REMOTE_PID` twice on the version-6 path. The option sequence
+  now matches the reference driver.
+- DBOS `NUMERIC` values with more than 28 significant digits were rounded by the
+  decimal context. Values are now built exactly from their unscaled digits and
+  scale, in both the C extension and the pure-Python decoder.
+- DBOS empty `VARCHAR` values decode as `""` in the C extension, which returned
+  `None` before. Only the presence bitmap produces `NULL`.
+- DBOS `SMALLINT` values were read unsigned in the pure-Python decoder, so `-32768`
+  came back as `32768`.
+- A `DataError` from a value that fails to decode was dropped by `fetchall` and
+  `nextset`. Both now raise it when the result reaches `ReadyForQuery`.
+- An oversized protocol read length raised a bare `ValueError`; it is now an
+  `InterfaceError` that requires reconnecting.
+- Undecodable bytes in notices, error text and debug-logged server text no longer
+  escape as `UnicodeDecodeError`; they are decoded with replacement characters.
+- Handshake: accept only strictly decreasing version downgrades, require exactly
+  two-byte MD5/SHA-256 salts, and reject unknown authentication requests before
+  reading further.
+- A read cancelled or timed out mid-frame now retires the connection instead of
+  resynchronizing it. Connections are also closed on any protocol framing fault.
+- Value decode errors in result rows raise `DataError` at `ReadyForQuery` and
+  leave the session usable. A server error takes precedence over them.
+- Harden DBOS row decoding in the C extension: layout checks run before any
+  value is read, and decode failures propagate instead of becoming `None`.
+- Pools probe idle sockets on checkout and never return a closed or desynced
+  connection to the pool on release.
+
 ## 0.7.3 - 2026-09-30
 
 ### Performance

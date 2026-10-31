@@ -9,7 +9,7 @@
 
 ## Build, Test, and Development Commands
 
-Use Python 3.12+ and a C compiler, then install editable test and lint dependencies:
+Use Python 3.11+ (3.11 through 3.15 are supported) and a C compiler, then install editable test and lint dependencies:
 
 ```shell
 python -m pip install -e ".[test,lint]"

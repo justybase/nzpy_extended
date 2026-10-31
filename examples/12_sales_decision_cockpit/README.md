@@ -77,7 +77,7 @@ protects it from blocking code. See the full checklist in
 
 ## Setup
 
-Use Python 3.12+ and install the example dependencies:
+Use Python 3.11+ and install the example dependencies:
 
 ```bash
 python -m pip install -r requirements.txt
