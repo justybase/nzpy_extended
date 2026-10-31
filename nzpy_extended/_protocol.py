@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import os
 import stat
+import time
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, Type
 
@@ -70,6 +71,9 @@ from .utils import (
 )
 from ._serializers import build_pg_types, build_py_types
 from . import _native
+
+# Longest stretch the result reader may run without giving the event loop a turn.
+_LOOP_YIELD_INTERVAL_S = 0.005
 
 
 def _backend_text(data: bytes, encoding: str) -> str:
@@ -466,6 +470,7 @@ class ProtocolHandler:
         fname = None
         fh = None
         conn._cached_header = None
+        last_loop_yield = time.monotonic()
 
         while True:
             if conn._cached_header is not None:
@@ -620,6 +625,13 @@ class ProtocolHandler:
                 conn._cached_header = header
                 if len(cursor.cached_rows) > 0:
                     cursor.has_rows = True
+                # A socket that is never empty (fast server, slow decoder) lets the
+                # reads above return without suspending, so the event loop would
+                # not run timers or cancel() until the result ends. Yield now and then.
+                now = time.monotonic()
+                if now - last_loop_yield >= _LOOP_YIELD_INTERVAL_S:
+                    await asyncio.sleep(0)
+                    last_loop_yield = time.monotonic()
                 yield "DATA_BATCH"
                 continue
             if response == b"u":

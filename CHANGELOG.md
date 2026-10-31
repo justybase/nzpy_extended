@@ -50,6 +50,10 @@ All notable changes to `nzpy_extended` are documented in this file.
 
 ### Fixed
 
+- While a large result streamed from a fast server, the event loop got no turns
+  until the whole result had been decoded. A `cancel()` or timer issued during the
+  read (for example after `asyncio.sleep`) was delayed, and the pure-Python decoder
+  was affected most. The result reader now yields to the loop at least every 5 ms.
 - `CHAR`/`NCHAR` values containing non-Latin-1 text were corrupted by padding:
   the result was built as a 1-byte-kind string, so `ż` came back as `|`. Found on
   a live Netezza 11.2 appliance; the native decoder keeps the text intact.
