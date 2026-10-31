@@ -9,7 +9,8 @@ import socket
 import ssl as ssl_module
 import asyncio
 from collections import defaultdict, deque
-from collections.abc import Callable, Iterable, AsyncIterable
+from collections.abc import Callable, Iterable, AsyncIterable, Iterator
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import (datetime as Datetime)
 
@@ -191,6 +192,8 @@ class Connection:
         self._ext_table_source = None
         self.command_generation = 0
         self._buffer_size = DEFAULT_BUFFER_SIZE
+        # Task that currently owns the wire; see ``_operation``.
+        self._op_owner: asyncio.Task[Any] | None = None
 
         # Internal service objects — created here so they're available
         # immediately after ``Connection()``, even before ``connect()``.
@@ -488,10 +491,37 @@ class Connection:
         await c.execute(operation, args, timeout=timeout)
         return c
 
+    @contextmanager
+    def _operation(self) -> Iterator[None]:
+        """Hold the wire for one public operation.
+
+        The protocol has one request/response stream per connection, so two tasks
+        using it at once would interleave messages. A second task fails fast with
+        ``InterfaceError`` instead of corrupting the stream. The owning task may
+        re-enter, so internal helpers can nest. ``cancel()`` and ``close()`` do not
+        take the guard, because they have to run while an operation is in flight.
+        """
+        task = asyncio.current_task()
+        owner = self._op_owner
+        if owner is not None and owner is not task:
+            raise InterfaceError(
+                "Another operation is already in progress on this connection. "
+                "Use a separate connection for each concurrent task."
+            )
+        if owner is not None:
+            yield
+            return
+        self._op_owner = task
+        try:
+            yield
+        finally:
+            self._op_owner = None
+
     async def commit(self) -> None:
         if self._closed:
             raise ConnectionClosedError()
-        await self._execute(self._cursor, "commit", None)
+        with self._operation():
+            await self._execute(self._cursor, "commit", None)
         self.in_transaction = False
 
     async def rollback(self) -> None:
@@ -499,7 +529,8 @@ class Connection:
             raise ConnectionClosedError()
         if not self.in_transaction:
             return
-        await self._execute(self._cursor, "rollback", None)
+        with self._operation():
+            await self._execute(self._cursor, "rollback", None)
         self.in_transaction = False
 
     async def close(self) -> None:

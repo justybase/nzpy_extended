@@ -112,6 +112,18 @@ All notable changes to `nzpy_extended` are documented in this file.
   decode failures propagate instead of becoming `None`.
 - Pools probe idle sockets on checkout and never return a closed or desynced
   connection to the pool on release.
+- `NzPool` no longer holds its condition lock while it opens, validates or closes a
+  connection. A slow connect used to stall every other `acquire()` and `release()`.
+  `SyncPool` likewise no longer holds its lock during connects, closes or rollbacks.
+- The idle-connection sweep owns each connection while it validates it, so
+  `acquire()` cannot receive a connection that is being tested. A cancelled sweep
+  closes the connection it holds.
+- `SyncPool.acquire()` no longer leaks a pool slot when a connect fails. Before, each
+  failed connect shrank the pool by one until `acquire()` timed out.
+- Two tasks using one connection at the same time now raise `InterfaceError` instead
+  of interleaving protocol messages. Use one connection per concurrent task, or a
+  pool. Sequential use is unchanged, and `cancel()` and `close()` still run while an
+  operation is in flight.
 
 ## 0.7.3 - 2026-09-30
 

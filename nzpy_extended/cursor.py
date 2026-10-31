@@ -1,8 +1,9 @@
 from __future__ import annotations
 import asyncio
+import functools
 from collections import deque
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from warnings import warn
 
 from .exceptions import (ConnectionClosedError, Error, InterfaceError,
@@ -10,6 +11,20 @@ from .exceptions import (ConnectionClosedError, Error, InterfaceError,
 
 if TYPE_CHECKING:
     from .core import Connection
+
+_AsyncMethod = TypeVar("_AsyncMethod", bound=Callable[..., Awaitable[Any]])
+
+
+def _guarded(method: _AsyncMethod) -> _AsyncMethod:
+    """Run a cursor method while holding its connection's wire (see ``Connection._operation``)."""
+    @functools.wraps(method)
+    async def wrapper(self: Cursor, *args: Any, **kwargs: Any) -> Any:
+        if self._c is None:
+            return await method(self, *args, **kwargs)
+        with self._c._operation():
+            return await method(self, *args, **kwargs)
+
+    return cast(_AsyncMethod, wrapper)
 
 
 class Cursor:
@@ -136,6 +151,7 @@ class Cursor:
             raise ProgrammingError("Cursor closed")
         return         self._c._meta.resolve_column_metadata(col, index, tupdesc)
 
+    @_guarded
     async def execute(self, operation: str, args: Any | None = None, stream: Any = None, timeout: float | None = None) -> Cursor:
         self._ensure_open()
         try:
@@ -200,6 +216,7 @@ class Cursor:
         await self.execute(sql)
         return None
 
+    @_guarded
     async def fetchone(self) -> Any:
         try:
             return await self.__anext__()
@@ -210,6 +227,7 @@ class Cursor:
         except AttributeError:
             raise ProgrammingError("attempting to use unexecuted cursor")
 
+    @_guarded
     async def fetchmany(self, num: int | None = None) -> list[Any]:
         self._ensure_open()
         try:
@@ -223,6 +241,7 @@ class Cursor:
         except TypeError:
             raise ProgrammingError("attempting to use unexecuted cursor")
 
+    @_guarded
     async def fetchall(self) -> list[Any]:
         self._ensure_open()
         try:
@@ -272,6 +291,7 @@ class Cursor:
         if self._c is not None:
             await self._c.cancel(exec_gen)
 
+    @_guarded
     async def close(self) -> None:
         generator = getattr(self, 'generator', None)
         conn = self._c
@@ -293,6 +313,7 @@ class Cursor:
     def setoutputsize(self, size: Any, column: Any = None) -> None:
         pass
 
+    @_guarded
     async def __anext__(self) -> Any:
         self._ensure_open()
         if getattr(self, '_timeout', None) is not None and self._timeout and self._timeout > 0:
@@ -364,6 +385,7 @@ class Cursor:
         self.cached_rows.clear()
         self._rownumber = 0
 
+    @_guarded
     async def nextset(self) -> bool | None:
         self.cached_rows.clear()
 

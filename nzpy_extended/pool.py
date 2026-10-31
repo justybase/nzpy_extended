@@ -145,16 +145,74 @@ class NzPool:
                 "Error closing pooled connection: %s", exc, exc_info=True
             )
 
+    # Pool bookkeeping (``_created``, ``_pool``, ``_checked_out``, ``_reserving``) is
+    # updated with plain attribute writes and no ``await`` between a check and its
+    # update. The event loop is single-threaded, so these stay consistent without
+    # holding ``_cond``. ``_cond`` only guards waiting and notifying, and it is never
+    # held across network I/O: connects, closes, and validation pings all run outside it.
+
+    async def _notify(self) -> None:
+        async with self._cond:
+            self._cond.notify(1)
+
+    async def _close_quiet(self, conn: Connection) -> None:
+        try:
+            await conn.close()
+        except Exception as exc:
+            self._log.debug(
+                "Error closing pooled connection: %s", exc, exc_info=True
+            )
+
+    async def _abandon_slot(self) -> None:
+        """Give back a slot reserved for a connection that never opened."""
+        self._created = max(0, self._created - 1)
+        await self._notify()
+
+    async def _drop_owned(self, pc: _PooledConnection) -> None:
+        """Discard an idle connection that the calling task has reserved."""
+        self._reserving.discard(id(pc.conn))
+        self._created = max(0, self._created - 1)
+        try:
+            await self._notify()
+        finally:
+            await self._close_connection(pc)
+
+    async def _connect_reserved(self) -> Connection:
+        """Open a connection for a slot that is already counted in ``_created``."""
+        try:
+            conn = await self._create_new_connection()
+        except BaseException:
+            await self._abandon_slot()
+            raise
+        if self._closed:
+            self._created = max(0, self._created - 1)
+            await self._close_quiet(conn)
+            await self._notify()
+            raise RuntimeError("Pool was closed while connecting")
+        conn._nzpy_pool_uses = 1  # type: ignore[attr-defined]
+        self._checked_out[id(conn)] = conn
+        return conn
+
     async def _fill_idle(self) -> None:
-        while self._created < self.min_size:
+        """Pre-create idle connections up to ``min_size``; never connects under ``_cond``."""
+        while not self._closed and self._created < self.min_size:
+            self._created += 1
             try:
                 conn = await self._create_new_connection()
-                now = time.monotonic()
-                self._pool.append(_PooledConnection(conn, now, now, 0))
-                self._created += 1
             except Exception as e:
                 self._log.warning("Failed to pre-create connection: %s", e)
-                break
+                await self._abandon_slot()
+                return
+            except BaseException:
+                await self._abandon_slot()
+                raise
+            if self._closed:
+                self._created = max(0, self._created - 1)
+                await self._close_quiet(conn)
+                return
+            now = time.monotonic()
+            self._pool.append(_PooledConnection(conn, now, now, 0))
+            await self._notify()
 
     def get_stats(self) -> dict[str, Any]:
         """Return a best-effort snapshot of pool counters."""
@@ -173,27 +231,58 @@ class NzPool:
         if self._maintain_task is None and not self._closed:
             self._maintain_task = asyncio.create_task(self._background_maintain())
 
+    async def _sweep_idle(self) -> None:
+        """Validate idle connections one at a time, owning each while it is checked.
+
+        A connection leaves the idle queue before it is validated, so acquire can
+        never receive a connection the sweep is still testing. It goes back to the
+        queue if healthy, and is closed otherwise, including when the sweep is
+        cancelled mid-validation.
+        """
+        async with self._cond:
+            budget = len(self._pool)
+        for _ in range(budget):
+            async with self._cond:
+                if self._closed or not self._pool:
+                    return
+                pc = self._pool.popleft()
+                self._reserving.add(id(pc.conn))
+            returned = False
+            try:
+                if await self._validate_connection(pc) and not self._closed:
+                    self._reserving.discard(id(pc.conn))
+                    self._pool.append(pc)
+                    returned = True
+                    await self._notify()
+            finally:
+                if not returned:
+                    await self._drop_owned(pc)
+
     async def _background_maintain(self) -> None:
         while not self._closed:
             await asyncio.sleep(30)
+            if self._closed:
+                return
+            await self._sweep_idle()
+            await self._fill_idle()
 
-            async with self._cond:
-                candidates = list(self._pool)
-
-            stale: list[_PooledConnection] = []
-            for pc in candidates:
-                if not await self._validate_connection(pc):
-                    stale.append(pc)
-
-            for pc in stale:
-                await self._close_connection(pc)
-
-            async with self._cond:
-                for pc in stale:
-                    if pc in self._pool:
-                        self._pool.remove(pc)
-                        self._created -= 1
-                await self._fill_idle()
+    async def _checkout_idle(self, pc: _PooledConnection) -> Connection | None:
+        """Validate an idle connection reserved by this task. ``None`` if it was stale."""
+        checked_out = False
+        try:
+            if not await self._validate_connection(pc):
+                return None
+            if self._closed:
+                raise RuntimeError("Pool was closed during connection validation")
+            pc.use_count += 1
+            self._reserving.discard(id(pc.conn))
+            pc.conn._nzpy_pool_uses = pc.use_count  # type: ignore[attr-defined]
+            self._checked_out[id(pc.conn)] = pc.conn
+            checked_out = True
+            return pc.conn
+        finally:
+            if not checked_out:
+                await self._drop_owned(pc)
 
     async def acquire(self) -> Connection:
         if self._closed:
@@ -202,23 +291,19 @@ class NzPool:
         deadline = time.monotonic() + self.acquire_timeout if self.acquire_timeout > 0 else float("inf")
 
         while True:
-            pc: _PooledConnection | None = None
-            async with self._cond:
-                if self._created < self.min_size:
-                    await self._fill_idle()
+            if self._closed:
+                raise RuntimeError("Pool is closed")
+            await self._fill_idle()
 
+            pc: _PooledConnection | None = None
+            reserved = False
+            async with self._cond:
                 if self._pool:
                     pc = self._pool.popleft()
                     self._reserving.add(id(pc.conn))
                 elif self._created < self.max_size:
-                    try:
-                        conn = await self._create_new_connection()
-                        self._created += 1
-                        conn._nzpy_pool_uses = 1  # type: ignore[attr-defined]
-                        self._checked_out[id(conn)] = conn
-                        return conn
-                    except Exception:
-                        raise
+                    self._created += 1
+                    reserved = True
                 else:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
@@ -226,7 +311,6 @@ class NzPool:
                             f"Timed out waiting for a connection from pool "
                             f"(created={self._created}, max_size={self.max_size})"
                         )
-
                     try:
                         await asyncio.wait_for(self._cond.wait(), timeout=remaining)
                     except asyncio.TimeoutError:
@@ -236,26 +320,12 @@ class NzPool:
                         )
                     continue
 
-            if pc is None:
-                continue
-            try:
-                if await self._validate_connection(pc):
-                    async with self._cond:
-                        self._reserving.discard(id(pc.conn))
-                        pc.use_count += 1
-                        pc.conn._nzpy_pool_uses = pc.use_count  # type: ignore[attr-defined]
-                        self._checked_out[id(pc.conn)] = pc.conn
-                    return pc.conn
-                await self._close_connection(pc)
-                async with self._cond:
-                    self._reserving.discard(id(pc.conn))
-                    self._created -= 1
-            except Exception:
-                await self._close_connection(pc)
-                async with self._cond:
-                    self._reserving.discard(id(pc.conn))
-                    self._created -= 1
-                raise
+            if reserved:
+                return await self._connect_reserved()
+            if pc is not None:
+                conn = await self._checkout_idle(pc)
+                if conn is not None:
+                    return conn
 
     async def release(self, conn: Connection) -> None:
         conn_id = id(conn)
@@ -272,33 +342,35 @@ class NzPool:
 
         _clear_stale_cursor(conn)
 
+        closed = False
         discard = False
         async with self._cond:
             if self._closed:
-                await conn.close()
-                return
-            if conn_id not in self._checked_out:
-                raise RuntimeError(
-                    "Connection was not acquired from this pool or has already been released."
-                )
-            self._checked_out.pop(conn_id)
-
-            if not conn._is_reusable():
-                # Never hand a closed or desynced connection to the next caller.
-                discard = True
-                self._created = max(0, self._created - 1)
-                self._cond.notify(1)
+                closed = True
             else:
-                now = time.monotonic()
-                created = getattr(conn, '_nzpy_pool_created', now)
-                uses = getattr(conn, '_nzpy_pool_uses', 0)
-                pc = _PooledConnection(conn, created, now, uses)
-                self._pool.append(pc)
+                if conn_id not in self._checked_out:
+                    raise RuntimeError(
+                        "Connection was not acquired from this pool or has already been released."
+                    )
+                self._checked_out.pop(conn_id)
+
+                if not conn._is_reusable():
+                    # Never hand a closed or desynced connection to the next caller.
+                    discard = True
+                    self._created = max(0, self._created - 1)
+                else:
+                    now = time.monotonic()
+                    created = getattr(conn, '_nzpy_pool_created', now)
+                    uses = getattr(conn, '_nzpy_pool_uses', 0)
+                    self._pool.append(_PooledConnection(conn, created, now, uses))
                 self._cond.notify(1)
 
-        if discard:
+        # Closing is network I/O, so it happens after the lock is released.
+        if closed:
+            await self._close_quiet(conn)
+        elif discard:
             self._log.debug("Dropping unusable connection on release")
-            await conn.close()
+            await self._close_quiet(conn)
 
     @asynccontextmanager
     async def connection(self) -> AsyncGenerator[Connection, None]:
@@ -314,21 +386,16 @@ class NzPool:
             self._maintain_task = None
         async with self._cond:
             self._closed = True
-            while self._pool:
-                pc = self._pool.popleft()
-                await self._close_connection(pc)
-            self._created = 0
-            for conn in self._checked_out.values():
-                try:
-                    await conn.close()
-                except Exception as exc:
-                    self._log.debug(
-                        "Error closing checked-out connection: %s",
-                        exc,
-                        exc_info=True,
-                    )
+            idle = list(self._pool)
+            self._pool.clear()
+            checked_out = list(self._checked_out.values())
             self._checked_out.clear()
+            self._created = 0
             self._cond.notify_all()
+        for pc in idle:
+            await self._close_connection(pc)
+        for conn in checked_out:
+            await self._close_quiet(conn)
 
     async def __aenter__(self) -> NzPool:
         return self
@@ -364,6 +431,9 @@ class SyncPool:
         self.on_connect = on_connect
         self._kwargs = conn_kwargs
 
+        # Lock rules: _lock guards the bookkeeping only. It is never held across a
+        # connect, close, rollback, or validation ping. _sem bounds connections in use;
+        # _created counts every open connection, including idle and sweep-owned ones.
         self._pool: deque[_SyncPooledConnection] = deque()
         self._lock = threading.Lock()
         self._sem = threading.Semaphore(max_size)
@@ -372,31 +442,58 @@ class SyncPool:
         self._checked_out_pc: dict[int, _SyncPooledConnection] = {}
         self._closed = False
         self._stop_event = threading.Event()
+        self._log = logging.getLogger("nzpy_extended.SyncPool")
         self._maintain_thread = threading.Thread(
             target=self._maintain_loop, daemon=True
         )
-        self._log = logging.getLogger("nzpy_extended.SyncPool")
+        self._fill_idle()
         self._maintain_thread.start()
 
-        for _ in range(min_size):
-            try:
-                conn = _sync.connect(on_connect=on_connect, **conn_kwargs)
-                now = time.monotonic()
-                self._pool.append(_SyncPooledConnection(conn, now, now, 0))
+    def _close_quiet(self, conn: Any) -> None:
+        try:
+            conn.close()
+        except Exception as exc:
+            self._log.debug(
+                "Error closing pooled connection: %s", exc, exc_info=True
+            )
+
+    def _drop_owned(self, pc: _SyncPooledConnection) -> None:
+        """Discard a connection the calling thread owns (its slot is still counted)."""
+        with self._lock:
+            self._created = max(0, self._created - 1)
+        self._close_quiet(pc.conn)
+
+    def _fill_idle(self) -> None:
+        """Open idle connections up to ``min_size``; connects run without ``_lock``."""
+        while True:
+            with self._lock:
+                if self._closed or self._created >= self.min_size:
+                    return
                 self._created += 1
-            except Exception:
-                break
+            try:
+                conn = _sync.connect(on_connect=self.on_connect, **self._kwargs)
+            except Exception as exc:
+                with self._lock:
+                    self._created = max(0, self._created - 1)
+                self._log.debug("Failed to pre-create connection: %s", exc, exc_info=True)
+                return
+            except BaseException:
+                with self._lock:
+                    self._created = max(0, self._created - 1)
+                raise
+            now = time.monotonic()
+            with self._lock:
+                closed = self._closed
+                if closed:
+                    self._created = max(0, self._created - 1)
+                else:
+                    self._pool.append(_SyncPooledConnection(conn, now, now, 0))
+            if closed:
+                self._close_quiet(conn)
+                return
 
     def open(self) -> None:
-        with self._lock:
-            while self._created < self.min_size and not self._closed:
-                try:
-                    conn = _sync.connect(on_connect=self.on_connect, **self._kwargs)
-                    now = time.monotonic()
-                    self._pool.append(_SyncPooledConnection(conn, now, now, 0))
-                    self._created += 1
-                except Exception:
-                    break
+        self._fill_idle()
 
     def _validate_connection(self, pc: _SyncPooledConnection) -> bool:
         now = time.monotonic()
@@ -418,168 +515,169 @@ class SyncPool:
                 return False
         return True
 
+    def _sweep_idle(self) -> None:
+        """Validate idle connections one at a time, owning each while it is checked.
+
+        A connection leaves the idle queue before validation, so acquire never gets a
+        connection the sweep is still testing. Healthy ones return to the queue;
+        the rest are closed.
+        """
+        with self._lock:
+            budget = len(self._pool)
+        for _ in range(budget):
+            with self._lock:
+                if self._closed or not self._pool:
+                    return
+                pc = self._pool.popleft()
+            returned = False
+            try:
+                if self._validate_connection(pc):
+                    with self._lock:
+                        if not self._closed:
+                            self._pool.append(pc)
+                            returned = True
+            finally:
+                if not returned:
+                    self._drop_owned(pc)
+
     def _maintain_loop(self) -> None:
         while not self._stop_event.wait(30.0):
-            with self._lock:
-                if self._closed:
-                    break
-                candidates = list(self._pool)
-
-            stale: list[_SyncPooledConnection] = []
-            for pc in candidates:
-                if not self._validate_connection(pc):
-                    stale.append(pc)
-
-            if not stale:
-                continue
-
-            with self._lock:
-                if self._closed:
-                    break
-                for pc in stale:
-                    try:
-                        self._pool.remove(pc)
-                        self._created -= 1
-                    except ValueError:
-                        pass
-            for pc in stale:
-                try:
-                    pc.conn.close()
-                except Exception as exc:
-                    self._log.debug(
-                        "Error closing stale pooled connection: %s",
-                        exc,
-                        exc_info=True,
-                    )
+            try:
+                self._sweep_idle()
+                self._fill_idle()
+            except Exception:
+                self._log.debug("Pool maintenance pass failed", exc_info=True)
 
     def acquire(self) -> Any:
         if self._closed:
             raise RuntimeError("Pool is closed")
+        deadline = time.monotonic() + self.acquire_timeout
         acquired = self._sem.acquire(timeout=self.acquire_timeout)
         if not acquired:
             raise TimeoutError(
                 f"Could not acquire connection within {self.acquire_timeout}s "
                 f"(pool_size={self._created}, in_use={len(self._checked_out)})"
             )
+        try:
+            return self._checkout(deadline)
+        except BaseException:
+            # The caller never got the connection, so its slot goes back.
+            self._sem.release()
+            raise
 
+    def _checkout(self, deadline: float) -> Any:
+        """Return an idle or new connection. The caller already holds a ``_sem`` slot."""
         while True:
             pc: _SyncPooledConnection | None = None
+            create = False
             with self._lock:
                 if self._closed:
-                    self._sem.release()
                     raise RuntimeError("Pool was closed while waiting for a connection")
                 if self._pool:
                     pc = self._pool.popleft()
-                else:
-                    conn = _sync.connect(on_connect=self.on_connect, **self._kwargs)
-                    now = time.monotonic()
+                elif self._created < self.max_size:
                     self._created += 1
-                    conn_id = id(conn)
-                    self._checked_out.add(conn_id)
-                    self._checked_out_pc[conn_id] = _SyncPooledConnection(
-                        conn, now, now, 1
-                    )
+                    create = True
+            if create:
+                return self._connect_reserved()
+            if pc is not None:
+                conn = self._checkout_idle(pc)
+                if conn is not None:
                     return conn
-
-            if pc is None:
                 continue
-            try:
-                if self._validate_connection(pc):
-                    with self._lock:
-                        if self._closed:
-                            try:
-                                pc.conn.close()
-                            except Exception as exc:
-                                self._log.debug(
-                                    "Error closing connection after pool close: %s",
-                                    exc,
-                                    exc_info=True,
-                                )
-                            self._created -= 1
-                            self._sem.release()
-                            raise RuntimeError(
-                                "Pool was closed during connection validation"
-                            )
-                        pc.use_count += 1
-                        conn_id = id(pc.conn)
-                        self._checked_out.add(conn_id)
-                        self._checked_out_pc[conn_id] = pc
-                    return pc.conn
-                try:
-                    pc.conn.close()
-                except Exception as exc:
-                    self._log.debug(
-                        "Error closing invalid pooled connection: %s",
-                        exc,
-                        exc_info=True,
+            # Every slot is counted but none is idle, so the maintenance thread is
+            # validating one. It returns the connection shortly, or the deadline ends the wait.
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"Could not acquire connection within {self.acquire_timeout}s "
+                    f"(pool_size={self._created}, in_use={len(self._checked_out)})"
+                )
+            time.sleep(0.005)
+
+    def _checkout_idle(self, pc: _SyncPooledConnection) -> Any | None:
+        """Validate an idle connection owned by this thread. ``None`` if it was stale."""
+        checked_out = False
+        try:
+            if not self._validate_connection(pc):
+                return None
+            with self._lock:
+                if self._closed:
+                    raise RuntimeError(
+                        "Pool was closed during connection validation"
                     )
-                with self._lock:
-                    self._created -= 1
-            except RuntimeError:
-                raise
-            except Exception:
-                try:
-                    pc.conn.close()
-                except Exception as exc:
-                    self._log.debug(
-                        "Error closing connection after validation failure: %s",
-                        exc,
-                        exc_info=True,
-                    )
-                with self._lock:
-                    self._created -= 1
-                raise
+                pc.use_count += 1
+                self._checked_out.add(id(pc.conn))
+                self._checked_out_pc[id(pc.conn)] = pc
+                checked_out = True
+            return pc.conn
+        finally:
+            if not checked_out:
+                self._drop_owned(pc)
+
+    def _connect_reserved(self) -> Any:
+        """Open a connection for a slot already counted in ``_created``."""
+        try:
+            conn = _sync.connect(on_connect=self.on_connect, **self._kwargs)
+        except BaseException:
+            with self._lock:
+                self._created = max(0, self._created - 1)
+            raise
+        now = time.monotonic()
+        with self._lock:
+            closed = self._closed
+            if closed:
+                self._created = max(0, self._created - 1)
+            else:
+                self._checked_out.add(id(conn))
+                self._checked_out_pc[id(conn)] = _SyncPooledConnection(conn, now, now, 1)
+        if closed:
+            self._close_quiet(conn)
+            raise RuntimeError("Pool was closed while connecting")
+        return conn
 
     def release(self, conn: Any) -> None:
+        conn_id = id(conn)
         with self._lock:
-            conn_id = id(conn)
             if conn_id not in self._checked_out:
                 raise RuntimeError(
                     "Connection was not acquired from this pool or has already been released."
                 )
             self._checked_out.discard(conn_id)
             pc = self._checked_out_pc.pop(conn_id)
-            async_conn = getattr(conn, "_conn", None)
-            if async_conn is not None:
-                _clear_stale_cursor(async_conn)
-            if self._closed:
-                try:
-                    conn.close()
-                except Exception as exc:
-                    self._log.debug(
-                        "Error closing connection on release after pool close: %s",
-                        exc,
-                        exc_info=True,
-                    )
-                finally:
-                    if self._created > 0:
-                        self._created -= 1
+            closed = self._closed
+
+        async_conn = getattr(conn, "_conn", None)
+        if async_conn is not None:
+            _clear_stale_cursor(async_conn)
+        reusable = async_conn is None or async_conn._is_reusable()
+        if (
+            not closed
+            and reusable
+            and async_conn is not None
+            and not async_conn.autocommit
+            and async_conn.in_transaction
+        ):
+            # Rollback is network I/O, so it runs outside _lock.
+            try:
+                conn.rollback()
+            except Exception as exc:
+                self._log.debug(
+                    "Error rolling back sync connection on release: %s",
+                    exc,
+                    exc_info=True,
+                )
+
+        with self._lock:
+            keep = not self._closed and reusable
+            if keep:
+                pc.last_used = time.monotonic()
+                self._pool.append(pc)
             else:
-                async_conn = getattr(conn, '_conn', None)
-                if async_conn is not None and not async_conn._is_reusable():
-                    # Never hand a closed or desynced connection to the next caller.
-                    if self._created > 0:
-                        self._created -= 1
-                    try:
-                        conn.close()
-                    except Exception as exc:
-                        self._log.debug(
-                            "Error closing unusable connection on release: %s",
-                            exc,
-                            exc_info=True,
-                        )
-                else:
-                    if async_conn is not None and not async_conn.autocommit and async_conn.in_transaction:
-                        try:
-                            conn.rollback()
-                        except Exception as exc:
-                            self._log.debug(
-                                "Error rolling back sync connection on release: %s",
-                                exc,
-                                exc_info=True,
-                            )
-                    pc.last_used = time.monotonic()
-                    self._pool.append(pc)
+                # Never hand a closed or desynced connection to the next caller.
+                self._created = max(0, self._created - 1)
+        if not keep:
+            self._log.debug("Dropping connection on release (pool closed or unusable)")
+            self._close_quiet(conn)
         self._sem.release()
 
     @contextmanager
@@ -606,24 +704,10 @@ class SyncPool:
         self._stop_event.set()
         with self._lock:
             self._closed = True
-            while self._pool:
-                pc = self._pool.popleft()
-                try:
-                    pc.conn.close()
-                except Exception as exc:
-                    self._log.debug(
-                        "Error closing pooled connection: %s", exc, exc_info=True
-                    )
+            idle = list(self._pool)
+            self._pool.clear()
+            in_use = list(self._checked_out_pc.values())
             self._created = 0
-            for pc in list(self._checked_out_pc.values()):
-                try:
-                    pc.conn.close()
-                except Exception as exc:
-                    self._log.debug(
-                        "Error closing checked-out connection: %s",
-                        exc,
-                        exc_info=True,
-                    )
             self._checked_out.clear()
             self._checked_out_pc.clear()
             for _ in range(self.max_size):
@@ -631,6 +715,11 @@ class SyncPool:
                     self._sem.release()
                 except ValueError:
                     pass
+        # Close outside the lock: each close is a network round trip.
+        for pc in idle:
+            self._close_quiet(pc.conn)
+        for pc in in_use:
+            self._close_quiet(pc.conn)
         try:
             self._maintain_thread.join(timeout=2.0)
         except Exception as exc:

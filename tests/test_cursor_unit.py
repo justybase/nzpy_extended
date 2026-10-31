@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from types import SimpleNamespace
 from typing import AsyncIterator
 
@@ -22,6 +23,7 @@ def _cursor() -> Cursor:
         _closed=False,
         _stream=None,
         _take_deferred_decode_error=lambda: None,
+        _operation=lambda: nullcontext(),
     )
     return Cursor(conn)  # type: ignore[arg-type]
 
