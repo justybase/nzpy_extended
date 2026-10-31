@@ -7,7 +7,7 @@ import socket
 import ssl as ssl_module
 import asyncio
 from collections import defaultdict, deque
-from collections.abc import Callable, Iterable, AsyncIterable, Iterator
+from collections.abc import Callable, Iterable, AsyncIterable, Iterator, Sequence
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import (datetime as Datetime)
@@ -18,7 +18,7 @@ from warnings import warn
 
 import nzpy_extended
 
-from . import handshake
+from . import _bulk, handshake
 from ._constants import DEFAULT_BUFFER_SIZE
 from .buffered_stream import NzBufferedStream
 
@@ -59,13 +59,17 @@ from .utils import (
     array_check_dimensions, array_has_null,
     array_dim_lengths,
     pg_array_types,
-    infer_columns_from_rows,
-    rows_to_csv_bytes,
-    rows_to_csv_chunks,
     pg_to_py_encodings,
 )
 
 arr_trans = dict(zip(map(ord, "[] 'u"), list('{}') + [None] * 3))
+
+
+async def _collect_rows(rows: Iterable[Any] | AsyncIterable[Any]) -> list[Any]:
+    """Materialise rows so the schema can be inferred from every one of them."""
+    if isinstance(rows, AsyncIterable):
+        return [row async for row in rows]
+    return list(rows)
 
 
 class Connection:
@@ -75,6 +79,7 @@ class Connection:
     in_transaction: bool
     error: Any
     _ext_table_source: Any
+    _ext_table_failure: BaseException | None
     command_generation: int
     _char_varchar_encoding: str
     _client_encoding: str
@@ -188,6 +193,7 @@ class Connection:
         self.in_transaction = False
         self.error = None
         self._ext_table_source = None
+        self._ext_table_failure = None
         self.command_generation = 0
         self._buffer_size = DEFAULT_BUFFER_SIZE
         # Task that currently owns the wire; see ``_operation``.
@@ -554,76 +560,87 @@ class Connection:
         except Exception as e:
             self.log.warning("Could not send cancel request: %s", str(e))
 
-    async def load_data(self, table_name: str, rows: Iterable[Any] | AsyncIterable[Any], columns: list[tuple[str, str]] | None = None,
-                        delimiter: str = '|', encoding: str = 'LATIN9',
+    async def load_data(self, table_name: str, rows: Iterable[Any] | AsyncIterable[Any],
+                        columns: Sequence[Any] | None = None,
+                        delimiter: str = '|', encoding: str | None = None,
                         create_if_missing: bool = True, temporary: bool = False,
                         distribute_on_random: bool = True, logdir: str | None = None,
                         escape_char: str | None = '\\') -> int:
-        if logdir is None:
-            logdir = tempfile.gettempdir()
+        """Bulk-load ``rows`` through the external-table protocol and return the row count.
 
-        if create_if_missing and columns is None:
-            if isinstance(rows, AsyncIterable):
-                rows_iter = rows.__aiter__()
-                try:
-                    first_row = await rows_iter.__anext__()
-                except StopAsyncIteration:
-                    raise ProgrammingError("No rows to load") from None
-                remaining: list[Any] = []
-                async for row in rows_iter:
-                    remaining.append(row)
-            else:
-                sync_iter = iter(rows)
-                try:
-                    first_row = next(sync_iter)
-                except StopIteration:
-                    raise ProgrammingError("No rows to load") from None
-                remaining = list(sync_iter)
-            all_rows = [first_row] + remaining
-            columns = infer_columns_from_rows(all_rows)
-            rows = all_rows
+        Validation happens before any DDL when the rows are materialised (lists,
+        inference, existing tables are checked against the catalog). Generators with
+        an explicit schema are streamed and validated as they are sent.
+        """
+        table = _bulk.check_table_name(table_name)
+        options = _bulk.build_options(delimiter, escape_char, encoding,
+                                      logdir if logdir is not None else tempfile.gettempdir())
+        requested = _bulk.requested_columns(columns)
 
-        if create_if_missing and columns:
-            col_defs = ', '.join(f'{name} {nz_type}'
-                                 for name, nz_type in columns)
-            parts = ['CREATE']
-            if temporary:
-                parts.append('TEMP')
-            parts.append(f'TABLE IF NOT EXISTS {table_name} ({col_defs})')
-            if distribute_on_random:
-                parts.append('DISTRIBUTE ON RANDOM')
-            ddl = ' '.join(parts)
-            cur = self.cursor()
-            await cur.execute(ddl)
-
-        if columns is not None and any(t.startswith('NVARCHAR') or t.startswith('NCLOB') for _, t in columns):
-            encoding = 'UTF8'
-
-        if isinstance(rows, (list, tuple)):
-            csv_bytes = rows_to_csv_bytes(rows, delimiter, encoding, escape_char,
-                                           columns=columns)
-            self._ext_table_source = csv_bytes
+        catalog = await self._catalog_columns(table)
+        schema: list[_bulk.Column] | None
+        if catalog:
+            schema = _bulk.columns_from_catalog(table, catalog, requested)
+        elif not create_if_missing:
+            raise ProgrammingError(f"table {table} does not exist")
         else:
-            self._ext_table_source = rows_to_csv_chunks(rows, delimiter, encoding, escape_char,
-                                                         columns=columns)
+            schema = _bulk.explicit_columns(requested)
 
-        using_opts = f"ENCODING '{encoding}' REMOTESOURCE 'python' DELIMITER '{delimiter}'"
-        if escape_char is not None:
-            using_opts += f" ESCAPECHAR '{escape_char}'"
-        using_opts += f" LOGDIR '{logdir}'"
+        if schema is None:
+            data = await _collect_rows(rows)
+            if not data:
+                raise ProgrammingError("No rows to load")
+            schema = _bulk.infer_columns(data, requested)
+            rows = data
 
-        if columns is not None and any(t == 'BOOLEAN' for _, t in columns):
-            using_opts += " BOOLSTYLE '1_0'"
+        renderer = _bulk.RowRenderer(schema, options)
+        source: Any
+        if isinstance(rows, (list, tuple)):
+            source = renderer.render(rows)
+        else:
+            source = renderer.stream(rows)
 
-        sql = (
-            f"INSERT INTO {table_name} SELECT * "
-            f"FROM EXTERNAL '{EXTERNAL_TABLE_STREAM_MARKER}' "
-            f"SAMEAS {table_name} "
-            f"USING ({using_opts})"
-        )
-        cur = self.cursor()
-        await cur.execute(sql)
-        return cur.rowcount
+        sql = _bulk.insert_sql(table, schema, EXTERNAL_TABLE_STREAM_MARKER, options, renderer.encoding)
+        # A table created here and its rows share one transaction: when the stream fails,
+        # the server rolls back the CREATE too, so no empty table is left behind.
+        transactional = not catalog and self.autocommit and not self.in_transaction
+        if transactional:
+            self.autocommit = False
+        self._ext_table_failure = None
+        self._ext_table_source = source
+        try:
+            if not catalog:
+                await self.cursor().execute(
+                    _bulk.create_table_sql(table, schema, temporary, distribute_on_random))
+            cur = self.cursor()
+            await cur.execute(sql)
+            rowcount = cur.rowcount
+            if transactional:
+                await self.commit()
+            return rowcount
+        except Exception as exc:
+            failure = self._ext_table_failure
+            if failure is not None:
+                # The server ends the session after an aborted stream, so the connection
+                # cannot be used again. Close it and report the client-side error.
+                await self.close()
+                raise failure from exc
+            if transactional:
+                try:
+                    await self.rollback()
+                except Exception as rollback_exc:
+                    self.log.warning("Rollback after failed load_data failed: %s", rollback_exc)
+            raise
+        finally:
+            self._ext_table_source = None
+            self._ext_table_failure = None
+            if transactional and not self._closed:
+                self.autocommit = True
+
+    async def _catalog_columns(self, table: str) -> list[tuple[str, str]]:
+        """(name, format_type) of each column of ``table`` in table order; empty if missing."""
+        found = await self.meta.get_columns(table)
+        return [(str(row['column_name']), str(row['data_type'])) for row in found]
 
     async def load_csv(
         self,

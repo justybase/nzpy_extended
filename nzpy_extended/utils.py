@@ -1,8 +1,7 @@
 import datetime
 import enum
 import math
-import re
-from collections.abc import Callable, Generator, Iterable, AsyncIterable, Sequence
+from collections.abc import Callable, Generator
 from decimal import Decimal
 from json import dumps
 from struct import Struct
@@ -433,209 +432,17 @@ pg_to_py_encodings: dict[str, str | None] = {
 }
 
 
-_DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
-_TIME_RE = re.compile(r'^\d{2}:\d{2}:\d{2}$')
-_TIMESTAMP_RE = re.compile(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}')
-_INT_RE = re.compile(r'^-?\d+$')
-_FLOAT_RE = re.compile(r'^-?\d+\.?\d*(?:[eE][+-]?\d+)?$')
-_BOOL_RE = re.compile(r'^(true|false|t|f|0|1|yes|no)$', re.IGNORECASE)
-
-
-def _infer_nz_type(val: object) -> str:
-    if val is None:
-        return 'VARCHAR(255)'
-    if isinstance(val, bool):
-        return 'BOOLEAN'
-    if isinstance(val, int):
-        if -32768 <= val <= 32767:
-            return 'SMALLINT'
-        if -2147483648 <= val <= 2147483647:
-            return 'INT'
-        return 'BIGINT'
-    if isinstance(val, float):
-        return 'FLOAT'
-    if isinstance(val, Decimal):
-        _sign, digits, exponent = val.as_tuple()
-        precision = len(digits)
-        scale = max(0, -exponent)  # type: ignore[operator]
-        precision = min(max(precision, 1), 38)
-        return f'NUMERIC({precision},{scale})'
-    if isinstance(val, datetime.datetime):
-        return 'TIMESTAMP'
-    if isinstance(val, datetime.date):
-        return 'DATE'
-    if isinstance(val, datetime.time):
-        return 'TIME'
-    if isinstance(val, (bytes, bytearray)):
-        return 'BYTEA'
-    s = str(val)
-    max_len = max(len(s), 1)
-    if max_len <= 255:
-        return 'VARCHAR(255)'
-    if max_len <= 65535:
-        return 'VARCHAR(65535)'
-    return 'CLOB'
-
-
-def _infer_type_from_strings(str_vals: list[str]) -> str:
-    non_empty = [s for s in str_vals if s and s.strip()]
-    if not non_empty:
-        return 'VARCHAR(255)'
-
-    stripped = [s.strip() for s in non_empty]
-    lowers = [s.lower() for s in stripped]
-
-    bool_keywords = {'true', 'false', 't', 'f', 'yes', 'no'}
-    has_bool_keyword = any(s in bool_keywords for s in lowers)
-    if has_bool_keyword and all(s in {'true', 'false', 't', 'f', '0', '1', 'yes', 'no'} for s in lowers):
-        return 'BOOLEAN'
-
-    if all(_INT_RE.match(s) for s in stripped):
-        has_leading_zero = any(
-            len(s.lstrip('-+')) > 1 and s.lstrip('-+')[0] == '0'
-            for s in stripped
-        )
-        if not has_leading_zero:
-            ints = [int(s) for s in stripped]
-            min_v, max_v = min(ints), max(ints)
-            if -32768 <= min_v and max_v <= 32767:
-                return 'SMALLINT'
-            if -2147483648 <= min_v and max_v <= 2147483647:
-                return 'INT'
-            return 'BIGINT'
-
-    if all(_DATE_RE.match(s) for s in stripped):
-        try:
-            for s in stripped:
-                datetime.datetime.strptime(s, '%Y-%m-%d')
-            return 'DATE'
-        except ValueError:
-            pass
-
-    if all(_TIME_RE.match(s) for s in stripped):
-        return 'TIME'
-
-    if all(_TIMESTAMP_RE.match(s) for s in stripped):
-        try:
-            for s in stripped:
-                datetime.datetime.strptime(s, '%Y-%m-%d %H:%M:%S')
-            return 'TIMESTAMP'
-        except ValueError:
-            pass
-
-    has_dot = any('.' in s for s in stripped)
-    if has_dot and all(_FLOAT_RE.match(s) for s in stripped):
-        max_int_digits = 0
-        max_scale = 0
-        for s in stripped:
-            raw = s.lstrip('-+')
-            if '.' in raw:
-                int_part, frac_part = raw.split('.')
-            else:
-                int_part, frac_part = raw, ''
-            int_digits = len(int_part.lstrip('0') or '0')
-            scale = len(frac_part)
-            max_int_digits = max(max_int_digits, int_digits)
-            max_scale = max(max_scale, scale)
-        precision = max(max_int_digits + max_scale, 1)
-        precision = min(precision, 38)
-        max_scale = min(max_scale, precision)
-        return f'NUMERIC({precision},{max_scale})'
-
-    has_unicode = any(ord(c) > 127 for s in str_vals for c in s)
-    max_len = max(len(s) for s in str_vals)
-    if has_unicode:
-        if max_len <= 255:
-            return 'NVARCHAR(255)'
-        if max_len <= 65535:
-            return 'NVARCHAR(65535)'
-        return 'NCLOB'
-    if max_len <= 255:
-        return 'VARCHAR(255)'
-    if max_len <= 65535:
-        return 'VARCHAR(65535)'
-    return 'CLOB'
-
-
 def infer_columns_from_rows(rows: list[Any]) -> list[tuple[str, str]]:
+    """Return ``(name, Netezza type)`` for each column, inferred from every row.
+
+    Columns are named ``col1``, ``col2``, ... The inference rules live in
+    ``nzpy_extended._bulk``; see ``docs/load_data.md``.
+    """
     if not rows:
         return []
-    ncols = len(rows[0])
-    columns: list[tuple[str, str]] = []
-    for i in range(ncols):
-        col_vals = [row[i] for row in rows]
-        non_null = [v for v in col_vals if v is not None]
+    from ._bulk import infer_columns
 
-        if not non_null:
-            col_type = 'VARCHAR(255)'
-        elif all(isinstance(v, str) for v in non_null):
-            col_type = _infer_type_from_strings([str(v) for v in non_null])
-        else:
-            types = set(type(v) for v in non_null)
-            if len(types) == 1:
-                col_type = _infer_nz_type(non_null[0])
-            elif any(isinstance(v, float) for v in non_null):
-                col_type = 'FLOAT'
-            elif any(isinstance(v, Decimal) for v in non_null):
-                col_type = 'FLOAT'
-            else:
-                max_len = max(len(str(v)) for v in non_null)
-                col_type = f'VARCHAR({max(max_len, 1)})'
-
-        columns.append((f'col{i + 1}', col_type))
-    return columns
-
-
-def _format_csv_row(row: Sequence[Any], delimiter: str, escape_char: str | None,
-                     columns: list[tuple[str, str]] | None) -> str:
-    fields: list[str] = []
-    for i, val in enumerate(row):
-        if val is None:
-            fields.append('')
-        elif isinstance(val, bool):
-            fields.append('1' if val else '0')
-        elif (isinstance(val, str) and columns is not None
-              and i < len(columns) and columns[i][1] == 'BOOLEAN'):
-            fields.append('1' if val.lower() in ('true', 't', 'yes', 'y', 'on', '1') else '0')
-        else:
-            s = str(val)
-            if escape_char is not None:
-                s = s.replace(escape_char, escape_char + escape_char)
-                s = s.replace(delimiter, escape_char + delimiter)
-            fields.append(s)
-    return delimiter.join(fields)
-
-
-def rows_to_csv_bytes(rows: Sequence[Any], delimiter: str = '|', encoding: str = 'latin-1', escape_char: str | None = '\\',
-                       columns: list[tuple[str, str]] | None = None) -> bytes:
-    parts: list[str] = []
-    for row in rows:
-        parts.append(_format_csv_row(row, delimiter, escape_char, columns))
-    return ('\n'.join(parts) + '\n').encode(encoding)
-
-
-async def rows_to_csv_chunks(rows: Iterable[Any] | AsyncIterable[Any],
-                              delimiter: str = '|', encoding: str = 'latin-1',
-                              escape_char: str | None = '\\',
-                              columns: list[tuple[str, str]] | None = None,
-                              chunk_size: int = 65536) -> AsyncIterable[bytes]:
-    buffer = bytearray()
-    if isinstance(rows, AsyncIterable):
-        async for row in rows:
-            line = _format_csv_row(row, delimiter, escape_char, columns) + '\n'
-            buffer.extend(line.encode(encoding))
-            if len(buffer) >= chunk_size:
-                yield bytes(buffer)
-                buffer = bytearray()
-    else:
-        for row in rows:
-            line = _format_csv_row(row, delimiter, escape_char, columns) + '\n'
-            buffer.extend(line.encode(encoding))
-            if len(buffer) >= chunk_size:
-                yield bytes(buffer)
-                buffer = bytearray()
-    if buffer:
-        yield bytes(buffer)
+    return [(column.sql_name, column.ctype.sql) for column in infer_columns(rows, None)]
 
 
 __all__ = [
@@ -656,7 +463,5 @@ __all__ = [
     "array_check_dimensions", "array_has_null",
     "array_dim_lengths",
     "pg_array_types", "pg_to_py_encodings",
-    "_infer_nz_type", "infer_columns_from_rows",
-    "rows_to_csv_bytes",
-    "rows_to_csv_chunks",
+    "infer_columns_from_rows",
 ]

@@ -19,10 +19,14 @@ from .protocol import (
     EXTAB_SOCK_DONE,
     EXTAB_SOCK_ERROR,
 )
-from .utils import c_unpack, h_unpack, i_pack, i_unpack
+from .utils import c_unpack, h_pack, h_unpack, i_pack, i_unpack
 
 if TYPE_CHECKING:
     from .core import Connection
+
+# In-memory sources are split into pieces of this size before framing.
+_SOURCE_PIECE_BYTES = 65536
+_ERROR_FIELD_MAX = 1000
 
 
 class ExternalTableManager:
@@ -137,18 +141,17 @@ class ExternalTableManager:
         effectiveBlockSize = max(blockSize, 1)
 
         async def _send_chunk(data_chunk: bytes) -> None:
+            # All server-sized blocks of one chunk go out in a single write and flush.
             data_len = len(data_chunk)
-            offset = 0
-            while offset < data_len:
-                end = min(offset + effectiveBlockSize, data_len)
-                chunk = data_chunk[offset:end]
-                val = bytearray(
-                    i_pack(EXTAB_SOCK_DATA) + i_pack(len(chunk))
-                )
-                val.extend(chunk)
-                await conn._write(val)
+            frames = bytearray()
+            for offset in range(0, data_len, effectiveBlockSize):
+                block = data_chunk[offset:offset + effectiveBlockSize]
+                frames.extend(i_pack(EXTAB_SOCK_DATA))
+                frames.extend(i_pack(len(block)))
+                frames.extend(block)
+            if frames:
+                await conn._write(frames)
                 await conn._flush()
-                offset = end
             conn.log.debug("No. of bytes sent to BE:%s", data_len)
 
         try:
@@ -158,13 +161,9 @@ class ExternalTableManager:
                 conn._ext_table_source = None
 
                 if isinstance(source, (bytes, bytearray, memoryview)):
-                    offset = 0
-                    total_len = len(source)
-                    while offset < total_len:
-                        end = min(offset + effectiveBlockSize, total_len)
-                        chunk = source[offset:end]
-                        await _send_chunk(bytes(chunk))
-                        offset += effectiveBlockSize
+                    view = memoryview(source)
+                    for offset in range(0, len(view), _SOURCE_PIECE_BYTES):
+                        await _send_chunk(view[offset:offset + _SOURCE_PIECE_BYTES].tobytes())
                 elif hasattr(source, "__aiter__"):
                     async for chunk in source:
                         if not chunk:
@@ -195,9 +194,21 @@ class ExternalTableManager:
             conn.log.info("sent EXTAB_SOCK_DONE to reader")
 
         except Exception as e:
-            conn.log.error("Error opening file '%s': %s", filename, str(e))
+            # Tell the server the stream is over, then let the protocol read the
+            # server's answer to the statement (its error and ReadyForQuery). Raising
+            # here would leave that answer unread and desynchronise the connection.
+            conn.log.error("External table transfer for '%s' failed: %s", filename, str(e))
+            conn._ext_table_failure = e
             try:
+                # The server reads an error message and an error object after the
+                # status code, mirroring the EXTAB_SOCK_ERROR frame it sends to us.
+                message = str(e).encode("utf-8", "replace")[:_ERROR_FIELD_MAX]
+                obj = filename.encode("utf-8", "replace")[:_ERROR_FIELD_MAX]
                 val = bytearray(i_pack(EXTAB_SOCK_ERROR))
+                val.extend(h_pack(len(message)))
+                val.extend(message)
+                val.extend(h_pack(len(obj)))
+                val.extend(obj)
                 await conn._write(val)
                 await conn._flush()
             except Exception as exc:
@@ -206,7 +217,6 @@ class ExternalTableManager:
                     exc,
                     exc_info=True,
                 )
-            raise
 
     # ----- Log / error file retrieval --------------------------------------
 

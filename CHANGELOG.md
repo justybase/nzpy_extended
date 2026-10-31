@@ -22,6 +22,16 @@ All notable changes to `nzpy_extended` are documented in this file.
   the native and pure-Python decoders. It creates and drops its own uniquely named
   table, so run it only against a disposable database.
 
+- Offline `load_data` tests (`tests/test_bulk_unit.py`) and live round trips
+  (`tests/test_load_data_roundtrip.py`, marker `full`) driven by shared fixtures
+  (`tests/load_data_fixtures.py`): golden text, inferred types, escape/parse
+  property checks, streaming, refused inputs, and client or bad-value failures
+  mid-stream. Every live table is `ZZ_LDX_*`, dropped in `finally`, and checked
+  against `_v_table`.
+- `load_data` accepts dict rows keyed by column name, and async iterables.
+- `load_data(..., escape_char=...)` controls how the delimiter, backslash and
+  line breaks are escaped; `None` refuses such values instead of writing them.
+
 ### Changed
 
 - The DBOS row decoder has a native implementation in Rust (PyO3, `rust/`),
@@ -47,6 +57,25 @@ All notable changes to `nzpy_extended` are documented in this file.
   that mirrors the Rust driver's shared handshake planning. `handshake.py` now
   only performs socket I/O.
 - `psutil` is part of the `test` extra so the memory-leak tests are collected.
+- `load_data` was rewritten. Column types are inferred from every row, not the
+  first one. Non-ASCII text infers `NVARCHAR`, and `VARCHAR` is used only for
+  ASCII text. Integers that fit no type are refused. The default `encoding` is
+  now `None`, which picks `LATIN9`, `UTF8` or `INTERNAL` from the column types
+  (`UTF8` with `VARCHAR` is refused). See [docs/load_data.md](docs/load_data.md).
+- Existing tables always use their catalog types. `columns` may name a subset of
+  the columns, in any order; an unknown name raises `ProgrammingError`.
+- `None` loads as NULL in every column type. An empty string is NULL in non-text
+  columns and stays `''` in text columns. The text `\N` is stored as text.
+- With autocommit on, `CREATE TABLE` and the load run in one transaction, so a
+  failed load leaves neither a table nor rows.
+- A failure while streaming closes the connection. The server ends the session
+  after an aborted stream, so the next statement needs a new connection. The
+  original exception is raised.
+- `nzpy_extended.utils.rows_to_csv_bytes` and `rows_to_csv_chunks` were removed;
+  they were internal helpers of the old `load_data`. `infer_columns_from_rows` is
+  kept and now scans every row.
+- `load_csv` infers types from the first `sample_size` rows, then validates the
+  rest of the file as it streams. An empty CSV field is NULL.
 
 ### Performance
 
@@ -60,6 +89,9 @@ All notable changes to `nzpy_extended` are documented in this file.
 - A new connection no longer runs four informational `SELECT`s whose results only
   went to debug logging. On the reference appliance, connecting went from about
   115–123 ms to about 86 ms.
+
+- `load_data` streams rows in batches of 4,096, and each batch goes to the socket
+  as one write. A 50,000-row load took about 1.5 s on the reference appliance.
 
 ### Fixed
 
@@ -130,6 +162,17 @@ All notable changes to `nzpy_extended` are documented in this file.
   of interleaving protocol messages. Use one connection per concurrent task, or a
   pool. Sequential use is unchanged, and `cancel()` and `close()` still run while an
   operation is in flight.
+- A client exception raised while `load_data` streams its rows desynchronised the
+  protocol (`orphaned response incomplete`). The driver now sends the server an
+  error frame, raises the original exception and closes the connection.
+- A failed `load_data` no longer leaves an empty table behind when autocommit is
+  on, because `CREATE TABLE` and the load share one transaction.
+- Inference returned `CLOB` for long text and `BYTEA` for bytes. This server
+  rejects both in `CREATE TABLE`, so those loads failed. Text now infers
+  `VARCHAR`/`NVARCHAR`, and bytes are refused with a message.
+- Decimals in exponent form (`1E+2`) are written in plain digits, which the
+  server accepts. Characters that the chosen encoding cannot hold are refused,
+  because the server would otherwise store them as mojibake.
 
 ## 0.7.3 - 2026-09-30
 

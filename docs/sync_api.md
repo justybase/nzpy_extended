@@ -84,11 +84,15 @@ with conn.transaction():
 
 #### `load_data(table_name, rows, columns=None, ...) → int`
 
-Bulk insert via external table protocol. Returns row count.
+Bulk insert via external table protocol. Returns row count. Types are inferred from every row when the table does not exist; `NULL`, escaping and encoding rules are described in [load_data.md](load_data.md).
 
 ```python
 count = conn.load_data("my_table", [(1, "Alice"), (2, "Bob")])
+count = conn.load_data("my_table", rows, columns=[("id", "INT"), ("name", "VARCHAR(50)")],
+                       encoding=None, escape_char="\\")
 ```
+
+A failed load raises the `DataError`/`ProgrammingError` that names the row and column. After a failure that happens while rows are being streamed the server ends the session, so reconnect before the next statement.
 
 #### `close()`
 
@@ -246,7 +250,7 @@ Exception
 
 ### `load_data(conn, table_name, rows, ...) → int`
 
-Function form of `conn.load_data()`.
+Function form of `conn.load_data()`. Accepts the same keyword arguments.
 
 ```python
 from nzpy_extended.sync import load_data

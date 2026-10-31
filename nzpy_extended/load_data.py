@@ -1,5 +1,5 @@
 from __future__ import annotations
-from collections.abc import Iterable, AsyncIterable
+from collections.abc import Iterable, AsyncIterable, Sequence
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -10,9 +10,9 @@ async def load_data(
     conn: Connection,
     table_name: str,
     rows: Iterable[Any] | AsyncIterable[Any],
-    columns: list[tuple[str, str]] | None = None,
+    columns: Sequence[Any] | None = None,
     delimiter: str = '|',
-    encoding: str = 'LATIN9',
+    encoding: str | None = None,
     create_if_missing: bool = True,
     temporary: bool = False,
     distribute_on_random: bool = True,

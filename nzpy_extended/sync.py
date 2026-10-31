@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import socket
-from collections.abc import Iterable, AsyncIterable
+from collections.abc import Iterable, AsyncIterable, Sequence
 from typing import Any, Callable, Literal
 
 
@@ -229,8 +229,9 @@ class SyncConnection:
         if self._conn is not None:
             runner.run(self._conn.cancel(exec_gen))
 
-    def load_data(self, table_name: str, rows: Iterable[Any] | AsyncIterable[Any], columns: list[tuple[str, str]] | None = None,
-                  delimiter: str = '|', encoding: str = 'LATIN9',
+    def load_data(self, table_name: str, rows: Iterable[Any] | AsyncIterable[Any],
+                  columns: Sequence[Any] | None = None,
+                  delimiter: str = '|', encoding: str | None = None,
                   create_if_missing: bool = True, temporary: bool = False,
                   distribute_on_random: bool = True, logdir: str | None = None,
                   escape_char: str | None = '\\') -> int:
@@ -431,10 +432,10 @@ def connect(
 def load_data(
     conn: SyncConnection,
     table_name: str,
-    rows: list[Any],
-    columns: list[tuple[str, str]] | None = None,
+    rows: Iterable[Any] | AsyncIterable[Any],
+    columns: Sequence[Any] | None = None,
     delimiter: str = '|',
-    encoding: str = 'LATIN9',
+    encoding: str | None = None,
     create_if_missing: bool = True,
     temporary: bool = False,
     distribute_on_random: bool = True,
