@@ -38,6 +38,17 @@ cargo clippy --all-targets -- -D warnings
 cargo test --lib
 ```
 
+Fuzz the framing and layout code with [cargo-fuzz](https://rust-fuzz.github.io/book/cargo-fuzz.html)
+(needs `cargo install cargo-fuzz` and a nightly toolchain). Run from `rust/`:
+
+```shell
+cargo +nightly fuzz run fuzz_frames -- -max_total_time=60
+cargo +nightly fuzz run fuzz_layout -- -max_total_time=60
+```
+
+Crashing inputs are written to `rust/fuzz/artifacts/`, which is not committed. Turn a
+crash into a `cargo test` regression in `rust/src/` before fixing it.
+
 `cargo test` covers the pure-Rust logic (layout, framing, numeric, temporal).
 Python-level behaviour is covered by the parity tests in `tests/test_native_parity_unit.py`.
 
@@ -90,7 +101,7 @@ Set environment variables:
 ```shell
 export NZ_DEV_HOST=your_host
 export NZ_DEV_PORT=5480
-export NZ_DEV_DB=JUST_DATA
+export NZ_DEV_DATABASE=JUST_DATA
 export NZ_DEV_USER=admin
 export NZ_DEV_PASSWORD=password
 ```
@@ -109,6 +120,12 @@ Run the complete suite locally:
 
 ```shell
 pytest tests/ -v
+```
+
+Live native-versus-Python timing (creates and drops its own table; disposable database only):
+
+```shell
+python tools/examples/benchmark_native_vs_python.py --output native_vs_python.json
 ```
 
 ## Pytest markers

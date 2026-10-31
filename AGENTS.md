@@ -3,7 +3,7 @@
 ## Project Structure & Module Organization
 
 - `nzpy_extended/` contains the driver: async and sync APIs, protocol handling, serialization, types, pooling, metadata, and the native DBOS decoder (`rust_ext`).
-- `rust/` contains the Rust crate (PyO3, built by maturin) that implements the native decoder: `rust/src/` (`lib.rs`, `layout.rs`, `frames.rs`, `numeric.rs`, `temporal.rs`, `fields.rs`, `pycache.rs`, `nztype.rs`).
+- `rust/` contains the Rust crate (PyO3, built by maturin) that implements the native decoder: `rust/src/` (`lib.rs`, `layout.rs`, `frames.rs`, `numeric.rs`, `temporal.rs`, `fields.rs`, `pycache.rs`, `nztype.rs`). `rust/fuzz/` holds the cargo-fuzz targets (`fuzz_frames`, `fuzz_layout`).
 - `tests/` contains pytest unit, integration, parity, regression, and benchmark tests; reusable fixtures and helpers live beside them, with data files under `tests/data/` and `tests/test_data/`.
 - `examples/` contains runnable API examples and larger applications such as `10_query_app/` and `11_mis_dashboard/`. Reference documentation is in `docs/`; development utilities are in `tools/`.
 - `pyproject.toml` defines packaging (maturin build backend; the version comes from `rust/Cargo.toml`), dependencies, and strict type-checking configuration.
@@ -20,6 +20,7 @@ mypy nzpy_extended
 pyright nzpy_extended
 python tools/verify_native_parity.py
 cd rust && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --lib
+cd rust && cargo +nightly fuzz run fuzz_layout -- -max_total_time=60
 ```
 
 Set `NZPY_EXTENDED_NO_NATIVE=1` at runtime to force the pure-Python decoder. Integration profiles require `NZ_DEV_HOST`, `NZ_DEV_PORT`, `NZ_DEV_DATABASE` (preferred over legacy `NZ_DEV_DB`), `NZ_DEV_USER`, and `NZ_DEV_PASSWORD`; run them with `pytest tests -m smoke -v` or `pytest tests -m full -v`. Build distributions with `python -m build --wheel` or `python -m build --sdist` after installing `build`.

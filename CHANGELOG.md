@@ -16,6 +16,11 @@ All notable changes to `nzpy_extended` are documented in this file.
   must fail with a driver error.
 - Seeded fuzz and property tests for malformed responses and the native and
   pure-Python DBOS decoders (`tests/test_wire_fuzz_unit.py`).
+- cargo-fuzz targets for DBOS frame scanning and row layout validation
+  (`rust/fuzz/`).
+- `tools/examples/benchmark_native_vs_python.py`: live, interleaved comparison of
+  the native and pure-Python decoders. It creates and drops its own uniquely named
+  table, so run it only against a disposable database.
 
 ### Changed
 
@@ -27,7 +32,11 @@ All notable changes to `nzpy_extended` are documented in this file.
   `NUMERIC` chunk, a `TIMESTAMP` that is not 8 bytes, `CHAR` size 0, or a negative
   4-byte `TIME`) decode as the reference does.
 - The environment variable `NZPY_EXTENDED_NO_CEXT` is renamed to
-  `NZPY_EXTENDED_NO_NATIVE`. The old name is no longer read.
+  `NZPY_EXTENDED_NO_NATIVE`. The old name still selects pure Python in this
+  release but emits a `FutureWarning`; it will be removed in 0.8.
+- If the native decoder cannot be imported, the driver emits a `RuntimeWarning`
+  and falls back to the much slower pure-Python decoder. Setting
+  `NZPY_EXTENDED_NO_NATIVE=1` selects pure Python deliberately, without a warning.
 - Packaging uses the maturin build backend. The version is read from
   `rust/Cargo.toml`; `setup.py`, `setup.cfg`, `MANIFEST.in` and versioneer are
   removed, and `nzpy_extended.__version__` is read from the installed
