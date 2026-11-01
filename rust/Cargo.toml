@@ -18,7 +18,7 @@ default = []
 extension-module = ["pyo3/extension-module"]
 
 [dependencies]
-pyo3 = { version = "0.30", default-features = false, features = ["macros"] }
+pyo3 = { version = "0.30", default-features = false, features = ["macros", "abi3-py311"] }
 
 [profile.release]
 lto = "thin"
