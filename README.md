@@ -66,15 +66,18 @@ The package is available on [PyPI](https://pypi.org/project/nzpy-extended/):
 pip install nzpy-extended
 ```
 
-Pre-built wheels are provided for:
+Pre-built wheels use the Python stable ABI (`cp311-abi3`), so one wheel per
+platform installs on Python 3.11 and newer:
 
 | Platform | Architecture | Python |
 |---|---|---|
-| Linux | x86_64 (manylinux) | 3.11 / 3.12 / 3.13 / 3.14 / 3.15 |
-| macOS | ARM64 (Apple Silicon) | 3.11 / 3.12 / 3.13 / 3.14 / 3.15 |
-| Windows | x86_64 | 3.11 / 3.12 / 3.13 / 3.14 / 3.15 |
+| Linux | x86_64 (manylinux) | 3.11+ |
+| macOS | universal2 (arm64 + x86_64) | 3.11+ |
+| Windows | x86_64, ARM64 | 3.11+ |
 
-For other platforms or Python versions, `pip install` builds the native decoder from source with [maturin](https://www.maturin.rs/). This requires a stable Rust toolchain (install it with [rustup](https://rustup.rs)). Without one the install fails — use a supported platform or install Rust first.
+Free-threaded CPython builds (`3.13t`/`3.14t`) are not covered by these wheels.
+
+For other platforms, `pip install` builds the native decoder from source with [maturin](https://www.maturin.rs/). This requires a stable Rust toolchain (install it with [rustup](https://rustup.rs)). Without one the install fails — use a supported platform or install Rust first.
 
 ## Quick Start
 
@@ -473,9 +476,10 @@ asyncio.run(main())
 
 #### CI (GitHub Actions)
 
-CI now discovers all `unit` tests, measures branch coverage and runs C/pure-Python
-variants on Python 3.11–3.15 across Linux, macOS and Windows. Publishing depends
-on this quality workflow. Wheel/sdist import checks run outside the source tree.
+CI now discovers all `unit` tests, measures branch coverage and runs native and
+pure-Python variants on Python 3.11–3.15 across Linux, macOS and Windows.
+Publishing depends on this quality workflow. Published wheels are built once per
+platform with the stable ABI. Wheel/sdist import checks run outside the source tree.
 Use `NZ_DEV_DATABASE` (preferred) or `NZ_DEV_DB` for live tests; the preferred
 name wins when both are set. See `CHANGELOG.md` for unreleased compatibility fixes.
 

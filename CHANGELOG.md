@@ -9,8 +9,8 @@ All notable changes to `nzpy_extended` are documented in this file.
 - `tools/examples/benchmark_load_data.py` times `load_data` against `executemany`
   on a live appliance. `docs/benchmarks.md` records the results for a Mac mini (M4)
   and for WSL2, with the commands to reproduce them.
-- Support Python 3.11 through 3.15. Wheels and CI matrices now cover all five
-  versions on Linux, macOS and Windows.
+- Support Python 3.11 through 3.15. One stable-ABI wheel per platform
+  (`cp311-abi3`) installs on all five versions.
 - Offline Netezza wire-protocol mock (`tests/mock_netezza.py`) used by new unit
   tests for the handshake, query phase, pool probing and cancel/timeout recovery,
   with no database required.
@@ -37,6 +37,13 @@ All notable changes to `nzpy_extended` are documented in this file.
 
 ### Changed
 
+- Wheels use the Python stable ABI (`cp311-abi3`): one wheel per platform
+  instead of one per Python version, installable on 3.11 and newer. Free-threaded
+  CPython builds (3.13t/3.14t) are not covered by these wheels.
+- The Rust decoder parses column metadata once per result set in `DbosDecoder`
+  instead of once per row, and builds `date`/`time`/`datetime` values through the
+  CPython C API instead of Python class calls. Both changes reduce per-row
+  decoding cost in native and stable-ABI builds.
 - The DBOS row decoder has a native implementation in Rust (PyO3, `rust/`),
   built with maturin as `nzpy_extended.rust_ext`. It is used by default.
   `NZPY_EXTENDED_NO_NATIVE=1` selects the pure-Python decoder instead. Both
