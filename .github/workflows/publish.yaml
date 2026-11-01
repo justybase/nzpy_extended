@@ -51,7 +51,8 @@ jobs:
         uses: pypa/cibuildwheel@v2.23
         env:
           CIBW_ARCHS: ${{ matrix.archs }}
-          CIBW_BUILD: cp311-* cp312-* cp313-* cp314-* cp315-*
+          # One cp311-abi3 wheel per platform: it installs on 3.11 and newer.
+          CIBW_BUILD: cp311-*
           # The manylinux build container has no Rust; install it inside.
           CIBW_BEFORE_ALL_LINUX: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
           CIBW_ENVIRONMENT_LINUX: PATH="$HOME/.cargo/bin:$PATH"
