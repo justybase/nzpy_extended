@@ -446,6 +446,8 @@ class DbosTupleDesc:
         self.EuroDates: int | None = None
         self.DBcharset: str | None = None
         self.EnableTime24: str | None = None
+        # Built lazily by DbosParser; reset whenever the descriptor is refilled.
+        self._native_decoder: Any = None
 
 
 OID_BOOL: int = 16

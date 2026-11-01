@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib
 import random
+import struct
 from types import SimpleNamespace
 from typing import Any
 
@@ -147,3 +148,32 @@ def _meta(desc: dict[str, Any]) -> tuple[list[int], ...]:
         desc["field_fixedSize"],
         desc["field_physField"],
     )
+
+
+@needs_native
+def test_decoder_class_reuses_metadata_for_row_and_batch() -> None:
+    rng = random.Random(11)
+    payload, desc = build_row(
+        [
+            Field(P.NzTypeInt, 4, 4, False, True, (7).to_bytes(4, "little", signed=True)),
+            Field(P.NzTypeVarChar, 16, 16, False, False, b"hello"),
+        ],
+        0,
+        rng,
+    )
+    args = (
+        *_meta(desc),
+        desc["numFields"],
+        desc["nullsAllowed"],
+        desc["fixedFieldsSize"],
+        desc["numVaryingFields"],
+        "utf-8",
+        "utf-8",
+    )
+    decoder = NATIVE.DbosDecoder(*args)
+    expected = [["int", 7], ["str", "hello"]]
+    assert [canon(v) for v in decoder.row(payload)] == expected
+    frame = b"Y" + b"\x00\x00\x00\x01" + b"\x00" * 4 + struct.pack(">i", len(payload)) + payload
+    rows, consumed = decoder.batch(frame * 3)
+    assert consumed == len(frame) * 3
+    assert [[canon(v) for v in row] for row in rows] == [expected, expected, expected]

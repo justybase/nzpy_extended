@@ -83,6 +83,9 @@ class _CountingNative:
     def process_dbos_row(self, *args: Any) -> Any:
         return self._real.process_dbos_row(*args)
 
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._real, name)
+
 
 @needs_native
 @pytest.mark.asyncio

@@ -10,11 +10,11 @@ use std::sync::Mutex;
 use pyo3::exceptions::PyValueError;
 use pyo3::ffi;
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDate, PyDateTime, PyFloat, PyString, PyTime};
+use pyo3::types::{PyBool, PyFloat, PyString};
 
 use crate::layout::FieldMeta;
 use crate::nztype as t;
-use crate::{numeric, pycache, temporal};
+use crate::{datetime_capi, numeric, pycache, temporal};
 
 /// How text in one codec is decoded. Chosen once per codec name, from the
 /// canonical name the codec registry reports.
@@ -265,7 +265,7 @@ pub fn decode_field<'py>(
         t::DATE => {
             let width = f.size.clamp(0, 8) as usize;
             let (y, m, d) = temporal::date_from_workspace(read_signed(&p[..width]));
-            Ok(PyDate::new(py, to_i32(y)?, to_u8(m, "month")?, to_u8(d, "day")?)?.into_any())
+            datetime_capi::date(py, to_i32(y)?, to_u8(m, "month")?, to_u8(d, "day")?)
         }
         t::TIME => {
             let width = f.size.clamp(0, 8) as usize;
@@ -275,7 +275,7 @@ pub fn decode_field<'py>(
                 to_u8(mi as i128, "minute")?,
                 to_u8(s as i128, "second")?,
             );
-            Ok(PyTime::new(py, h, mi, s, us as u32, None)?.into_any())
+            datetime_capi::time(py, h, mi, s, us as u32)
         }
         t::TIMESTAMP => {
             if f.size != 8 {
@@ -284,7 +284,7 @@ pub fn decode_field<'py>(
             let micros = i64::from_le_bytes(p[..8].try_into().unwrap());
             match temporal::timestamp_parts(micros) {
                 None => Ok(py.None().into_bound(py)),
-                Some((y, m, d, h, mi, s, us)) => Ok(PyDateTime::new(
+                Some((y, m, d, h, mi, s, us)) => datetime_capi::datetime(
                     py,
                     to_i32(y)?,
                     to_u8(m, "month")?,
@@ -293,9 +293,7 @@ pub fn decode_field<'py>(
                     to_u8(mi as i128, "minute")?,
                     to_u8(s as i128, "second")?,
                     us as u32,
-                    None,
-                )?
-                .into_any()),
+                ),
             }
         }
         t::NUMERIC => {

@@ -117,6 +117,8 @@ class DbosParser:
         """Parse the DBOS *X* message (column-description payload)."""
         from .utils import i_unpack
 
+        tupdesc._native_decoder = None
+
         if len(data) < 36:
             raise InterfaceError(
                 "Invalid DBOS column description: header is truncated")
@@ -161,6 +163,29 @@ class DbosParser:
 
     # ----- Single-row dispatch (native-ext / pure-Python) ------------------------
 
+    def _decoder(self, tupdesc: DbosTupleDesc) -> Any:
+        """Native decoder for this result set, built once per descriptor."""
+        decoder = tupdesc._native_decoder
+        if decoder is None:
+            assert _native._native_ext is not None
+            conn = self._conn
+            decoder = _native._native_ext.DbosDecoder(
+                tupdesc.field_type,
+                tupdesc.field_size,
+                tupdesc.field_trueSize,
+                tupdesc.field_offset,
+                tupdesc.field_fixedSize,
+                tupdesc.field_physField,
+                tupdesc.numFields,
+                tupdesc.nullsAllowed,
+                tupdesc.fixedFieldsSize,
+                tupdesc.numVaryingFields,
+                conn._char_varchar_encoding,
+                conn._client_encoding,
+            )
+            tupdesc._native_decoder = decoder
+        return decoder
+
     def _process_dbos_payload(
         self,
         cursor: Cursor,
@@ -170,26 +195,10 @@ class DbosParser:
         """Parse a single DBOS *Y* payload and append the row to
         ``cursor.cached_rows``.
         """
-        conn = self._conn
-
         if _native._HAVE_NATIVE:
             assert _native._native_ext is not None
             try:
-                row = _native._native_ext.process_dbos_row(  # pyright: ignore[reportUnknownMemberType]
-                    data,
-                    tupdesc.field_type,
-                    tupdesc.field_size,
-                    tupdesc.field_trueSize,
-                    tupdesc.field_offset,
-                    tupdesc.field_fixedSize,
-                    tupdesc.field_physField,
-                    tupdesc.numFields,
-                    tupdesc.nullsAllowed,
-                    tupdesc.fixedFieldsSize,
-                    tupdesc.numVaryingFields,
-                    conn._char_varchar_encoding,
-                    conn._client_encoding,
-                )
+                row = self._decoder(tupdesc).row(data)
             except BufferError as exc:
                 raise _layout_error(str(exc)) from exc
             except (UnicodeDecodeError, ValueError, OverflowError, InvalidOperation) as exc:

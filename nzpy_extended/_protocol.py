@@ -370,6 +370,9 @@ class ProtocolHandler:
             encoding = value.decode("ascii").lower()
             conn._client_encoding = pg_to_py_encodings.get(encoding) or encoding
             conn._char_varchar_encoding = conn._client_encoding
+            tupdesc = getattr(conn, "tupdesc", None)
+            if tupdesc is not None:
+                tupdesc._native_decoder = None
 
         elif key == b"integer_datetimes":
             if value == b"on":
@@ -585,25 +588,10 @@ class ProtocolHandler:
                     conn._defer_decode_error(exc)
 
                 if _native._HAVE_NATIVE:
-                    assert _native._native_ext is not None
                     view = stream.read_available_view()
                     if view is not None and len(view) > 13:
                         try:
-                            rows, consumed = _native._native_ext.process_dbos_batch(
-                                view,
-                                conn.tupdesc.field_type,
-                                conn.tupdesc.field_size,
-                                conn.tupdesc.field_trueSize,
-                                conn.tupdesc.field_offset,
-                                conn.tupdesc.field_fixedSize,
-                                conn.tupdesc.field_physField,
-                                conn.tupdesc.numFields,
-                                conn.tupdesc.nullsAllowed,
-                                conn.tupdesc.fixedFieldsSize,
-                                conn.tupdesc.numVaryingFields,
-                                conn._char_varchar_encoding,
-                                conn._client_encoding,
-                            )
+                            rows, consumed = conn._dbos._decoder(conn.tupdesc).batch(view)
                         except BufferError as exc:
                             raise InterfaceError(
                                 f"Invalid RowStandard payload: {exc}; "

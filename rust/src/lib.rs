@@ -7,6 +7,7 @@
 //!   (`process_dbos_row` raises it; `process_dbos_batch` stops before the row);
 //! - `TypeError`: metadata is not a list.
 
+mod datetime_capi;
 mod fields;
 // Public only so the cargo-fuzz targets in `rust/fuzz` can reach the pure
 // framing and layout code. Not part of the documented API.
@@ -170,6 +171,90 @@ fn process_dbos_row<'py>(
 
 /// Decode consecutive `Y` frames. Returns `(rows, consumed_bytes)`. A partial
 /// trailing frame, or a non-`Y` message, stops the scan and stays unconsumed.
+fn batch_rows<'py>(py: Python<'py>, meta: &Metadata, data: &[u8]) -> PyResult<Bound<'py, PyTuple>> {
+    let rows = PyList::empty(py);
+    let mut pos = 0usize;
+    while let Some((start, len)) = frames::next_row_frame(data, pos) {
+        match decode_row(py, meta, &data[start..start + len]) {
+            Ok(row) => rows.append(row)?,
+            // A layout fault retires the connection. Any other failure is a value
+            // that does not decode: stop in front of this row and leave it
+            // unconsumed. The caller decodes that row alone, which defers the
+            // error, so no row is decoded twice.
+            Err(e) if e.is_instance_of::<PyBufferError>(py) => return Err(e),
+            Err(_) => break,
+        }
+        pos = start + len;
+    }
+    PyTuple::new(py, [rows.into_any(), pos.into_pyobject(py)?.into_any()])
+}
+
+/// A decoder bound to one result set's metadata.
+///
+/// The driver creates one per tuple descriptor and reuses it for every row and
+/// batch, so the metadata lists are parsed once instead of once per call.
+#[pyclass(module = "nzpy_extended.rust_ext")]
+struct DbosDecoder {
+    meta: Metadata,
+}
+
+#[pymethods]
+impl DbosDecoder {
+    #[new]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        py: Python<'_>,
+        field_type: &Bound<'_, PyAny>,
+        field_size: &Bound<'_, PyAny>,
+        field_true_size: &Bound<'_, PyAny>,
+        field_offset: &Bound<'_, PyAny>,
+        field_fixed_size: &Bound<'_, PyAny>,
+        field_phys_field: &Bound<'_, PyAny>,
+        num_fields: i32,
+        nulls_allowed: i32,
+        fixed_fields_size: i32,
+        num_varying: i32,
+        char_enc: &str,
+        client_enc: &str,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            meta: load_metadata(
+                py,
+                field_type,
+                field_size,
+                field_true_size,
+                field_offset,
+                field_fixed_size,
+                field_phys_field,
+                num_fields,
+                nulls_allowed,
+                fixed_fields_size,
+                num_varying,
+                char_enc,
+                client_enc,
+            )?,
+        })
+    }
+
+    /// Decode one row payload into a Python list.
+    fn row<'py>(&self, py: Python<'py>, buf: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyList>> {
+        let data = payload_bytes(buf)?;
+        decode_row(py, &self.meta, &data)
+    }
+
+    /// Decode consecutive `Y` frames into `(rows, consumed_bytes)`.
+    fn batch<'py>(
+        &self,
+        py: Python<'py>,
+        buf: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyTuple>> {
+        let data = payload_bytes(buf)?;
+        batch_rows(py, &self.meta, &data)
+    }
+}
+
+/// Decode consecutive `Y` frames. Returns `(rows, consumed_bytes)`. A partial
+/// trailing frame, or a non-`Y` message, stops the scan and stays unconsumed.
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
 fn process_dbos_batch<'py>(
@@ -204,25 +289,12 @@ fn process_dbos_batch<'py>(
         client_enc,
     )?;
     let data = payload_bytes(buf)?;
-    let rows = PyList::empty(py);
-    let mut pos = 0usize;
-    while let Some((start, len)) = frames::next_row_frame(&data, pos) {
-        match decode_row(py, &meta, &data[start..start + len]) {
-            Ok(row) => rows.append(row)?,
-            // A layout fault retires the connection. Any other failure is a value
-            // that does not decode: stop in front of this row and leave it
-            // unconsumed. The caller decodes that row alone, which defers the
-            // error, so no row is decoded twice.
-            Err(e) if e.is_instance_of::<PyBufferError>(py) => return Err(e),
-            Err(_) => break,
-        }
-        pos = start + len;
-    }
-    PyTuple::new(py, [rows.into_any(), pos.into_pyobject(py)?.into_any()])
+    batch_rows(py, &meta, &data)
 }
 
 #[pymodule]
 fn rust_ext(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<DbosDecoder>()?;
     m.add_function(wrap_pyfunction!(process_dbos_row, m)?)?;
     m.add_function(wrap_pyfunction!(process_dbos_batch, m)?)?;
     Ok(())
