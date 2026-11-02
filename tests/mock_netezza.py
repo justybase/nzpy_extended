@@ -128,6 +128,10 @@ class ClientGone(Exception):
     """The client closed the socket."""
 
 
+# How a vanished peer surfaces on Windows (WSAECONNRESET, WSAESHUTDOWN, ...).
+_PEER_GONE = (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)
+
+
 class ServerSession:
     """One accepted connection, as seen by a responder."""
 
@@ -142,7 +146,12 @@ class ServerSession:
     def recv_exact(self, size: int) -> bytes:
         chunks = bytearray()
         while len(chunks) < size:
-            piece = self.sock.recv(size - len(chunks))
+            try:
+                piece = self.sock.recv(size - len(chunks))
+            except _PEER_GONE as exc:
+                # Windows reports a client close (or our own shutdown) as an
+                # error where POSIX returns b"".
+                raise ClientGone() from exc
             if not piece:
                 raise ClientGone()
             chunks.extend(piece)
@@ -151,8 +160,11 @@ class ServerSession:
     def send(self, data: bytes | bytearray) -> None:
         """Send bytes, split into ``server.chunk``-sized writes when configured."""
         step = self.server.chunk or len(data) or 1
-        for start in range(0, len(data), step):
-            self.sock.sendall(data[start:start + step])
+        try:
+            for start in range(0, len(data), step):
+                self.sock.sendall(data[start:start + step])
+        except _PEER_GONE as exc:
+            raise ClientGone() from exc
 
     def read_frame(self, head: bytes = b"") -> tuple[int, bytes]:
         """Client option frame: ``[len(4)][opcode(2)][payload]`` where len counts itself.
