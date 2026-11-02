@@ -2,7 +2,7 @@
 
 All notable changes to `nzpy_extended` are documented in this file.
 
-## Unreleased
+## 0.8.0 - 2026-11-02
 
 ### Added
 
