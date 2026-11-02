@@ -1,5 +1,6 @@
 import asyncio
 import socket as _socket
+import select
 import ssl
 from collections.abc import Awaitable, Callable
 from .exceptions import InterfaceError, OperationalError
@@ -7,6 +8,8 @@ from ._constants import DEFAULT_BUFFER_SIZE
 from .buffer_pool import global_pool
 
 MAX_PROTOCOL_READ = 100 * 1024 * 1024
+# Upper bound of one helper-thread TLS wait on loops without add_reader.
+_THREAD_WAIT_TIMEOUT = 0.1
 
 
 class NzBufferedStream:
@@ -245,11 +248,12 @@ class NzBufferedStream:
         self.tail += chunk_len
 
     async def _wait_ssl(self, writing: bool) -> None:
-        """Wait until the TLS socket can be read (or written) without a helper thread.
+        """Wait until the TLS socket can be read (or written).
 
-        The event loop's own selector reports readiness, so a wait costs no thread
-        hop and ends as soon as the socket is ready. Cancellation removes the
-        callback in ``finally``.
+        On selector loops the loop itself reports readiness, so a wait costs no
+        thread hop and ends as soon as the socket is ready; cancellation removes
+        the callback in ``finally``. Loops without ``add_reader`` (the Windows
+        proactor) fall back to a bounded ``select`` in a helper thread.
         """
         fd = self.sock.fileno()
         if fd < 0:
@@ -261,10 +265,23 @@ class NzBufferedStream:
             if not ready.done():
                 ready.set_result(None)
 
-        if writing:
-            loop.add_writer(fd, _wake)
-        else:
-            loop.add_reader(fd, _wake)
+        try:
+            if writing:
+                loop.add_writer(fd, _wake)
+            else:
+                loop.add_reader(fd, _wake)
+        except NotImplementedError:
+            # Windows' default ProactorEventLoop has no readiness callbacks.
+            # Poll the socket from a helper thread; the caller retries the TLS
+            # operation after every wake, so the short timeout is harmless.
+            await asyncio.to_thread(
+                select.select,
+                [] if writing else [self.sock],
+                [self.sock] if writing else [],
+                [],
+                _THREAD_WAIT_TIMEOUT,
+            )
+            return
         try:
             await ready
         finally:

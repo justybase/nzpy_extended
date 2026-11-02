@@ -62,7 +62,11 @@ async def test_cancelled_tls_wait_removes_its_callback(
     with pytest.raises(asyncio.CancelledError):
         await waiter
     # remove_reader returns False when no callback is registered for the fd.
-    assert not loop.remove_reader(a.fileno())
+    # The Windows proactor has no reader callbacks at all, so nothing can leak.
+    try:
+        assert not loop.remove_reader(a.fileno())
+    except NotImplementedError:
+        pass
     stream.close()
 
 
@@ -75,4 +79,26 @@ async def test_tls_wait_on_a_closed_socket_raises_a_driver_error(
     a.close()
     with pytest.raises(OperationalError, match="Socket closed while waiting"):
         await stream._wait_ssl(False)
+    stream.close()
+
+
+@pytest.mark.asyncio
+async def test_tls_wait_falls_back_to_a_thread_without_reader_callbacks(
+    socket_pair: tuple[socket.socket, socket.socket],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Windows' ProactorEventLoop raises NotImplementedError from add_reader."""
+    a, b = socket_pair
+    stream = NzBufferedStream(a, max_size=1024)
+    loop = asyncio.get_running_loop()
+
+    def _unsupported(*_args: object) -> None:
+        raise NotImplementedError
+
+    monkeypatch.setattr(loop, "add_reader", _unsupported)
+    monkeypatch.setattr(loop, "add_writer", _unsupported)
+
+    await asyncio.wait_for(stream._wait_ssl(True), timeout=1.0)
+    b.send(b"x")
+    await asyncio.wait_for(stream._wait_ssl(False), timeout=1.0)
     stream.close()
