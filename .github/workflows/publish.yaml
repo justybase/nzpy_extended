@@ -26,12 +26,11 @@ jobs:
           - os: windows-latest
             archs: AMD64
             rust_targets: x86_64-pc-windows-msvc
-          # Cross-compiled: cargo must target ARM64 explicitly, otherwise the
-          # DLL is built for the AMD64 host and cannot load in an ARM64 Python.
-          - os: windows-latest
+          # Built natively: maturin cannot inspect an ARM64 interpreter from an
+          # AMD64 host, and a native build lets cibuildwheel test the wheel.
+          - os: windows-11-arm
             archs: ARM64
             rust_targets: aarch64-pc-windows-msvc
-            cargo_target: aarch64-pc-windows-msvc
 
     steps:
       - uses: actions/checkout@v4
@@ -56,7 +55,9 @@ jobs:
           # The manylinux build container has no Rust; install it inside.
           CIBW_BEFORE_ALL_LINUX: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
           CIBW_ENVIRONMENT_LINUX: PATH="$HOME/.cargo/bin:$PATH"
-          CIBW_ENVIRONMENT: ${{ matrix.cargo_target && format('CARGO_BUILD_TARGET={0}', matrix.cargo_target) || '' }}
+          # Rust's x86_64 macOS target needs 10.12; delocate rejects a wheel
+          # tagged lower than the binary it contains (arm64 is 11.0 anyway).
+          CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=10.12
 
       - uses: actions/upload-artifact@v4
         with:

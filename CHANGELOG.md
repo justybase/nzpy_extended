@@ -105,6 +105,11 @@ All notable changes to `nzpy_extended` are documented in this file.
 
 ### Fixed
 
+- TLS connections work again on Windows. The default `ProactorEventLoop` has no
+  `add_reader`, so a TLS read or write that had to wait raised
+  `NotImplementedError`; such loops now wait in a helper thread.
+- The macOS `universal2` wheel targets macOS 10.12, the minimum for Rust's x86_64
+  target, and the Windows ARM64 wheel is built on a native ARM64 runner.
 - The sync API no longer masks errors. When a coroutine raised `RuntimeError`,
   `runner.run()` re-submitted the already-finished coroutine and surfaced
   `cannot reuse already awaited coroutine` instead of the real error.
