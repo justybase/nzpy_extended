@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use pyo3::exceptions::PyValueError;
 use pyo3::ffi;
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyFloat, PyString};
+use pyo3::types::{PyBool, PyBytes, PyFloat, PyString};
 
 use crate::layout::FieldMeta;
 use crate::nztype as t;
@@ -231,14 +231,12 @@ pub fn decode_field<'py>(
                 Ok(text.into_any())
             }
         }
-        t::VARCHAR
-        | t::VARFIXEDCHAR
-        | t::GEOMETRY
-        | t::VARBINARY
-        | t::JSON
-        | t::JSONB
-        | t::JSONPATH
-        | t::VECTOR => {
+        t::VARBINARY | t::GEOMETRY => {
+            // Binary storage: the bytes as stored, no text decoding.
+            let cursize = (u16::from_le_bytes([p[0], p[1]]) as usize).saturating_sub(2);
+            Ok(PyBytes::new(py, &row[off + 2..off + 2 + cursize]).into_any())
+        }
+        t::VARCHAR | t::VARFIXEDCHAR | t::JSON | t::JSONB | t::JSONPATH | t::VECTOR => {
             let cursize = (u16::from_le_bytes([p[0], p[1]]) as usize).saturating_sub(2);
             let text = decode(
                 py,
@@ -279,7 +277,10 @@ pub fn decode_field<'py>(
         }
         t::TIMESTAMP => {
             if f.size != 8 {
-                return Ok(py.None().into_bound(py));
+                return Err(PyValueError::new_err(format!(
+                    "TIMESTAMP storage is {} bytes, expected 8",
+                    f.size
+                )));
             }
             let micros = i64::from_le_bytes(p[..8].try_into().unwrap());
             match temporal::timestamp_parts(micros) {

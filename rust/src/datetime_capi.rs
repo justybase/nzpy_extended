@@ -1,8 +1,11 @@
 //! Minimal binding to the public `datetime` C API.
 //!
 //! PyO3's limited-API build constructs `date`/`time`/`datetime` by calling the
-//! Python classes. The C API capsule is part of the stable ABI, so binding it
-//! directly keeps the fast path available with and without `abi3`.
+//! Python classes. Importing the capsule (`PyCapsule_Import`) is in the stable
+//! ABI, but the `PyDateTime_CAPI` struct layout is not: `datetime.h` is outside
+//! the limited API. This binding relies on CPython keeping that struct
+//! append-only (it has since 3.7), which the CI wheel tests exercise on every
+//! supported Python version.
 
 use std::ffi::{c_int, CStr};
 use std::ptr;

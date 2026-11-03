@@ -117,14 +117,24 @@ fn payload_bytes<'a>(buf: &'a Bound<'_, PyAny>) -> PyResult<Cow<'a, [u8]>> {
     Ok(Cow::Owned(view.to_vec(buf.py())?))
 }
 
+/// Record the failing column as an exception note (`column <index>`), which the
+/// driver puts into its `DataError` message. The exception type is unchanged.
+fn with_column(py: Python<'_>, err: PyErr, index: usize) -> PyErr {
+    let _ = err
+        .value(py)
+        .call_method1("add_note", (format!("column {index}"),));
+    err
+}
+
 /// Decode one row payload into a Python list.
 fn decode_row<'py>(py: Python<'py>, meta: &Metadata, row: &[u8]) -> PyResult<Bound<'py, PyList>> {
     let starts = layout::resolve_starts(&meta.shape, &meta.fields, row).map_err(layout_error)?;
     let out = PyList::empty(py);
-    for (field, start) in meta.fields.iter().zip(starts) {
+    for (index, (field, start)) in meta.fields.iter().zip(starts).enumerate() {
         let value = match start {
             None => py.None().into_bound(py),
-            Some(off) => fields::decode_field(py, field, row, off, &meta.codecs)?,
+            Some(off) => fields::decode_field(py, field, row, off, &meta.codecs)
+                .map_err(|e| with_column(py, e, index))?,
         };
         out.append(value)?;
     }

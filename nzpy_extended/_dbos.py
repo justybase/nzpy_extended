@@ -202,8 +202,12 @@ class DbosParser:
             except BufferError as exc:
                 raise _layout_error(str(exc)) from exc
             except (UnicodeDecodeError, ValueError, OverflowError, InvalidOperation) as exc:
+                # The native decoder records the column as a note: "column <index>".
+                column = next((note for note in getattr(exc, "__notes__", ())
+                               if note.startswith("column ")), None)
+                where = f" ({column})" if column else ""
                 raise DataError(
-                    f"cannot decode RowStandard value: {exc}") from exc
+                    f"cannot decode RowStandard value{where}: {exc}") from exc
             cursor.cached_rows.append(row)
             return
 
@@ -396,11 +400,13 @@ class DbosParser:
                     if fldtype == NzTypeNChar:
                         value = value.rstrip("\x00").ljust(tupdesc.field_size[cur_field])
                     row.append(value)
+                elif fldtype in (NzTypeVarBinary, NzTypeGeometry):
+                    # Binary storage: the bytes as stored, no text decoding.
+                    cursize = h_le_unpack(data, offset)[0] - 2
+                    row.append(bytes(mv[offset + 2: offset + cursize + 2]))
                 elif fldtype in (
                     NzTypeVarChar,
                     NzTypeVarFixedChar,
-                    NzTypeGeometry,
-                    NzTypeVarBinary,
                     NzTypeJson,
                     NzTypeJsonb,
                     NzTypeJsonpath,
@@ -475,15 +481,15 @@ class DbosParser:
                         if fldlen >= 8
                         else int.from_bytes(mv[offset: offset + fldlen], "little", signed=True)
                     )
-                    if fldlen == 8:
-                        result = timestamp2struct(workspace)
-                        if result is not False:
-                            ts: tuple[int, int, int, int, int, int, int] = result  # type: ignore[assignment]
-                            row.append(
-                                Datetime(ts[0], ts[1], ts[2], ts[3], ts[4], ts[5], ts[6])
-                            )
-                        else:
-                            row.append(None)
+                    if fldlen != 8:
+                        raise ValueError(
+                            f"TIMESTAMP storage is {fldlen} bytes, expected 8")
+                    result = timestamp2struct(workspace)
+                    if result is not False:
+                        ts: tuple[int, int, int, int, int, int, int] = result  # type: ignore[assignment]
+                        row.append(
+                            Datetime(ts[0], ts[1], ts[2], ts[3], ts[4], ts[5], ts[6])
+                        )
                     else:
                         row.append(None)
                 elif fldtype == NzTypeNumeric:
