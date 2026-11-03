@@ -2,6 +2,94 @@
 
 All notable changes to `nzpy_extended` are documented in this file.
 
+## 0.9.0 - 2026-11-03
+
+This release fixes driver-semantics defects found in an audit and reproduced on a
+real appliance. Several fixes change behaviour; read **Breaking changes** before
+upgrading.
+
+### Breaking changes
+
+- **Server errors raise the right DB-API class, and `str(error)` is the message.**
+  Netezza sends errors as plain text without a SQLSTATE. They were parsed as
+  PostgreSQL field lists, so every server error was a `ProgrammingError` whose text
+  was a dict such as `{'E': 'RROR:  Divide by 0'}`. Errors are now classified from
+  the message: `DataError` (divide by zero, bad input, overflow, value too long),
+  `IntegrityError` (NOT NULL), `OperationalError` (cancelled query) and
+  `ProgrammingError` (everything else). `error.diag` holds `S` and `M`.
+  Errors raised while fetching a later result of a multi-statement query keep
+  their class instead of being wrapped in `ProgrammingError`.
+- **VARBINARY and ST_GEOMETRY values are `bytes`.** They were decoded as text.
+- **A wrong number of parameters raises `ProgrammingError`.** Extra values used to
+  be ignored with a log warning.
+- **A NUL character in a text parameter raises `DataError`**, and NUL in the query
+  text raises `ProgrammingError`. NUL ends the query frame, so the server used to
+  reject the statement and end the session.
+- **Fetching from a cursor whose rows were discarded raises `InterfaceError`.**
+  When another statement ran on the same connection before a cursor was fully
+  fetched, its remaining rows were dropped and the next fetch returned `[]`.
+- **The connection logger is no longer forced to DEBUG.** `logLevel` now defaults
+  to `None`, which leaves the level to the application's logging configuration;
+  the legacy `0`/`1`/`2` values and logging levels still work. Before, every
+  connection logged at DEBUG into the application's handlers, including the full
+  SQL text with rendered parameter values.
+- **Client files are read or written only when the statement names them.** For the
+  external-table protocol the server tells the client which file to send, write or
+  use for logs. The driver used to open any path the server named, so a hostile or
+  impersonated server could read or overwrite client files. Now the path must be a
+  string literal of the statement being run (the `EXTERNAL '...'` file, `LOGDIR`),
+  and server log file names must be plain names. `load_data`, `load_csv` and
+  `REMOTESOURCE` statements are unaffected.
+- `NZPY_EXTENDED_NO_CEXT` was removed, as announced in 0.8.0. Use
+  `NZPY_EXTENDED_NO_NATIVE`.
+
+### Fixed
+
+- **Transaction state is tracked from the server's command tags.** A `BEGIN` sent by
+  the application was not seen, so `in_transaction` stayed `False`,
+  `rollback()` did nothing, and a pool returned the connection, still inside the
+  transaction, to the next borrower, who saw its uncommitted rows. Pools now roll
+  back any open transaction on release, and retire the connection if the rollback
+  fails.
+- **Statements in an aborted transaction raise `InternalError`.** After an error
+  inside a transaction Netezza ignores every statement until the block ends and
+  answers `*ABORT STATE*`; a `SELECT` used to return no rows without an error.
+  `COMMIT` of such a transaction (which the server turns into a rollback) now
+  raises `InternalError` saying that no changes were saved.
+- **The metadata API escapes every filter.** `get_tables`, `get_views`,
+  `get_table_sizes`, `get_procedures`, `get_sequences`, `get_synonyms` and
+  `get_query_history` inserted `schema`, the name patterns and `username` into the
+  SQL unescaped (SQL injection).
+- **A client-side parameter error no longer costs the connection.** The session was
+  marked as awaiting a response before the parameters were rendered, so after a
+  `ProgrammingError` from rendering the next statement waited two seconds for a
+  reply that never came and the connection was closed.
+- **The startup/TLS/authentication handshake has a timeout.** `connect_timeout`
+  (or `timeout`) covered only the TCP connect; a server that accepted the
+  connection and never answered blocked `connect()` and pool acquisition forever.
+  The handshake is now bounded by the same value, or 60 seconds when neither is
+  set, and raises `OperationalError`.
+- An unknown backend message in a result closes the connection with
+  `InterfaceError` instead of misreading the rest of the stream.
+- An interrupted sync call (`KeyboardInterrupt`) cancels its coroutine, which used
+  to keep running and owning the connection.
+- `?`, quotes and `--` inside `/* ... */` comments are no longer treated as
+  placeholders or string delimiters.
+- A TIMESTAMP stored in a width other than 8 bytes raises `DataError` instead of
+  returning `None`; native decode errors name the column.
+- `LogOptions.Logfile` adds its file handler once per logger, and the file rotates
+  (100 MiB, five backups) instead of growing without bound.
+- A refused or unopenable unload file is drained instead of hanging or
+  desynchronising the session.
+
+### Tests
+
+- The offline mock sends errors and notices in the appliance's plain-text format.
+- New unit tests: error classification from captured appliance messages
+  (`test_errors_unit.py`), escaping of every metadata filter, refused file
+  requests (`test_extab_paths_unit.py`) and the session-safety fixes
+  (`test_audit_fixes_unit.py`). New live tests: `test_driver_semantics_live.py`.
+
 ## 0.8.0 - 2026-11-02
 
 ### Added
