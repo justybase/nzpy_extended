@@ -8,7 +8,7 @@ from struct import Struct
 from typing import Any
 from uuid import UUID
 
-from .exceptions import (InterfaceError, NotSupportedError, ProgrammingError,
+from .exceptions import (DataError, InterfaceError, NotSupportedError, ProgrammingError,
                          ArrayDimensionsNotConsistentError)
 
 
@@ -73,6 +73,10 @@ max_int8: int = 2 ** 63 - 1
 
 
 def _quote_text_literal(value: str) -> str:
+    if "\x00" in value:
+        # The query frame is NUL-terminated: the server would cut the statement
+        # there and read the rest as a new protocol message.
+        raise DataError("a text parameter cannot contain a NUL character")
     return "'" + value.replace("'", "''") + "'"
 
 
@@ -81,6 +85,7 @@ def convert_paramstyle(style: str, query: str) -> tuple[str, Callable[[object], 
     INSIDE_SQ = 1
     INSIDE_QI = 2
     INSIDE_CO = 4
+    INSIDE_BC = 8
 
     output_query: list[str] = []
     state = OUTSIDE
@@ -116,6 +121,12 @@ def convert_paramstyle(style: str, query: str) -> tuple[str, Callable[[object], 
             if c == '-' and next_c == '-':
                 output_query.extend((c, next_c))
                 state = INSIDE_CO
+                prev_c = next_c
+                i += 2
+                continue
+            if c == '/' and next_c == '*':
+                output_query.extend((c, next_c))
+                state = INSIDE_BC
                 prev_c = next_c
                 i += 2
                 continue
@@ -188,6 +199,15 @@ def convert_paramstyle(style: str, query: str) -> tuple[str, Callable[[object], 
             output_query.append(c)
             if c == "\n":
                 state = OUTSIDE
+
+        elif state == INSIDE_BC:
+            output_query.append(c)
+            if c == "*" and next_c == "/":
+                output_query.append(next_c)
+                state = OUTSIDE
+                prev_c = next_c
+                i += 2
+                continue
 
         prev_c = c
         i += 1
@@ -263,6 +283,7 @@ def render_prepared_statement(statement: str, args: tuple[Any, ...]) -> tuple[st
     INSIDE_SQ = 1
     INSIDE_QI = 2
     INSIDE_CO = 4
+    INSIDE_BC = 8
 
     output_query: list[str] = []
     state = OUTSIDE
@@ -287,6 +308,11 @@ def render_prepared_statement(statement: str, args: tuple[Any, ...]) -> tuple[st
             if c == '-' and next_c == '-':
                 output_query.extend((c, next_c))
                 state = INSIDE_CO
+                i += 2
+                continue
+            if c == '/' and next_c == '*':
+                output_query.extend((c, next_c))
+                state = INSIDE_BC
                 i += 2
                 continue
             if c == "$" and next_c is not None and next_c.isdigit():
@@ -322,6 +348,14 @@ def render_prepared_statement(statement: str, args: tuple[Any, ...]) -> tuple[st
             output_query.append(c)
             if c == "\n":
                 state = OUTSIDE
+
+        elif state == INSIDE_BC:
+            output_query.append(c)
+            if c == "*" and next_c == "/":
+                output_query.append(next_c)
+                state = OUTSIDE
+                i += 2
+                continue
 
         i += 1
 

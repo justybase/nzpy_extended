@@ -22,8 +22,8 @@ CONN_KWARGS = dict(
 @pytest.mark.timeout(30)
 async def test_second_execute_while_fetching_drains_previous():
     """Executing a second query on the same connection while one cursor
-    is still fetching must drain the previous generator gracefully,
-    allowing the new command to proceed."""
+    is still fetching drains the previous generator, lets the new command
+    proceed, and makes the first cursor report the discarded rows."""
     conn = await nzpy.connect(**CONN_KWARGS)
     try:
         cur = conn.cursor()
@@ -36,8 +36,9 @@ async def test_second_execute_while_fetching_drains_previous():
         row = await cur2.fetchone()
         assert row is not None and row[0] == 1
 
-        # First cursor should yield no more rows (generator drained)
-        remaining = await cur.fetchall()
-        assert len(remaining) == 0
+        # The first cursor's unread rows were drained: fetching them fails
+        # loudly instead of returning a silently short result.
+        with pytest.raises(nzpy.InterfaceError, match="discarded"):
+            await cur.fetchall()
     finally:
         await conn.close()

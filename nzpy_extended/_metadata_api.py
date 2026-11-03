@@ -296,9 +296,9 @@ class ConnectionMetadataProvider:
         """
         conditions = ["tablename IS NOT NULL"]
         if schema is not None:
-            conditions.append(f"schema = '{schema}'")
+            conditions.append(f"schema = '{_escape_literal(schema)}'")
         if table_pattern is not None:
-            conditions.append(f"tablename LIKE '{table_pattern}'")
+            conditions.append(f"tablename LIKE '{_escape_literal(table_pattern)}'")
         if not include_system:
             conditions.append(
                 "schema NOT IN ('DEFINITION_SCHEMA', 'INZA', 'NZ_QUERY_HISTORY')"
@@ -327,9 +327,9 @@ class ConnectionMetadataProvider:
         """
         conditions = ["viewname IS NOT NULL"]
         if schema is not None:
-            conditions.append(f"schema = '{schema}'")
+            conditions.append(f"schema = '{_escape_literal(schema)}'")
         if view_pattern is not None:
-            conditions.append(f"viewname LIKE '{view_pattern}'")
+            conditions.append(f"viewname LIKE '{_escape_literal(view_pattern)}'")
         where = " AND ".join(conditions)
         return await self._query_dicts(
             f"SELECT schema, viewname AS view_name, owner, objid, definition "
@@ -416,9 +416,9 @@ class ConnectionMetadataProvider:
         """
         conditions = ["tablename IS NOT NULL"]
         if schema is not None:
-            conditions.append(f"schema = '{schema}'")
+            conditions.append(f"schema = '{_escape_literal(schema)}'")
         if table_pattern is not None:
-            conditions.append(f"tablename LIKE '{table_pattern}'")
+            conditions.append(f"tablename LIKE '{_escape_literal(table_pattern)}'")
         where = " AND ".join(conditions)
 
         return await self._query_dicts(
@@ -447,9 +447,9 @@ class ConnectionMetadataProvider:
         """
         conditions = ["procedure IS NOT NULL"]
         if schema is not None:
-            conditions.append(f"schema = '{schema}'")
+            conditions.append(f"schema = '{_escape_literal(schema)}'")
         if proc_pattern is not None:
-            conditions.append(f"procedure LIKE '{proc_pattern}'")
+            conditions.append(f"procedure LIKE '{_escape_literal(proc_pattern)}'")
         where = " AND ".join(conditions)
 
         return await self._query_dicts(
@@ -473,7 +473,7 @@ class ConnectionMetadataProvider:
         """
         conditions = ["seqname IS NOT NULL"]
         if schema is not None:
-            conditions.append(f"schema = '{schema}'")
+            conditions.append(f"schema = '{_escape_literal(schema)}'")
         where = " AND ".join(conditions)
         return await self._query_dicts(
             f"SELECT schema, seqname AS seq_name, owner, objid "
@@ -495,7 +495,7 @@ class ConnectionMetadataProvider:
         """
         conditions = ["synonym_name IS NOT NULL"]
         if schema is not None:
-            conditions.append(f"schema = '{schema}'")
+            conditions.append(f"schema = '{_escape_literal(schema)}'")
         where = " AND ".join(conditions)
         return await self._query_dicts(
             f"SELECT schema, synonym_name, refdatabase AS ref_database, "
@@ -646,7 +646,7 @@ class ConnectionMetadataProvider:
         """
         conditions = ["1=1"]
         if username is not None:
-            conditions.append(f"qh_user = '{username}'")
+            conditions.append(f"qh_user = '{_escape_literal(username)}'")
         where = " AND ".join(conditions)
         return await self._query_dicts(
             f"SELECT qh_sessionid AS session_id, qh_user AS username, "

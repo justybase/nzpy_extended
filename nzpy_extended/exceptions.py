@@ -8,6 +8,14 @@ class Warning(Exception):
 
 
 class Error(Exception):
+    def __str__(self) -> str:
+        # A backend error carries its fields as a dict; show the message itself.
+        if len(self.args) == 1 and isinstance(self.args[0], dict):
+            message = self.args[0].get("M")
+            if isinstance(message, str):
+                return message
+        return super().__str__()
+
     @property
     def sqlstate(self) -> str | None:
         value = self.args[0] if self.args else None

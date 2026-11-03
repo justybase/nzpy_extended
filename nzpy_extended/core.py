@@ -19,7 +19,8 @@ from warnings import warn
 import nzpy_extended
 
 from . import _bulk, handshake
-from ._constants import DEFAULT_BUFFER_SIZE
+from ._extab import statement_file_literals
+from ._constants import DEFAULT_BUFFER_SIZE, DEFAULT_HANDSHAKE_TIMEOUT
 from .buffered_stream import NzBufferedStream
 
 from .exceptions import (Warning, Error, InterfaceError,
@@ -62,6 +63,8 @@ from .utils import (
     pg_to_py_encodings,
 )
 
+NULL_CHAR = "\x00"
+
 arr_trans = dict(zip(map(ord, "[] 'u"), list('{}') + [None] * 3))
 
 
@@ -77,6 +80,8 @@ class Connection:
     _usock: Any
     _stream: NzBufferedStream | None
     in_transaction: bool
+    # True after an error inside a transaction block, until it is ended.
+    _transaction_failed: bool
     error: Any
     _ext_table_source: Any
     _ext_table_failure: BaseException | None
@@ -191,9 +196,11 @@ class Connection:
         self._frame_in_progress = False
         self._deferred_decode_error = None
         self.in_transaction = False
+        self._transaction_failed = False
         self.error = None
         self._ext_table_source = None
         self._ext_table_failure = None
+        self._extab_paths: frozenset[str] = frozenset()
         self.command_generation = 0
         self._buffer_size = DEFAULT_BUFFER_SIZE
         # Task that currently owns the wire; see ``_operation``.
@@ -217,7 +224,7 @@ class Connection:
             self, user: str | bytes, host: str | None, unix_sock: str | None, port: int,
             database: str | None, password: str | bytes | None, ssl: Any,
             securityLevel: int, timeout: float | None, application_name: str | None,
-            max_prepared_statements: int, datestyle: str, logLevel: int, tcp_keepalive: bool,
+            max_prepared_statements: int, datestyle: str, logLevel: int | None, tcp_keepalive: bool,
             char_varchar_encoding: str, logOptions: LogOptions = LogOptions.Inherit,
             client_encoding: str = "utf8",
             pgOptions: str | None = None, ssl_verify: bool = True,
@@ -233,9 +240,11 @@ class Connection:
         self.parameter_statuses = deque(maxlen=100)
         self.max_prepared_statements = int(max_prepared_statements)
 
-        if logLevel not in (logging.DEBUG, logging.ERROR,
-                            logging.CRITICAL, logging.FATAL,
-                            logging.WARN, logging.WARNING):
+        # None (the default) leaves the logger level to the application's logging
+        # configuration. 0/1/2 are the legacy DEBUG/INFO/WARNING shorthands.
+        if logLevel is not None and logLevel not in (
+                logging.DEBUG, logging.INFO, logging.ERROR, logging.CRITICAL,
+                logging.FATAL, logging.WARN, logging.WARNING):
             if logLevel == 0:
                 logLevel = logging.DEBUG
             elif logLevel == 1:
@@ -247,16 +256,21 @@ class Connection:
 
         database_name = database if database is not None else "<default>"
         self.log = logging.getLogger(f"nzpy_extended.Connection[{database_name}]")
-        self.log.setLevel(logLevel)
+        if logLevel is not None:
+            self.log.setLevel(logLevel)
 
-        if logOptions & LogOptions.Logfile:
-            h = logging.handlers. \
-                RotatingFileHandler('nzpy_extended.log', maxBytes=1024 ** 3 * 10)
+        # The logger is shared by every connection to the same database, so the
+        # file handler is added once instead of once per connection.
+        if logOptions & LogOptions.Logfile and not any(
+                getattr(handler, "_nzpy_logfile", False) for handler in self.log.handlers):
+            h = logging.handlers.RotatingFileHandler(
+                'nzpy_extended.log', maxBytes=100 * 1024 ** 2, backupCount=5)
             fmt = logging.Formatter(
                 '%(asctime)s (%(process)s) [%(name)s:%(filename)s:'
                 '%(lineno)s] %(levelname)s: %(message)s',
                 datefmt='%Y-%m-%d %H:%M:%S.000000 %Z')
             h.setFormatter(fmt)
+            h._nzpy_logfile = True  # type: ignore[attr-defined]
             self.log.addHandler(h)
         if not logOptions & LogOptions.Inherit:
             self.log.propagate = False
@@ -320,7 +334,12 @@ class Connection:
                 self._usock = None
             raise InterfaceError("communication error", e) from e
 
-        self._usock.setblocking(True)
+        # The handshake runs on a blocking socket in a worker thread, which asyncio
+        # cannot cancel, so it is bounded by a socket timeout instead.
+        handshake_timeout = (connect_timeout if connect_timeout is not None
+                             else timeout if timeout is not None
+                             else DEFAULT_HANDSHAKE_TIMEOUT)
+        self._usock.settimeout(handshake_timeout)
         if not isinstance(ssl, dict):
             hs_ssl: dict[str, Any] = {}
         else:
@@ -336,21 +355,15 @@ class Connection:
             if result is False:
                 raise ProgrammingError(hs.last_error or "Error in handshake")
             self._usock = result
+        except TimeoutError as exc:
+            self._close_failed_handshake(hs)
+            raise OperationalError(
+                f"connection handshake did not complete within {handshake_timeout:g}s"
+            ) from exc
         except BaseException:
-            failed_socket = getattr(hs, '_usock', self._usock)
-            try:
-                failed_socket.shutdown(socket.SHUT_RDWR)
-            except Exception:
-                pass
-            try:
-                failed_socket.close()
-                failed_file = getattr(hs, '_sock', None)
-                if failed_file is not None:
-                    failed_file.close()
-            except Exception:
-                self.log.debug("Error cleaning up failed handshake", exc_info=True)
-            self._usock = None
+            self._close_failed_handshake(hs)
             raise
+        self._usock.settimeout(None)
         self._backend_pid = hs.backend_pid
         self._backend_key = hs.backend_key
         self._usock.setblocking(False)
@@ -439,6 +452,21 @@ class Connection:
         self.in_transaction = False
         await self._read(4)
         self.status = None
+
+    def _close_failed_handshake(self, hs: Any) -> None:
+        failed_socket = getattr(hs, '_usock', self._usock)
+        try:
+            failed_socket.shutdown(socket.SHUT_RDWR)
+        except Exception:
+            pass
+        try:
+            failed_socket.close()
+            failed_file = getattr(hs, '_sock', None)
+            if failed_file is not None:
+                failed_file.close()
+        except Exception:
+            self.log.debug("Error cleaning up failed handshake", exc_info=True)
+        self._usock = None
 
     # (handle_* methods moved to _protocol.py)
 
@@ -731,10 +759,12 @@ class Connection:
             self.log.warning("got %d parameters but PostgreSQL only "
                              "supports 65535 parameters", len(args))
         rendered_query, expected_args = render_prepared_statement(statement, args)
+        if len(args) != expected_args:
+            raise ProgrammingError(
+                f"the statement uses {expected_args} parameter(s), but {len(args)} "
+                "value(s) were supplied")
         if expected_args == 0:
             return statement
-        if len(args) != expected_args:
-            self.log.warning("got %d parameters but the statement requires %d", len(args), expected_args)
         return rendered_query
 
     async def drain_protocol_generator(self, generator: Any) -> None:
@@ -832,20 +862,27 @@ class Connection:
         return False
 
     async def _execute(self, cursor: Cursor, query: str, vals: Any) -> str | None:
+        # Render first: a bad parameter must fail before any connection state
+        # changes, so the session stays usable.
+        template = query
+        if vals is not None:
+            query = await self.Prepare(cursor, query, vals)
+        if NULL_CHAR in query:
+            # The query frame is NUL-terminated; the rest would be read as a new message.
+            raise ProgrammingError("the query text contains a NUL character")
+
         active_gen = getattr(self, '_active_generator', None)
+        old_cursor = getattr(self, '_active_cursor', None)
+        if old_cursor is not None and old_cursor is not cursor and (
+                active_gen is not None or old_cursor.cached_rows):
+            # Its unread rows are about to be lost: make a later fetch fail loudly.
+            old_cursor._discarded = True
         if active_gen is not None:
-            old_cursor = getattr(self, '_active_cursor', None)
             await self.drain_protocol_generator(active_gen)
-            if old_cursor is not None:
-                old_cursor.cached_rows.clear()
-                old_cursor.generator = None
-                self._active_cursor = None
-        else:
-            stale_cursor = getattr(self, '_active_cursor', None)
-            if stale_cursor is not None:
-                stale_cursor.cached_rows.clear()
-                stale_cursor.generator = None
-                self._active_cursor = None
+        if old_cursor is not None:
+            old_cursor.cached_rows.clear()
+            old_cursor.generator = None
+            self._active_cursor = None
 
         # Results of the previous statement are discarded, and so is its deferred error.
         self._deferred_decode_error = None
@@ -860,19 +897,12 @@ class Connection:
         if getattr(self, '_dirty_socket', False) or self._has_unread_non_null_bytes():
             await self._protocol._drain_socket()
 
-        self._dirty_socket = True
-
         self.command_generation += 1
         self.error = None
         cursor.notices = deque()
         cursor.row_count = -1
         cursor.has_rows = False
         cursor.ps = {'row_desc': []}
-
-        if vals is None:
-            vals = ()
-        else:
-            query = await self.Prepare(cursor, query, vals)
 
         if self.status == CONN_EXECUTING:
             await self._read(4)
@@ -888,12 +918,17 @@ class Connection:
 
         query_bytes = query.encode('utf8')
         buf.extend(query_bytes + NULL_BYTE)
+        # The only client files the server may request for this statement.
+        self._extab_paths = statement_file_literals(query)
+        # From here on a response is owed: an interrupted read must drain it.
+        self._dirty_socket = True
         # A cancel during the write leaves a partial query on the wire.
         self._frame_in_progress = True
         await self._write(buf)
         await self._flush()
 
-        self.log.debug("Buffer sent to nps:%s", buf)
+        # The template only: rendered parameter values must never reach the log.
+        self.log.debug("Query sent (%d bytes): %s", len(buf), template)
 
         self.status = CONN_EXECUTING
 

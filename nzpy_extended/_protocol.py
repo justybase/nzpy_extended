@@ -15,13 +15,13 @@ import os
 import stat
 import time
 from collections.abc import AsyncGenerator
-from typing import TYPE_CHECKING, Any, Type
+from typing import TYPE_CHECKING, Any
 
+from ._errors import error_from_response
+from ._extab import check_remote_path
 from .exceptions import (
     ConnectionClosedError,
     DataError,
-    Error,
-    IntegrityError,
     InterfaceError,
     InternalError,
     OperationalError,
@@ -53,7 +53,6 @@ from .protocol import (
     PARSE_COMPLETE,
     PORTAL_SUSPENDED,
     READY_FOR_QUERY,
-    RESPONSE_CODE,
     ROW_DESCRIPTION,
     STATEMENT,
     SYNC_MSG,
@@ -71,6 +70,16 @@ from .utils import (
 )
 from ._serializers import build_pg_types, build_py_types
 from . import _native
+
+# Command tag of a statement ignored inside an aborted transaction block.
+ABORT_STATE_TAG = b"*ABORT STATE*"
+
+# Every message type the result reader understands (plus NUL padding).
+RESULT_MESSAGE_CODES = frozenset({
+    COMMAND_COMPLETE, READY_FOR_QUERY, ERROR_RESPONSE, ROW_DESCRIPTION, DATA_ROW,
+    NOTICE_RESPONSE, b"L", b"0", b"A", b"P", b"X", b"Y", b"u", b"U", b"l", b"x",
+    b"e", b"I", b"s", b"\x00",
+})
 
 # Longest stretch the result reader may run without giving the event loop a turn.
 _LOOP_YIELD_INTERVAL_S = 0.005
@@ -123,29 +132,11 @@ class ProtocolHandler:
 
     async def handle_ERROR_RESPONSE(self, data: bytes, ps: Any) -> None:
         conn = self._conn
-        msg = dict(
-            (
-                s[:1].decode(conn._client_encoding, errors="replace"),
-                s[1:].decode(conn._client_encoding, errors="replace"),
-            )
-            for s in data.split(NULL_BYTE)
-            if s != b""
-        )
-        response_code = msg.get(RESPONSE_CODE, "")
-        cls: Type[Error]
-        if response_code == "28000":
-            cls = InterfaceError
-        elif response_code.startswith("23"):
-            cls = IntegrityError
-        elif response_code.startswith("08"):
-            cls = OperationalError
-        elif response_code.startswith("22"):
-            cls = DataError
-        elif response_code.startswith("26"):
-            cls = InternalError
-        else:
-            cls = ProgrammingError
-        conn.error = cls(msg)
+        conn.error = error_from_response(data, conn._client_encoding)
+        if conn.in_transaction:
+            # Netezza aborts the whole transaction block on an error; every later
+            # statement is ignored and COMMIT only ends the block.
+            conn._transaction_failed = True
 
     async def handle_EMPTY_QUERY_RESPONSE(self, data: bytes, ps: Any) -> None:
         self._conn.error = ProgrammingError("query was empty")
@@ -252,10 +243,31 @@ class ProtocolHandler:
             field["nzpy_extended_fc"] = conn.pg_types[field["type_oid"]][0]
             field["func"] = conn.pg_types[field["type_oid"]][1]
 
-    async def handle_COMMAND_COMPLETE(self, data: bytes, cursor: Cursor) -> None:
+    async def handle_COMMAND_COMPLETE(self, data: bytes, cursor: Cursor) -> bool:
+        """Apply a CommandComplete tag; True when it reports a failed transaction."""
         conn = self._conn
         values = data[:-1].split(b" ")
         command = values[0]
+        if data.startswith(ABORT_STATE_TAG):
+            # The statement was not executed: an earlier error aborted the block.
+            conn.in_transaction = True
+            conn._transaction_failed = True
+            conn.error = InternalError(
+                "current transaction is aborted by an earlier error; the statement "
+                "was ignored. Issue ROLLBACK to end the transaction.")
+            return True
+        if command == b"BEGIN":
+            conn.in_transaction = True
+            conn._transaction_failed = False
+        elif command in (b"COMMIT", b"ROLLBACK"):
+            failed = conn._transaction_failed
+            conn.in_transaction = False
+            conn._transaction_failed = False
+            if command == b"COMMIT" and failed and conn.error is None:
+                conn.error = InternalError(
+                    "the transaction was aborted by an earlier error; COMMIT rolled "
+                    "it back and no changes were saved")
+                return True
         if command in conn._commands_with_count:
             row_count = int(values[-1])
             if cursor.row_count == -1:
@@ -268,6 +280,7 @@ class ProtocolHandler:
                     for ps in pcache["ps"].values():
                         await self.close_prepared_statement(ps["statement_name_bin"])
                     pcache["ps"].clear()
+        return False
 
     async def handle_DATA_ROW(self, data: bytes, cursor: Cursor) -> None:
         from .types import decimalToBinary as _decimalToBinary
@@ -486,16 +499,28 @@ class ProtocolHandler:
                 header = await conn._read(5)
             # From here until ReadyForQuery the message body may still be unread.
             conn._frame_in_progress = True
-            response = header[:1]
+            response = bytes(header[:1])
+            if response not in RESULT_MESSAGE_CODES:
+                # Without a known framing the rest of the stream cannot be read
+                # correctly; the caller closes the connection.
+                raise InterfaceError(
+                    f"Unknown backend message {response!r} in a result; "
+                    "reconnect is required.")
+            if response == b"\x00":
+                # Appliance padding: the five bytes read above were all NUL.
+                continue
 
             if response == COMMAND_COMPLETE:
                 length = i_unpack(await conn._read(4))[0]
                 data = await conn._read(length)
-                await self.handle_COMMAND_COMPLETE(data, cursor)
+                transaction_failed = await self.handle_COMMAND_COMPLETE(data, cursor)
                 conn.log.debug(
                     "Response received from backend: %s",
                     _backend_text(data, conn._client_encoding),
                 )
+                if transaction_failed:
+                    yield "ERROR"
+                    continue
                 yield "COMMAND_COMPLETE"
                 continue
             if response == READY_FOR_QUERY:
@@ -628,7 +653,9 @@ class ProtocolHandler:
                 length = i_unpack(await conn._read(4))[0]
                 fnameBuf = await conn._read(length)
                 fname = str(fnameBuf, conn._client_encoding)
+                fh = None
                 try:
+                    check_remote_path(conn, fname)
                     stat_result = (
                         await asyncio.to_thread(os.stat, fname)
                         if os.path.exists(fname)
@@ -640,15 +667,20 @@ class ProtocolHandler:
                     else:
                         fh = await asyncio.to_thread(open, fname, "wb+")  # type: ignore[arg-type]
                     conn.log.debug("Successfully opened file: %s", fname)
-                    buf = bytearray(i_pack(0))
-                    await conn._write(buf)
-                    await conn._flush()
-                except Exception:
-                    conn.log.warning("Error while opening file")
+                except OSError as exc:
+                    # Refused or unopenable: the data that follows is read and
+                    # discarded so the session stays in sync, and the statement fails.
+                    conn.log.warning("Not writing external table file %r: %s", fname, exc)
+                    if conn.error is None:
+                        conn.error = OperationalError(
+                            f"external table file {fname!r} was not written: {exc}")
+                await conn._write(bytearray(i_pack(0)))
+                await conn._flush()
 
             if response == b"U":
-                if fh is not None:
-                    await conn._extab.receiveAndWriteDatatoExternal(fname, fh)
+                # With no open file the blocks are read and discarded.
+                await conn._extab.receiveAndWriteDatatoExternal(fname, fh)
+                fh = None
                 yield "EXTAB_DATA"
 
             if response == b"l":

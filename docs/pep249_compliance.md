@@ -44,6 +44,29 @@ Exception
 | `ProgrammingError` | ✅ |
 | `NotSupportedError` | ✅ |
 
+### How server errors are classified
+
+Netezza reports an error as plain text, without a SQLSTATE. The driver picks the
+class from the message, using patterns taken from real appliance messages:
+
+| Class | Typical messages |
+|---|---|
+| `DataError` | `Divide by 0`, `pg_atoi: ...`, `Bad date external representation`, `Bad numeric input format`, `Numeric overflow`, `value ... too large for column` |
+| `IntegrityError` | `Field cannot contain null values` |
+| `OperationalError` | `Query was cancelled.`, serialization or aborted-transaction failures |
+| `InternalError` | a statement sent inside a transaction that an earlier error aborted (`*ABORT STATE*`), and `COMMIT` of such a transaction |
+| `ProgrammingError` | everything else: syntax, missing objects, permissions |
+
+`str(error)` is the server message. `error.diag` holds the parsed fields
+(`S` severity, `M` message); `error.sqlstate` is `None` for Netezza messages.
+
+### Parameters
+
+Parameters are not bound on the server. Each value is rendered into the SQL text
+as an escaped literal (strings with doubled quotes, `bytes` as `x'..'`, NaN and
+infinities as casts). A text value that contains a NUL character raises
+`DataError`, because the query frame is NUL-terminated.
+
 ## Connection Objects
 
 | Requirement | Status | Notes |
@@ -66,9 +89,9 @@ Exception
 
 | Requirement | Status | Notes |
 |---|---|---|
-| `.callproc(procname[, params])` | ✅ | Optional per spec. `CALL proc(args)` with parameter binding |
+| `.callproc(procname[, params])` | ✅ | Optional per spec. `CALL proc(args)`; values are rendered as escaped SQL literals (see below) |
 | `.close()` | ✅ | |
-| `.execute(operation[, params])` | ✅ | Returns cursor (enables chaining). `params` as sequence |
+| `.execute(operation[, params])` | ✅ | Returns cursor (enables chaining). `params` as sequence; the number of values must match the placeholders, otherwise `ProgrammingError` |
 | `.executemany(operation, seq)` | ✅ | Partial failure preserves rowcount and the error class; the failing index is in `error.__notes__` |
 | `.fetchone()` | ✅ | Returns row or `None` |
 | `.fetchmany([size])` | ✅ | Default size from `arraysize` |

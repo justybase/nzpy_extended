@@ -50,13 +50,14 @@ def command_complete(tag: bytes) -> bytes:
     return message(b"C", tag + NUL)
 
 
-def error_response(text: str, sqlstate: str = "42000") -> bytes:
-    payload = b"SERROR\x00" + b"C" + sqlstate.encode() + NUL + b"M" + text.encode() + NUL + NUL
-    return message(b"E", payload)
+def error_response(text: str) -> bytes:
+    """ErrorResponse as a Netezza appliance sends it: plain text, no SQLSTATE."""
+    return message(b"E", b"ERROR:  " + text.encode() + b"\n" + NUL)
 
 
 def notice(text: str) -> bytes:
-    return message(b"N", b"SNOTICE\x00" + b"M" + text.encode() + NUL + NUL)
+    """NoticeResponse as a Netezza appliance sends it: plain text."""
+    return message(b"N", b"NOTICE:  " + text.encode() + b"\n" + NUL)
 
 
 @dataclass(frozen=True)

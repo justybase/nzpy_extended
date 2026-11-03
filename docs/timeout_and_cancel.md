@@ -11,11 +11,14 @@ the **async** and **sync** (via `nzpy_extended.sync`) APIs.
 
 | Timeout | Scope | Where set |
 |---|---|---|
-| **Connection timeout** | TCP socket connect only (one-time) | `connect(connect_timeout=5)` |
+| **Connection timeout** | TCP connect, then the startup/TLS/authentication handshake, each bounded separately (one-time) | `connect(connect_timeout=5)` |
 | **Command timeout** | Per SQL execution (+ subsequent fetches) | `execute(..., timeout=N)` or `conn.timeout` / `cur.timeout` |
 
-The `connect()` function accepts a `timeout` parameter, but it controls **only the initial
-TCP handshake** — not query execution:
+`connect_timeout` (or `timeout` when `connect_timeout` is not given) bounds the TCP
+connect and, separately, the startup/TLS/authentication handshake. With neither set,
+the handshake is still limited to 60 seconds, and a server that accepts the
+connection but never answers raises `OperationalError` instead of hanging. These
+values do not limit query execution:
 
 ```python
 conn = await nzpy.connect(..., connect_timeout=10.0)       # async

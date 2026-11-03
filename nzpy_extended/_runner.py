@@ -49,7 +49,15 @@ class _SyncRunner:
             future = asyncio.run_coroutine_threadsafe(coro, loop)  # type: ignore[arg-type]
         # Errors raised by the coroutine itself propagate unchanged. Retrying here
         # would re-submit a coroutine that already ran.
-        return future.result()
+        try:
+            return future.result()
+        except BaseException:
+            # The caller was interrupted (KeyboardInterrupt, SystemExit): stop the
+            # coroutine as well, so it does not keep owning the connection. A read
+            # cut mid-frame then retires the connection.
+            # Cancelling the concurrent future cancels the task on the loop.
+            future.cancel()
+            raise
 
     def _restart(self) -> None:
         try:

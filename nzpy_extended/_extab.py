@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from typing import TYPE_CHECKING, Any
 
 from .protocol import (
@@ -19,6 +20,7 @@ from .protocol import (
     EXTAB_SOCK_DONE,
     EXTAB_SOCK_ERROR,
 )
+from .exceptions import OperationalError
 from .utils import c_unpack, h_pack, h_unpack, i_pack, i_unpack
 
 if TYPE_CHECKING:
@@ -26,6 +28,52 @@ if TYPE_CHECKING:
 
 # In-memory sources are split into pieces of this size before framing.
 _SOURCE_PIECE_BYTES = 65536
+
+_EXTERNAL_KEYWORD = re.compile(r"\bEXTERNAL\b", re.IGNORECASE)
+
+
+def statement_file_literals(sql: str) -> frozenset[str]:
+    """String literals of an external-table statement: the only paths the server
+    may ask this client to read or write (data file, ``LOGDIR``).
+
+    Netezza names client files in the SQL text of the statement. A server that
+    asks for any other path is refused, so a hostile or impersonated server
+    cannot read or overwrite arbitrary client files.
+    """
+    if not _EXTERNAL_KEYWORD.search(sql):
+        return frozenset()
+    literals: set[str] = set()
+    i, n = 0, len(sql)
+    while i < n:
+        if sql[i] == "'":
+            j = i + 1
+            chunk: list[str] = []
+            while j < n:
+                if sql[j] == "'":
+                    if j + 1 < n and sql[j + 1] == "'":
+                        chunk.append("'")
+                        j += 2
+                        continue
+                    break
+                chunk.append(sql[j])
+                j += 1
+            literals.add("".join(chunk))
+            i = j + 1
+        else:
+            i += 1
+    return frozenset(literals)
+
+
+class RemoteFileRefused(PermissionError):
+    """The server asked for a client file that the statement does not name."""
+
+
+def check_remote_path(conn: Any, path: str) -> None:
+    """Raise ``RemoteFileRefused`` unless ``path`` is named by the current statement."""
+    if path not in getattr(conn, "_extab_paths", frozenset()):
+        raise RemoteFileRefused(
+            f"the server requested client file {path!r}, which the statement does "
+            "not name; the request was refused")
 _ERROR_FIELD_MAX = 1000
 
 
@@ -175,6 +223,7 @@ class ExternalTableManager:
                             continue
                         await _send_chunk(bytes(chunk))
             else:
+                check_remote_path(conn, filename)
                 filehandle = await asyncio.to_thread(open, filename, "rb")
                 conn.log.info(
                     "Successfully opened External file to read:%s", filename
@@ -199,6 +248,8 @@ class ExternalTableManager:
             # here would leave that answer unread and desynchronise the connection.
             conn.log.error("External table transfer for '%s' failed: %s", filename, str(e))
             conn._ext_table_failure = e
+            if isinstance(e, RemoteFileRefused) and conn.error is None:
+                conn.error = OperationalError(str(e))
             try:
                 # The server reads an error message and an error object after the
                 # status code, mirroring the EXTAB_SOCK_ERROR frame it sends to us.
@@ -226,19 +277,24 @@ class ExternalTableManager:
         """
         conn = self._conn
         status = True
-        fullpath = os.path.join(logDir, filename)
-
-        if logType == 1:
-            fullpath = fullpath + ".nzlog"
+        fh: Any = None
+        fullpath = filename
+        try:
+            # The directory must be the statement's LOGDIR, and the name a plain
+            # file name, so the server cannot place a file anywhere else.
+            check_remote_path(conn, logDir)
+            name = os.path.basename(filename)
+            if not name or name in (".", "..") or name != filename:
+                raise RemoteFileRefused(
+                    f"the server sent an invalid log file name {filename!r}")
+            suffix = {1: ".nzlog", 2: ".nzbad", 3: ".nzstats"}.get(logType, "")
+            fullpath = os.path.join(logDir, name + suffix)
             fh = await asyncio.to_thread(open, fullpath, "wb+")
-        elif logType == 2:
-            fullpath = fullpath + ".nzbad"
-            fh = await asyncio.to_thread(open, fullpath, "wb+")
-        elif logType == 3:
-            fullpath = fullpath + ".nzstats"
-            fh = await asyncio.to_thread(open, fullpath, "wb+")
-        else:
-            fh = await asyncio.to_thread(open, fullpath, "wb+")
+        except OSError as exc:
+            # Refused or unopenable: the file's data is still read and discarded,
+            # so the session stays in sync.
+            conn.log.warning("Not writing server log file %r: %s", filename, exc)
+            status = False
 
         try:
             while True:
@@ -246,7 +302,7 @@ class ExternalTableManager:
                 if numBytes == 0:
                     break
                 dataBuffer = await conn._read(numBytes)
-                if status:
+                if status and fh is not None:
                     try:
                         await asyncio.to_thread(fh.write, dataBuffer)
                         conn.log.info(
@@ -258,11 +314,15 @@ class ExternalTableManager:
                         )
                         status = False
         finally:
-            await asyncio.to_thread(fh.close)
+            if fh is not None:
+                await asyncio.to_thread(fh.close)
 
         return status
 
 
 __all__ = [
     "ExternalTableManager",
+    "RemoteFileRefused",
+    "check_remote_path",
+    "statement_file_literals",
 ]

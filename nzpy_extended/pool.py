@@ -19,6 +19,8 @@ def _clear_stale_cursor(conn: Connection) -> None:
     """Drop buffered rows left on a connection after partial read / cancel."""
     stale = getattr(conn, "_active_cursor", None)
     if stale is not None:
+        if stale.generator is not None or stale.cached_rows:
+            stale._discarded = True
         stale.cached_rows.clear()
         stale.generator = None
         conn._active_cursor = None
@@ -32,7 +34,7 @@ _CONNECT_DEFAULTS: dict[str, Any] = {
     'application_name': None,
     'max_prepared_statements': 1000,
     'datestyle': 'ISO',
-    'logLevel': 0,
+    'logLevel': None,
     'tcp_keepalive': True,
     'char_varchar_encoding': 'latin',
     'client_encoding': 'utf8',
@@ -330,7 +332,9 @@ class NzPool:
     async def release(self, conn: Connection) -> None:
         conn_id = id(conn)
 
-        if conn._is_reusable() and not conn.autocommit and conn.in_transaction:
+        # An open transaction must never reach the next borrower, whether the
+        # driver began it (autocommit off) or the caller issued BEGIN itself.
+        if conn._is_reusable() and conn.in_transaction:
             try:
                 await conn.rollback()
             except Exception as exc:
@@ -339,6 +343,9 @@ class NzPool:
                     exc,
                     exc_info=True,
                 )
+        if conn.in_transaction:
+            # The rollback failed: retire the connection instead of reusing it.
+            await self._close_quiet(conn)
 
         _clear_stale_cursor(conn)
 
@@ -654,7 +661,6 @@ class SyncPool:
             not closed
             and reusable
             and async_conn is not None
-            and not async_conn.autocommit
             and async_conn.in_transaction
         ):
             # Rollback is network I/O, so it runs outside _lock.
@@ -666,6 +672,9 @@ class SyncPool:
                     exc,
                     exc_info=True,
                 )
+            if async_conn.in_transaction:
+                # The rollback failed: drop the connection instead of reusing it.
+                reusable = False
 
         with self._lock:
             keep = not self._closed and reusable

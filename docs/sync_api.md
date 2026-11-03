@@ -15,7 +15,7 @@ conn = nzpy.connect(
     host="localhost",
     port=5480,
     database="mydb",
-    connect_timeout=10.0,     # TCP connect timeout only
+    connect_timeout=10.0,     # TCP connect and handshake timeout
     on_connect=None,           # optional callback(conn)
 )
 ```

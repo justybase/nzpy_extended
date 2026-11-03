@@ -52,7 +52,7 @@ async def connect(
     application_name: str | None = None,
     max_prepared_statements: int = 1000,
     datestyle: str = 'ISO',
-    logLevel: int = 0,
+    logLevel: int | None = None,
     tcp_keepalive: bool = True,
     char_varchar_encoding: str = 'latin',
     client_encoding: str = 'utf8',

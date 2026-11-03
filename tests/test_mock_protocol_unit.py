@@ -58,7 +58,7 @@ def _ints_and_text_responder(sql: str, sess: ServerSession) -> None:
 def _slow_responder(sql: str, sess: ServerSession) -> None:
     if sql == "SLOW":
         if sess.wait_cancel(5.0):
-            sess.reply(error_response("query canceled", "57014"), ready())
+            sess.reply(error_response("Query was cancelled."), ready())
         return
     _ints_and_text_responder(sql, sess)
 
@@ -125,7 +125,7 @@ async def test_multiple_result_sets_advance_with_nextset() -> None:
 async def test_server_error_is_raised_and_the_session_survives() -> None:
     def responder(sql: str, sess: ServerSession) -> None:
         if sql == "BROKEN":
-            sess.reply(error_response("syntax error at or near FROM", "42601"), ready())
+            sess.reply(error_response("syntax error at or near FROM"), ready())
             return
         default_responder(sql, sess)
 

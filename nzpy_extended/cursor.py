@@ -44,6 +44,8 @@ class Cursor:
         self._timeout: float | None = None
         self._exec_gen: int | None = None
         self.notice_handler: Callable[[str], Any] | None = None
+        # Set when another statement on the connection discarded this cursor's rows.
+        self._discarded = False
 
     async def __aenter__(self) -> Cursor:
         return self
@@ -55,6 +57,13 @@ class Cursor:
             raise ConnectionClosedError()
         if self._c._stream is not None and self._c._stream.view is None:
             raise ConnectionClosedError()
+
+    def _ensure_results(self) -> None:
+        if self._discarded:
+            raise InterfaceError(
+                "the result set was discarded because another statement ran on "
+                "this connection before it was fully fetched; fetch the rows first "
+                "or use a separate connection")
 
     def _raise_deferred_value_error(self) -> None:
         """Raise a value error deferred from the result that just reached ReadyForQuery.
@@ -230,6 +239,7 @@ class Cursor:
     @_guarded
     async def fetchmany(self, num: int | None = None) -> list[Any]:
         self._ensure_open()
+        self._ensure_results()
         try:
             rows: list[Any] = []
             for _ in range(self.arraysize if num is None else num):
@@ -244,6 +254,7 @@ class Cursor:
     @_guarded
     async def fetchall(self) -> list[Any]:
         self._ensure_open()
+        self._ensure_results()
         try:
             generator = getattr(self, 'generator', None)
             if generator is None:
@@ -280,7 +291,7 @@ class Cursor:
                         await self._c.drain_protocol_generator(generator)
                     self.generator = None
                     if err is not None:
-                        raise ProgrammingError(err)
+                        raise err
                     return rows
             self.generator = None
             return rows
@@ -316,6 +327,7 @@ class Cursor:
     @_guarded
     async def __anext__(self) -> Any:
         self._ensure_open()
+        self._ensure_results()
         if getattr(self, '_timeout', None) is not None and self._timeout and self._timeout > 0:
             try:
                 row = await asyncio.wait_for(self._anext_internal(), timeout=self._timeout)
@@ -357,7 +369,7 @@ class Cursor:
                             await self._c.drain_protocol_generator(generator)
                         self.generator = None
                         if err is not None:
-                            raise ProgrammingError(err)
+                            raise err
                         raise StopAsyncIteration()
                 self.generator = None
                 raise StopAsyncIteration()
@@ -384,9 +396,11 @@ class Cursor:
         self.has_rows = False
         self.cached_rows.clear()
         self._rownumber = 0
+        self._discarded = False
 
     @_guarded
     async def nextset(self) -> bool | None:
+        self._ensure_results()
         self.cached_rows.clear()
 
         generator = getattr(self, 'generator', None)
@@ -418,7 +432,7 @@ class Cursor:
                     await self._c.drain_protocol_generator(generator)
                 self.generator = None
                 if err is not None:
-                    raise ProgrammingError(err)
+                    raise err
                 return None
             if state in ("DATA_ROW", "DATA_BATCH"):
                 self.has_rows = len(self.cached_rows) > 0
