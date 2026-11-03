@@ -22,22 +22,10 @@ import warnings
 from typing import Any
 
 _TRUE_VALUES = ("1", "true", "yes")
-# Accepted for one release after the rename; remove in 0.9.
-_DEPRECATED_NO_NATIVE = "NZPY_EXTENDED_NO_CEXT"
 
 
 def _pure_python_requested() -> bool:
-    if os.environ.get("NZPY_EXTENDED_NO_NATIVE", "").lower() in _TRUE_VALUES:
-        return True
-    if os.environ.get(_DEPRECATED_NO_NATIVE, "").lower() in _TRUE_VALUES:
-        warnings.warn(
-            f"{_DEPRECATED_NO_NATIVE} is deprecated; use NZPY_EXTENDED_NO_NATIVE. "
-            "The old name will be removed in 0.9.",
-            FutureWarning,
-            stacklevel=2,
-        )
-        return True
-    return False
+    return os.environ.get("NZPY_EXTENDED_NO_NATIVE", "").lower() in _TRUE_VALUES
 
 
 def _load_native() -> Any:

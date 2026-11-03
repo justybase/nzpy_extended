@@ -53,10 +53,14 @@ def test_default_selects_native_module(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _native._native_ext.__name__ == "nzpy_extended.rust_ext"
 
 
-def test_deprecated_no_cext_is_honoured_with_warning(monkeypatch: pytest.MonkeyPatch) -> None:
-    with pytest.warns(FutureWarning, match="NZPY_EXTENDED_NO_CEXT is deprecated"):
-        _reload(monkeypatch, {"NZPY_EXTENDED_NO_CEXT": "1"})
-    assert _native._HAVE_NATIVE is False
+@pytest.mark.skipif(
+    importlib.util.find_spec("nzpy_extended.rust_ext") is None,
+    reason="native extension is not built",
+)
+def test_removed_no_cext_name_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The pre-0.8 name was removed in 0.9 and no longer selects pure Python.
+    _reload(monkeypatch, {"NZPY_EXTENDED_NO_CEXT": "1"})
+    assert _native._HAVE_NATIVE is True
 
 
 def test_missing_native_module_warns_and_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:

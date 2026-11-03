@@ -581,8 +581,7 @@ NZPY_EXTENDED_NO_NATIVE=1 python -c "from nzpy_extended import _native; print(_n
 If the native module cannot be imported, the driver emits a `RuntimeWarning` and
 falls back to pure Python, which is much slower. Setting `NZPY_EXTENDED_NO_NATIVE=1`
 chooses pure Python deliberately and silences that warning. The older name
-`NZPY_EXTENDED_NO_CEXT` still works in this release but emits a `FutureWarning`;
-it will be removed in 0.9.
+`NZPY_EXTENDED_NO_CEXT` was removed in 0.9.
 
 ## Reproducing benchmark results
 
