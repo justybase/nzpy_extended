@@ -217,6 +217,52 @@ async def test_stall_inside_a_message_body_retires_the_connection() -> None:
 
 
 @pytest.mark.asyncio
+async def test_server_shutdown_mid_response_fails_and_pool_replaces_connection() -> None:
+    def responder(sql: str, sess: ServerSession) -> None:
+        if sql == "DROP_MID_QUERY":
+            sess.send(row_description([Column("A", INT4, 4)]))
+            sess.send(
+                b"D" + b"\x00" * 4 + struct.pack(">i", 100)
+                + b"\x80" + b"\x00" * 8
+            )
+            sess.sock.shutdown(socket.SHUT_RDWR)
+            return
+        _ints_and_text_responder(sql, sess)
+
+    with MockNetezzaServer(responder=responder) as server:
+        pool = NzPool(
+            min_size=1,
+            max_size=1,
+            ping_query=None,
+            **server.connect_kwargs(),
+        )
+        try:
+            dropped = await pool.acquire()
+            with pytest.raises(OperationalError, match="EOF"):
+                await asyncio.wait_for(
+                    dropped.cursor().execute("DROP_MID_QUERY"),
+                    timeout=2.0,
+                )
+            assert dropped._closed is True
+            await pool.release(dropped)
+
+            replacement = await asyncio.wait_for(pool.acquire(), timeout=2.0)
+            assert replacement is not dropped
+            cursor = replacement.cursor()
+            await asyncio.wait_for(cursor.execute(SELECT_ABC), timeout=2.0)
+            assert await cursor.fetchall() == [
+                [1, "abc", None],
+                [2, "xyz", None],
+            ]
+            await pool.release(replacement)
+        finally:
+            await pool.close_all()
+        server.assert_no_handler_errors()
+
+    assert len(server.connections) == 2
+
+
+@pytest.mark.asyncio
 async def test_truncated_row_description_is_a_framing_error_that_closes() -> None:
     def responder(sql: str, sess: ServerSession) -> None:
         if sql == "BAD_T":
@@ -344,5 +390,3 @@ def test_fixture_records_are_well_formed() -> None:
         for _, response in records:
             assert response[-5:-4] == b"Z"
     assert PADDING == b"\x00" * 4
-
-

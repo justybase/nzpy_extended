@@ -2,6 +2,14 @@
 
 All notable changes to `nzpy_extended` are documented in this file.
 
+## 0.9.2 - 2026-11-07
+
+### Tests
+
+- Cover a server shutdown in the middle of a query response. The driver must
+  raise promptly, and a pool must discard the closed connection rather than
+  hand it to the next borrower.
+
 ## 0.9.1 - 2026-11-07
 
 This release changes packaging and the release process only. The driver code is

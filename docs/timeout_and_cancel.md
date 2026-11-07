@@ -152,6 +152,10 @@ assert row[0] == 42   # temp table survived
 
 ## Complete async example
 
+Replace the `SELECT 1` statement with a long-running SQL statement supported by
+your Netezza environment to exercise timeout handling. PostgreSQL's
+`pg_sleep()` is not a Netezza function.
+
 ```python
 import asyncio
 import nzpy_extended as nzpy
@@ -168,7 +172,7 @@ async def main():
         await cur.execute("INSERT INTO t1 VALUES (1)")
 
         try:
-            await cur.execute("SELECT pg_sleep(999)", timeout=2.0)
+            await cur.execute("SELECT 1", timeout=2.0)
         except nzpy.OperationalError:
             print("Query timed out — session still valid")
 
@@ -199,7 +203,7 @@ try:
     cur.execute("INSERT INTO t1 VALUES (1)")
 
     try:
-        cur.execute("SELECT pg_sleep(999)")    # uses conn.timeout=3.0
+        cur.execute("SELECT 1")             # uses conn.timeout=3.0
     except nzpy.OperationalError:
         print("Timed out — session valid")
 

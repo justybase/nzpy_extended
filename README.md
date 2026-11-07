@@ -1,708 +1,239 @@
-# nzpy_extended: High-performance IBM Netezza driver for Python
+# nzpy_extended
 
-**nzpy_extended** is a hard fork of [IBM nzpy](https://github.com/IBM/nzpy) — enriched with new features, major performance improvements via a native extension, and expanded platform support.
+[![PyPI version](https://img.shields.io/pypi/v/nzpy-extended)](https://pypi.org/project/nzpy-extended/)
+[![Python versions](https://img.shields.io/pypi/pyversions/nzpy-extended)](https://pypi.org/project/nzpy-extended/)
+[![CI](https://github.com/justybase/nzpy_extended/actions/workflows/test.yaml/badge.svg?branch=main)](https://github.com/justybase/nzpy_extended/actions/workflows/test.yaml)
+[![License](https://img.shields.io/pypi/l/nzpy-extended)](LICENSE)
 
-## Key differences from upstream nzpy
+**A Python driver for IBM Netezza Performance Server (NPS).** `nzpy_extended`
+is a maintained fork of IBM's [`nzpy`](https://github.com/IBM/nzpy), with
+asynchronous and synchronous APIs, an optional Rust decoder, connection pools,
+and utilities for bulk loading and catalog introspection.
 
-| Feature | nzpy (IBM) | nzpy_extended |
-|---|---|---|
-| Row parsing performance (mixed types, Apple M4; Rust decoder 0.8.0) | ~11 000 rows/s | ~47 000 rows/s (no native ext) → **~90 000 rows/s** (+ native ext) |
-| Supported Python | 3.11+ | **3.11, 3.12, 3.13, 3.14, 3.15** |
-| Platform wheels | ❌ None | ✅ Linux x64/ARM64, macOS, Windows x64/ARM64 (pre-built) |
-| Async support | ❌ | ✅ Fully async API |
-| Streaming bulk loading | ❌ | ✅ `load_data()` accepts sync and async iterables; `load_csv()` streams local CSV files |
-| Sync API (DB-API 2.0) | ✅ | ✅ Full feature parity with async |
-
-### Windows 11
-
-_Measured with the previous C decoder (0.7.x); not re-measured with the Rust decoder._
-
-| Data type | official nzpy | nzpy_extended (no native ext) | nzpy_extended (+ native ext) | vs. ODBC |
-|---|---|---|---|---|
-| INTEGER | ~18 k rows/s | ~196 k rows/s | **~256 k rows/s** | ≈ ODBC (~239 k) |
-| NUMERIC | ~10 k rows/s | ~75 k rows/s | **~97 k rows/s** | ≈ ODBC (~90 k) |
-| STRING | ~18 k rows/s | ~75 k rows/s | **~79 k rows/s** | ≈ ODBC (~69 k) |
-| DATETIME | ~18 k rows/s | ~135 k rows/s | **~255 k rows/s** | ≈ ODBC (~249 k) |
-| BOOLEAN | ~23 k rows/s | ~243 k rows/s | **~401 k rows/s** | ≈ ODBC (~359 k) |
-| Mixed | ~4 900 rows/s | ~36 k rows/s | **~45 k rows/s** | ≈ ODBC (~44 k) |
-
-### WSL2 (Linux x86_64)
-
-Measured with nzpy_extended 0.8.0 (Rust decoder) on 2026-10-31 using `tools/examples/performance_test.py`: 100 000 rows, median of three runs, after the text fast path and the bad-value batch fix. The nzpy_extended columns average the async and sync medians. Run-to-run spread is about 5% for most cells and up to about 15% for a few.
-
-| Data type | official nzpy | nzpy_extended (no native ext) | nzpy_extended (+ native ext) | vs. ODBC |
-|---|---|---|---|---|
-| INTEGER | ~32 k rows/s | ~191 k rows/s | **~721 k rows/s** | ~114 k rows/s |
-| NUMERIC | ~17 k rows/s | ~87 k rows/s | **~188 k rows/s** | ~76 k rows/s |
-| STRING | ~32 k rows/s | ~111 k rows/s | **~192 k rows/s** | ~96 k rows/s |
-| DATETIME | ~30 k rows/s | ~150 k rows/s | **~836 k rows/s** | ~147 k rows/s |
-| BOOLEAN | ~42 k rows/s | ~250 k rows/s | **~935 k rows/s** | ~226 k rows/s |
-| Mixed | ~8 k rows/s | ~42 k rows/s | **~91 k rows/s** | ~27 k rows/s |
-
-On WSL2 the native extension is about 3.8x faster than pure Python for integer columns, 2.2x for numeric, 1.7x for string, 5.6x for datetime and 3.7x for boolean (ratios of the averaged columns). String columns gain less because the server spends most of the time before the first row arrives: the benchmark query computes its values on the server, so the decoder is about 7% of the end-to-end time for that query (about 15% before the text fast path). A live interleaved check (`tools/examples/benchmark_native_vs_python.py`, 153 600 mixed rows, five rounds) measured pure Python at about 4.5x the native time.
-
-Note: WSL2 results were obtained on the same Netezza server as Windows 11 (192.168.0.144). ODBC results use a ctypes-based ANSI-ODBC fallback (because pyodbc's Unicode API is incompatible with the Netezza ODBC driver on Linux). This wrapper fetches every cell individually via `SQLGetData`, so ODBC numbers on WSL2 are **understated** vs. native pyodbc on Windows (which uses `SQLBindCol` batch fetching). The real ODBC-vs-native gap on Linux is likely smaller.
-
-### macOS ARM64 (Apple M4)
-
-Measured with nzpy_extended 0.8.0 (Rust decoder) on 2026-10-31 using `tools/examples/performance_test.py`, on a Mac mini (Apple M4, 16 GB RAM) against the same Netezza server at 192.168.0.144. 100 000 rows per query, one run. The nzpy_extended columns average the async and sync results. Full numbers, the native-vs-Python comparison and the bulk-load timings are in [docs/benchmarks.md](docs/benchmarks.md).
-
-| Data type | official nzpy | nzpy_extended (no native ext) | nzpy_extended (+ native ext) |
-|---|---|---|---|
-| INTEGER | ~44 k rows/s | ~213 k rows/s | **~681 k rows/s** |
-| NUMERIC | ~22 k rows/s | ~92 k rows/s | **~170 k rows/s** |
-| STRING | ~41 k rows/s | ~114 k rows/s | **~182 k rows/s** |
-| DATETIME | ~42 k rows/s | ~180 k rows/s | **~776 k rows/s** |
-| BOOLEAN | ~54 k rows/s | ~282 k rows/s | **~874 k rows/s** |
-| Mixed | ~11 k rows/s | ~47 k rows/s | **~90 k rows/s** |
-
-If the compiled extension cannot be loaded, the driver **gracefully falls back** to pure Python with identical semantics. Installing on a platform without a wheel still needs Rust; see [Installation](#installation).
-
-## Installation
-
-The package is available on [PyPI](https://pypi.org/project/nzpy-extended/):
+The package is published on [PyPI](https://pypi.org/project/nzpy-extended/).
+Install it with:
 
 ```shell
-pip install nzpy-extended
+python -m pip install nzpy-extended
 ```
 
-Pre-built wheels use the Python stable ABI (`cp311-abi3`), so one wheel per
-platform installs on Python 3.11 and newer:
+## Highlights
 
-| Platform | Architecture | Python |
-|---|---|---|
-| Linux | x86_64, aarch64 (manylinux, musllinux) | 3.11+ |
-| macOS | arm64, universal2 (arm64 + x86_64) | 3.11+ |
-| Windows | x86_64, ARM64 | 3.11+ |
+- **Async and sync APIs.** Use `nzpy_extended` with `asyncio`, or
+  `nzpy_extended.sync` for blocking applications.
+- **DB-API 2.0-oriented sync interface.** Supports standard cursor operations,
+  parameter placeholders, transactions, and the DB-API exception hierarchy.
+  See the [compliance notes](docs/pep249_compliance.md) for deviations.
+- **Native result decoding.** A Rust extension accelerates decoding Netezza
+  result rows. If it is unavailable, the driver can fall back to the
+  pure-Python decoder.
+- **Connection pools.** Async and sync reusable pools, plus null-pool variants.
+- **Bulk loading.** Stream Python iterables or local CSV files using Netezza's
+  external-table protocol.
+- **Catalog metadata.** Async helpers for tables, columns, views, procedures,
+  distribution keys, and other system catalog information.
+- **Timeouts and cancellation.** Configure connection and command timeouts and
+  cancel running queries.
 
-Free-threaded CPython builds (`3.13t`/`3.14t`) are not covered by these wheels.
+## Compatibility
 
-For other platforms, `pip install` builds the native decoder from source with [maturin](https://www.maturin.rs/). This requires a stable Rust toolchain (install it with [rustup](https://rustup.rs)). Without one the install fails — use a supported platform or install Rust first.
+| Runtime or platform | Support |
+|---|---|
+| CPython | Python 3.11–3.15 |
+| Linux | x86_64 and aarch64; manylinux and musllinux wheels |
+| macOS | arm64 and universal2 wheels |
+| Windows | x86_64 and ARM64 wheels |
 
-## Quick Start
+Published wheels use the CPython stable ABI and support Python 3.11 and newer.
+Free-threaded CPython builds are not covered by these wheels. PyPy is not a
+tested or supported runtime.
 
-### Sync — scripts, ETL, Jupyter, Django
+On supported platforms, pip installs a prebuilt wheel. On other platforms, pip
+may build the native extension from source; this requires a stable Rust
+toolchain. The pure-Python decoder is available as a runtime fallback, but does
+not remove the Rust requirement for building a source distribution.
+
+## Quick start
+
+The examples read connection settings from environment variables so credentials
+do not need to be written into source code.
+
+### Synchronous
 
 ```python
+import os
 import nzpy_extended.sync as nzpy
 
 conn = nzpy.connect(
-    user="admin", password="password",
-    host="netezza-host", database="mydb",
+    host=os.environ["NZ_HOST"],
+    port=int(os.environ.get("NZ_PORT", "5480")),
+    database=os.environ["NZ_DATABASE"],
+    user=os.environ["NZ_USER"],
+    password=os.environ["NZ_PASSWORD"],
 )
 
-# --- Basic query ---
-with conn.cursor() as cur:
-    cur.execute("SELECT 1")
-    print(cur.fetchone())  # [1]
-
-# --- One-shot convenience (pyodbc pattern) ---
-row = conn.execute("SELECT version()").fetchone()
-print(row[0])
-
-# --- Parameter binding ---
-cur.execute("SELECT id, name FROM users WHERE active = ?", (1,))
-for row in cur:
-    print(row)
-
-# --- Cursor iteration (batched, arraysize=100) ---
-cur.execute("SELECT * FROM large_table")
-for row in cur:            # fetches 100 rows per round-trip
-    process(row)
-
-# --- Method chaining (PEP 249) ---
-rows = cur.execute("SELECT 1, 2, 3").fetchall()
-
-# --- Explicit transaction control ---
-conn.autocommit = False
-cur.execute("INSERT INTO users (name) VALUES ('Alice')")
-cur.execute("INSERT INTO users (name) VALUES ('Bob')")
-conn.commit()               # or conn.rollback()
-conn.autocommit = True
-
-# --- Transaction context manager ---
-with conn.transaction():
-    cur.execute("INSERT INTO users (name) VALUES ('Charlie')")
-    # auto-commits on success, auto-rollbacks on exception
-
-# --- Timeout (pyodbc-compatible properties) ---
-conn.timeout = 5.0          # default for all new cursors
-cur = conn.cursor()         # inherits timeout=5.0
-cur.execute("SELECT ...")   # raises OperationalError after 5s
-
-cur.timeout = 10.0          # per-cursor override
-cur.execute("SELECT ...", timeout=3.0)  # per-execute override wins
-
-# --- Stored procedures ---
-result = cur.callproc("sp_add_numbers", [10, 20])
-rows = cur.fetchall()
-
-# --- Server notices (RAISE NOTICE) ---
-for msg in cur.messages:
-    print("Notice:", msg)
-
-# --- PEP 249 rownumber ---
-cur.execute("SELECT * FROM t")
-print(cur.rownumber)  # 0
-cur.fetchone()
-print(cur.rownumber)  # 1
-
-# --- Column metadata ---
-desc = cur.description       # 7-tuple after execute()
-schema = cur.get_schema_table()  # rich metadata as list[dict]
-
-# --- Cancel / interrupt ---
-conn.cancel()                # stops running query, session survives
-cur.interrupt()              # alias
-
-# --- Connection state ---
-print(conn.closed)           # False
-conn.close()
-print(conn.closed)           # True
+try:
+    with conn.cursor() as cur:
+        cur.execute("SELECT 1")
+        print(cur.fetchone())
+finally:
+    conn.close()
 ```
 
-### Async — FastAPI, asyncio
+### Asynchronous
 
 ```python
 import asyncio
+import os
 import nzpy_extended as nzpy
 
 async def main():
     async with await nzpy.connect(
-        user="admin", password="password",
-        host="netezza-host", database="mydb",
+        host=os.environ["NZ_HOST"],
+        port=int(os.environ.get("NZ_PORT", "5480")),
+        database=os.environ["NZ_DATABASE"],
+        user=os.environ["NZ_USER"],
+        password=os.environ["NZ_PASSWORD"],
     ) as conn:
-        # --- Basic query ---
-        async with conn.cursor() as cur:
-            await cur.execute("SELECT id, name FROM users WHERE active = ?", (1,))
-            return await cur.fetchall()
-
-        # --- One-shot convenience ---
-        row = await (await conn.execute("SELECT version()")).fetchone()
-
-        # --- Async iteration (streaming) ---
         cur = conn.cursor()
-        await cur.execute("SELECT * FROM large_table")
-        async for row in cur:
-            process(row)
-
-        # --- Timeout ---
-        await cur.execute("SELECT pg_sleep(999)", timeout=3.0)
-        # raises OperationalError after 3s
-
-        # --- Stored procedures ---
-        result = await cur.callproc("sp_add_numbers", [10, 20])
-
-        # --- Notices ---
-        for msg in cur.messages:
-            print("Notice:", msg)
+        await cur.execute("SELECT 1")
+        print(await cur.fetchone())
 
 asyncio.run(main())
 ```
 
-### FastAPI with connection pool
+Use `?` placeholders for values rather than interpolating them into SQL:
 
 ```python
-from fastapi import FastAPI, Depends
-import nzpy_extended as nzpy
-import nzpy_extended.fastapi as nzpy_fastapi
-
-pool = nzpy.NzPool(
-    min_size=2, max_size=10,
-    host="netezza-host", database="mydb",
-    user="admin", password="password",
-)
-
-app = FastAPI(lifespan=nzpy_fastapi.lifespan(pool))
-
-@app.get("/users")
-async def get_users(conn=Depends(nzpy_fastapi.get_connection)):
-    async with conn.cursor() as cur:
-        await cur.execute("SELECT * FROM users LIMIT 100")
-        return await cur.fetchall()
+cur.execute("SELECT id, name FROM users WHERE id = ?", (user_id,))
 ```
 
-### Sync connection pool
+Parameters are rendered as SQL literals by the client; they are not server-side
+prepared-statement bindings. Identifiers such as table and column names cannot
+be supplied as value parameters.
+
+## Common operations
+
+### Transactions
+
+Autocommit is enabled by default for compatibility with the upstream driver.
+For explicit synchronous transactions, use `conn.transaction()` or set
+`conn.autocommit = False` and call `commit()` or `rollback()`.
 
 ```python
-import nzpy_extended.sync as nzpy
-from nzpy_extended import SyncPool
-
-pool = SyncPool(
-    min_size=2, max_size=10,
-    host="netezza-host", database="mydb",
-    user="admin", password="password",
-)
-with pool.connection() as conn:
-    conn.execute("SELECT 1").fetchone()
-pool.close_all()
+with conn.transaction():
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE accounts SET status = ? WHERE id = ?",
+            ("active", 42),
+        )
 ```
 
-### Bulk data loading via external table protocol
+The async API provides `commit()` and `rollback()` on the connection. For
+transaction semantics and DB-API differences, see the
+[PEP 249 notes](docs/pep249_compliance.md).
 
-`load_data()` inserts rows from a Python iterable or async iterable into a Netezza table using the native external table protocol (`REMOTESOURCE 'python'`). It supports optional automatic table creation. Lists and tuples are materialized as CSV bytes; generators, async generators, and other iterables are streamed to Netezza in chunks.
+### Bulk loading
+
+Use `load_data()` for iterable or async-iterable rows, and `load_csv()` for
+streaming a local CSV file. Both APIs are available in synchronous and
+asynchronous forms.
 
 ```python
-# --- Sync ---
-import nzpy_extended.sync as nzpy
-conn = nzpy.connect(...)
-count = conn.load_data("my_table", [(1, "Alice"), (2, "Bob")])
-
-# --- Async ---
-import nzpy_extended as nzpy
-conn = await nzpy.connect(...)
-count = await nzpy.load_data(conn, "my_table", [(1, "Alice"), (2, "Bob")])
-
-# --- Auto-infer types from data ---
-rows = [(1, "Alice", 100.50), (2, "Bob", 200.75)]
-count = conn.load_data("my_table", rows)
-# Creates: col1 SMALLINT, col2 VARCHAR(255), col3 NUMERIC
-
-# --- Explicit columns ---
 count = conn.load_data(
-    table_name="products",
-    rows=[(101, "Widget", 9.99)],
-    columns=[("id", "INT"), ("name", "VARCHAR(200)"), ("price", "NUMERIC(10,2)")],
+    "staging_items",
+    [(1, "alpha"), (2, "beta")],
+    columns=[("id", "INTEGER"), ("name", "VARCHAR(100)")],
 )
-
-# --- Generator for large datasets ---
-def generate_rows(n):
-    for i in range(n):
-        yield (i, f"item_{i}")
-count = conn.load_data("my_table", rows=generate_rows(50000))
-
-# --- Async generator for streaming ---
-async def generate_rows_async(n):
-    for i in range(n):
-        yield (i, f"item_{i}")
-count = await nzpy.load_data(conn, "my_table", rows=generate_rows_async(50000))
+print(f"Loaded {count} rows")
 ```
 
-**Parameters:**
+See the [bulk loading guide](docs/load_data.md) for schema inference, encoding,
+validation, streaming behavior, and error handling.
 
-| Parameter | Default | Description |
-|---|---|---|
-| `conn` / `table_name` / `rows` | (required) | Connection, target table, row iterable |
-| `columns` | `None` | `[(name, nz_type), ...]` or `None` for auto-infer from data |
-| `delimiter` | `'\|'` | Field delimiter |
-| `encoding` | `'LATIN9'` | Text encoding (`'UTF8'` for NVARCHAR) |
-| `create_if_missing` | `True` | Auto-create table if not exists |
-| `temporary` | `False` | Create TEMP TABLE |
-| `distribute_on_random` | `True` | Add `DISTRIBUTE ON RANDOM` |
-| `logdir` | temp dir | Netezza log directory |
-| `escape_char` | `'\\'` | Escape character for delimiter within values |
+### Pools, timeouts, and metadata
 
-### Streaming CSV import via `load_csv()`
-
-`load_csv()` streams a local CSV file directly into a Netezza table without loading the whole file into memory. It inspects a sample of rows to infer column types when `create_if_missing=True`, then uses the external table protocol to load the remaining data.
-
-```python
-# --- Sync ---
-import nzpy_extended.sync as nzpy
-conn = nzpy.connect(...)
-count = conn.load_csv("my_table", "C:/data/input.csv",
-                      delimiter=',', has_header=True, encoding='UTF8')
-
-# --- Async ---
-import nzpy_extended as nzpy
-conn = await nzpy.connect(...)
-count = await nzpy.load_csv(conn, "my_table", "data/input.csv",
-                            delimiter=',', has_header=True, encoding='UTF8')
-```
-
-| Parameter | Default | Description |
-|---|---|---|
-| `conn` / `table_name` / `csv_path` | (required) | Connection, target table, path to local CSV |
-| `delimiter` | `','` | Field delimiter |
-| `has_header` | `True` | Use first row as column names when inferring schema |
-| `sample_size` | `1000` | Rows read for type inference |
-| `encoding` | `'UTF8'` | File encoding |
-| `create_if_missing` | `True` | Auto-create table from inferred types |
-| `temporary` | `False` | Create TEMP TABLE |
-| `distribute_on_random` | `True` | Add `DISTRIBUTE ON RANDOM` |
-| `escape_char` | `'\\'` | Escape character for delimiter within values |
-| `logdir` | temp dir | Netezza log directory |
-
-### Metadata API (catalog introspection)
-
-The `conn.meta` object provides async access to Netezza system catalog views — tables, columns, views, procedures, distribution keys, storage stats, sessions, and more. All queries run against the current database; connect to `SYSTEM` for system-wide objects.
-
-```python
-import nzpy_extended as nzpy
-
-async def main():
-    conn = await nzpy.connect(user="admin", password="password",
-                              host="netezza-host", database="mydb")
-
-    # --- Schemas & databases ---
-    schemas = await conn.meta.get_schemas()       # ["ADMIN", "INFORMATION_SCHEMA", ...]
-    dbs     = await conn.meta.get_databases()     # ["JUST_DATA", "SYSTEM", ...]
-    db_name = await conn.meta.get_current_database()   # "JUST_DATA"
-
-    # --- Tables ---
-    tables = await conn.meta.get_tables(schema="ADMIN")
-    # [{"schema": "ADMIN", "table_name": "DIMDATE", "owner": "ADMIN",
-    #   "objtype": "TABLE", "objid": 123456, "row_count": 500000}, ...]
-
-    tables = await conn.meta.get_tables(
-        schema="ADMIN", table_pattern="DIM%", include_system=False,
-    )
-
-    # --- Views (includes view definition SQL) ---
-    views = await conn.meta.get_views(schema="ADMIN")
-    # [{"schema": "ADMIN", "view_name": "V_SALES", "owner": "ADMIN",
-    #   "objid": 789012, "definition": "CREATE VIEW V_SALES AS SELECT ..."}, ...]
-
-    # --- Columns ---
-    cols = await conn.meta.get_columns("DIMDATE", schema="ADMIN")
-    # [{"column_name": "DATEKEY", "ordinal": 1,
-    #   "data_type": "DATE", "nullable": "N"}, ...]
-
-    # Dot-notation also works:
-    cols = await conn.meta.get_columns("ADMIN.DIMDATE")
-
-    # --- Distribution key ---
-    dk = await conn.meta.get_distribution_key("FACT_SALES", schema="ADMIN")
-    # ["CUSTOMER_ID"]  or [] for RANDOM distribution
-
-    # --- Table sizes ---
-    sizes = await conn.meta.get_table_sizes(schema="ADMIN")
-    # [{"schema": "ADMIN", "table_name": "FACT_SALES",
-    #   "used_bytes": 500000000, "allocated_bytes": 600000000,
-    #   "size_mb": 476, "skew": 1.2}, ...]
-
-    # --- Stored procedures ---
-    procs = await conn.meta.get_procedures(schema="ADMIN")
-    # [{"schema": "ADMIN", "proc_name": "SP_LOAD_DATA",
-    #   "owner": "ADMIN", "signature": "SP_LOAD_DATA(VARCHAR(256))",
-    #   "returns": "INTEGER", "source": "CREATE PROCEDURE ..."}, ...]
-
-    # --- Sequences & synonyms ---
-    seqs = await conn.meta.get_sequences(schema="ADMIN")
-    syns = await conn.meta.get_synonyms(schema="ADMIN")
-
-    # --- Sessions ---
-    sessions = await conn.meta.get_sessions()
-    # [{"session_id": 123, "username": "ADMIN", "database_name": "JUST_DATA",
-    #   "conntime": datetime(...), "priority": 0, "status": "active"}, ...]
-
-    # --- Users & groups ---
-    users  = await conn.meta.get_users()
-    groups = await conn.meta.get_groups()
-
-    # --- Query history (requires history collection enabled) ---
-    history = await conn.meta.get_query_history(limit=50, username="ADMIN")
-
-    # --- Search across tables, views, procedures ---
-    results = await conn.meta.search_objects("SALES%", schema="ADMIN")
-    # [{"object_type": "TABLE", "schema": "ADMIN",
-    #   "object_name": "FACT_SALES", "owner": "ADMIN", "objid": 123}, ...]
-
-asyncio.run(main())
-```
-
-| Method | Returns | Notes |
-|---|---|---|
-| `get_schemas()` | `list[str]` | All schemas in current database |
-| `get_databases()` | `list[str]` | All databases visible to user |
-| `get_current_database()` | `str` | Current database name |
-| `get_current_schema()` | `str` | Current schema (search path) |
-| `get_tables(schema, pattern, include_system)` | `list[dict]` | Tables: `schema`, `table_name`, `owner`, `objtype`, `objid`, `row_count` |
-| `get_views(schema, pattern)` | `list[dict]` | Views: `schema`, `view_name`, `owner`, `objid`, `definition` (SQL!) |
-| `get_columns(table, schema)` | `list[dict]` | Columns: `column_name`, `ordinal`, `data_type`, `nullable`, `objid` |
-| `get_distribution_key(table, schema)` | `list[str]` | Distribution column names (empty = RANDOM) |
-| `get_table_sizes(schema, pattern)` | `list[dict]` | Sizes: `used_bytes`, `allocated_bytes`, `size_mb`, `skew` |
-| `get_procedures(schema, pattern)` | `list[dict]` | Procs: `schema`, `proc_name`, `owner`, `signature`, `returns`, `source` |
-| `get_sequences(schema)` | `list[dict]` | Sequences: `schema`, `seq_name`, `owner`, `objid` |
-| `get_synonyms(schema)` | `list[dict]` | Synonyms: `schema`, `synonym_name`, `ref_database`, `ref_schema`, `referenced_object` |
-| `get_sessions()` | `list[dict]` | Active sessions: `session_id`, `username`, `database_name`, `conntime`, `priority` |
-| `get_users()` | `list[dict]` | Users: `username`, `objid` |
-| `get_groups()` | `list[dict]` | Groups: `groupname`, `objid` |
-| `get_query_history(limit, user)` | `list[dict]` | History: `session_id`, `username`, `query_text`, `submit_time`, `result_rows` |
-| `search_objects(pattern, schema)` | `list[dict]` | Unified search: `object_type` (TABLE/VIEW/PROCEDURE), `schema`, `object_name` |
-
-## API Reference
-
-| Feature | Async | Sync | Notes |
-|---|---|---|---|
-| `connect()` | `nzpy.connect(...)` | `nzpy.sync.connect(...)` | |
-| `cursor()` | `conn.cursor()` | `conn.cursor()` | Returns `Cursor` / `SyncCursor` |
-| `execute(sql, params)` | `await cur.execute(...)` | `cur.execute(...)` | PEP 249, returns cursor |
-| `executemany(sql, seq)` | `await cur.executemany(...)` | `cur.executemany(...)` | Partial failure preserves rowcount |
-| `callproc(name, params)` | `await cur.callproc(...)` | `cur.callproc(...)` | `CALL proc_name(args)` |
-| `fetchone()` | `await cur.fetchone()` | `cur.fetchone()` | Returns row or `None` |
-| `fetchmany(n)` | `await cur.fetchmany(n)` | `cur.fetchmany(n)` | Default `arraysize=100` |
-| `fetchall()` | `await cur.fetchall()` | `cur.fetchall()` | |
-| `nextset()` | `await cur.nextset()` | `cur.nextset()` | |
-| `description` | `cur.description` | `cur.description` | 7-tuple, available after execute |
-| `rowcount` | `cur.rowcount` | `cur.rowcount` | Rows affected |
-| `rownumber` | `cur.rownumber` | `cur.rownumber` | PEP 249, 0-based index |
-| `messages` | `cur.messages` | `cur.messages` | Server notices |
-| `arraysize` | `cur.arraysize` | `cur.arraysize` | Default 100 |
-| `get_schema_table()` | `cur.get_schema_table()` | `cur.get_schema_table()` | Rich metadata |
-| `conn.execute(sql)` | `await conn.execute(...)` | `conn.execute(...)` | One-shot convenience |
-| `conn.timeout` | — | `conn.timeout = N` | Default timeout for cursors |
-| `cur.timeout` | — | `cur.timeout = N` | Per-cursor timeout |
-| `autocommit` | `conn.autocommit` | `conn.autocommit` | Get/set, default `True` |
-| `closed` | — | `conn.closed` | Read-only |
-| `commit()` / `rollback()` | `await conn.commit()` | `conn.commit()` | |
-| `cancel()` | `await conn.cancel()` | `conn.cancel()` | Session survives |
-| `transaction()` | — | `conn.transaction()` | Context manager |
-| `load_data()` | `await nzpy.load_data(...)` | `nzpy.sync.load_data(...)` | Bulk insert via external table |
-| `conn.load_data()` | `await conn.load_data(...)` | `conn.load_data(...)` | Method form |
-| `conn.meta.get_tables()` | `await conn.meta.get_tables(...)` | — | Catalog metadata (async only) |
-| `NzPool` / `SyncPool` | `nzpy.NzPool(...)` | `nzpy.SyncPool(...)` | Connection pooling |
+- [Connection pools](docs/pool.md) — async and sync pool APIs and lifecycle.
+- [Timeouts and cancellation](docs/timeout_and_cancel.md) — connection and
+  command timeout behavior.
+- [Catalog metadata](docs/metadata_api.md) — async catalog inspection helpers.
 
 ## Documentation
 
-- `docs/` folder in the repository:
-  - [`timeout_and_cancel.md`](docs/timeout_and_cancel.md) — Timeout and cancel mechanisms
-  - [`sync_api.md`](docs/sync_api.md) — Full sync API reference
-  - [`pep249_compliance.md`](docs/pep249_compliance.md) — PEP 249 compliance table
-  - [`pool.md`](docs/pool.md) — Connection pool documentation
-  - [`load_data.md`](docs/load_data.md) — Bulk data loading
-  - [`metadata_api.md`](docs/metadata_api.md) — Catalog introspection API
-- [Issue tracker](https://github.com/justybase/nzpy_extended/issues)
+| Guide | Contents |
+|---|---|
+| [Async API](docs/async_api.md) | Async connection, cursor, SSL, and API limitations |
+| [Sync API](docs/sync_api.md) | Synchronous DB-API connection and cursor reference |
+| [PEP 249 compliance](docs/pep249_compliance.md) | Supported behavior and known deviations |
+| [Connection pools](docs/pool.md) | Pool types, configuration, and lifecycle |
+| [Timeouts and cancellation](docs/timeout_and_cancel.md) | Timeout scopes, cancellation, and session behavior |
+| [Bulk data loading](docs/load_data.md) | `load_data()` API and value/encoding rules |
+| [Metadata API](docs/metadata_api.md) | Netezza catalog introspection |
+| [Benchmarks](docs/benchmarks.md) | Measurements, methodology, and reproduction |
+| [Changelog](CHANGELOG.md) | Release notes and upgrade-impacting changes |
 
-## Requirements
+Runnable examples are in [`examples/`](examples/). For questions and bug
+reports, use the [issue tracker](https://github.com/justybase/nzpy_extended/issues).
 
-- Python ≥ 3.11 (tested on 3.11 through 3.15)
-- CPython (PyPy not supported for native extension, pure-Python fallback only)
+## Performance
 
-## Testing
+The Rust decoder can substantially improve row-decoding throughput, but
+end-to-end performance depends on the query, data types, server, network, and
+client hardware. See the [benchmark results and methodology](docs/benchmarks.md)
+before comparing measurements; they are workload-specific and are not a
+throughput guarantee.
 
-### Running the test suite
-
-#### CI (GitHub Actions)
-
-CI discovers all `unit` tests and measures branch coverage. Each push and pull
-request tests Python 3.11–3.15 on Linux, Python 3.11 and 3.15 on macOS and Windows,
-and pure Python on Linux. A weekly run covers every combination of Python, system
-and decoder; start it by hand with the `full_matrix` input of the Test workflow.
-Publishing depends on this quality workflow. Published wheels are built once per
-platform with the stable ABI. Wheel/sdist import checks run outside the source tree.
-Use `NZ_DEV_DATABASE` (preferred) or `NZ_DEV_DB` for live tests; the preferred
-name wins when both are set.
-
-Pull requests run **without a live Netezza database**:
-
-- Unit tests (`paramstyle`, regressions, native/Python parity, buffer pool/stream, pool, csv_import)
-- `mypy` and `pyright`
-- Wheel and sdist import smoke
-
-Integration tests (`smoke`, `full`, and differential parity) must be run
-**locally** against your Netezza instance.
-
-#### Local integration
-
-Tests require a running Netezza instance. Set the connection environment variables:
+To deliberately use the pure-Python decoder:
 
 ```shell
-export NZ_DEV_HOST=your_netezza_host
-export NZ_DEV_PORT=5480
-export NZ_DEV_DB=JUST_DATA
-export NZ_DEV_USER=admin
-export NZ_DEV_PASSWORD=password
+NZPY_EXTENDED_NO_NATIVE=1 python your_script.py
 ```
 
-Differential parity tests use the independent JustyBase Netezza driver, not
-ODBC. Build the Node driver from
-[`JustyBase.NetezzaDriver`](https://github.com/justybase/JustyBase.NetezzaDriver)
-or its Node companion, then point the tests at its compiled package:
+If the native module cannot be imported, the driver emits a `RuntimeWarning`
+and falls back to pure Python. Setting `NZPY_EXTENDED_NO_NATIVE=1` explicitly
+selects that fallback without the warning. The former
+`NZPY_EXTENDED_NO_CEXT` setting was removed in version 0.9.
+
+## Testing and development
+
+Install the test and lint dependencies, then run the database-free unit tests:
 
 ```shell
-export NZ_REFERENCE_NODE_DRIVER=/path/to/justybase_netezza_node_driver
-pytest tests/test_odbc_comparison_smoke.py -v
-pytest tests/test_odbc_comparison_node.py -m reference_node -v
-```
-
-The bridge in `tests/reference_driver.js` runs the reference driver in a
-separate Node process and exchanges JSON-lines, so the two implementations do
-not share protocol or conversion code. The default local checkout path is
-`../justybase_netezza_node_driver`.
-
-Run all tests locally:
-```shell
-pytest tests/ -v
-```
-
-CI-equivalent (no database):
-```shell
-pytest tests/test_paramstyle.py tests/test_typeobjects.py tests/test_regressions_unit.py \
-  tests/test_native_parity_unit.py tests/test_buffer_pool.py tests/test_buffered_stream.py \
-  tests/test_csv_import_unit.py tests/test_pool_unit.py -v
-```
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for marker profiles (`smoke`, `full`, `unit`, `benchmark`).
-
-### Upgrading to 0.9
-
-0.9.0 changes behaviour that applications may rely on:
-
-- Server errors raise the matching DB-API class (`DataError`, `IntegrityError`, `OperationalError` or `ProgrammingError`), and `str(error)` is the message. Code that expected `ProgrammingError` for every server error, or parsed its text, must change.
-- VARBINARY and ST_GEOMETRY values are `bytes`.
-- A wrong number of parameters raises `ProgrammingError`. A NUL character raises `DataError` in a text parameter and `ProgrammingError` in the query text.
-- Fetching from a cursor whose rows were discarded raises `InterfaceError`.
-- Statements in an aborted transaction raise `InternalError`.
-- `logLevel` defaults to `None`, so connections no longer force DEBUG logging.
-- External-table file requests from the server are honoured only for paths named in the running statement.
-- `NZPY_EXTENDED_NO_CEXT` was removed. Use `NZPY_EXTENDED_NO_NATIVE`.
-
-See [CHANGELOG.md](CHANGELOG.md) for the details.
-
-### Upgrading to 0.4.0
-
-If you connect with `securityLevel=2` and relied on automatic fallback to an unencrypted session when SSL fails, you must now opt in explicitly:
-
-```python
-await nzpy.connect(
-    ...,
-    securityLevel=2,
-    ssl={"ssl_allow_fallback": True},  # only if you need legacy behaviour
-)
-```
-
-See [CHANGELOG.md](CHANGELOG.md) for the full list of changes.
-
-### Native decoder / pure Python parity
-
-The native DBOS decoder (`nzpy_extended.rust_ext`, source in `rust/`) and the pure-Python decoder must produce identical results for all data types.
-
-**Unit tests** (`tests/test_native_parity_unit.py`) — compare the native decoders against the Python reference on generated rows: appliance-shaped, mutated, and out-of-spec widths. No database required.
-
-```shell
-pytest tests/test_native_parity_unit.py -v
-```
-
-**Integration tests** (`tests/test_native_parity_integration.py`) — run real SQL queries through both code paths and verify results match. Requires a database.
-
-```shell
-pytest tests/test_native_parity_integration.py -v
-```
-
-**Verification script** — runs the decoder tests against the selected native module and in pure-Python mode:
-
-```shell
+python -m pip install -e ".[test,lint]"
+pytest tests -m unit -v --strict-config
+NZPY_EXTENDED_NO_NATIVE=1 pytest tests -m unit -v --strict-config
+mypy nzpy_extended
+pyright nzpy_extended
 python tools/verify_native_parity.py
 ```
 
-**Disabling the native decoder at runtime:**
-
-Set the environment variable `NZPY_EXTENDED_NO_NATIVE=1` to force pure-Python mode even when the native module is installed. Useful for debugging or verifying fallback correctness.
-
-```shell
-NZPY_EXTENDED_NO_NATIVE=1 python -c "from nzpy_extended import _native; print(_native._HAVE_NATIVE)"  # False
-```
-
-If the native module cannot be imported, the driver emits a `RuntimeWarning` and
-falls back to pure Python, which is much slower. Setting `NZPY_EXTENDED_NO_NATIVE=1`
-chooses pure Python deliberately and silences that warning. The older name
-`NZPY_EXTENDED_NO_CEXT` was removed in 0.9.
-
-## Reproducing benchmark results
-
-The per-type benchmark table above is generated by [`tools/examples/performance_test.py`](tools/examples/performance_test.py). The raw results from both machines, the native-vs-Python comparison and the `load_data` timings (via [`tools/examples/benchmark_load_data.py`](tools/examples/benchmark_load_data.py)) are in [docs/benchmarks.md](docs/benchmarks.md).
-
-To compare the native and pure-Python decoders on your own appliance, run the live
-interleaved benchmark. It creates a uniquely named table, drops it afterwards, and
-should only be run against a disposable database:
+Live integration profiles require a disposable Netezza database and the
+`NZ_DEV_HOST`, `NZ_DEV_PORT`, `NZ_DEV_DATABASE`, `NZ_DEV_USER`, and
+`NZ_DEV_PASSWORD` environment variables. `NZ_DEV_DB` is accepted as a legacy
+alternative to `NZ_DEV_DATABASE`. Run the profiles with:
 
 ```shell
-python tools/examples/benchmark_native_vs_python.py --doublings 9 --rounds 5 --output native_vs_python.json
+pytest tests -m smoke -v
+pytest tests -m full -v
 ```
 
-### Prerequisites
+Do not run live tests against a production database. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for the development workflow and Rust
+checks.
 
-- A running Netezza instance with a table named `JUST_DATA..FACTPRODUCTINVENTORY` (or adjust `SOURCE_TABLE` in the script)
-- Python ≥ 3.11
-- Install the required packages:
+## Upgrading
 
-```shell
-pip install nzpy_extended
-```
+Version 0.9.0 includes behavior changes that may affect applications: server
+errors now use more specific DB-API exception classes, binary and geometry
+values are returned as `bytes`, invalid parameter counts and NUL characters
+raise errors, and fetching discarded cursor results raises `InterfaceError`.
+It also changes logging defaults and tightens validation of paths used by the
+external-table protocol.
 
-The official IBM driver is also tested for comparison (`pip install nzpy`).
-
-Optional (for ODBC comparison):
-- `pip install pyodbc` — with `NetezzaSQL` ODBC driver installed (rows labeled `pyodbc`)
-- Set `NZ_ODBC_DRIVER` if your ODBC driver uses a different name (default: `NetezzaSQL`). On Linux/WSL2 the name is defined in `/etc/odbcinst.ini`, e.g.:
-  ```shell
-  export NZ_ODBC_DRIVER=NetezzaSQL  # Linux/WSL2
-  ```
-- **Linux/WSL2**: pyodbc's Unicode API is incompatible with the Netezza ODBC driver. The benchmark auto-detects this and falls back to a ctypes-based ANSI-ODBC wrapper. No additional configuration needed.
-
-### Steps
-
-1. **Set connection environment variables:**
-
-```shell
-set NZ_HOST=your_netezza_host     # Windows
-set NZ_PORT=5480
-set NZ_USER=admin
-set NZ_PASSWORD=password
-set NZ_DATABASE=JUST_DATA
-
-# or on Linux/macOS:
-export NZ_HOST=your_netezza_host
-export NZ_PORT=5480
-export NZ_USER=admin
-export NZ_PASSWORD=password
-export NZ_DATABASE=JUST_DATA
-```
-
-The script has no host, user or password defaults. Set `NZ_DEV_HOST`, `NZ_DEV_PORT`, `NZ_DEV_USER`, `NZ_DEV_PASSWORD` and `NZ_DEV_DATABASE` (the legacy `NZ_*` names are accepted as fallbacks). It exits with the list of missing settings otherwise.
-
-ODBC driver name can be set separately:
-```shell
-export NZ_ODBC_DRIVER=NetezzaSQL  # Linux/macOS — defaults to "NetezzaSQL"
-```
-
-2. **Run the benchmark:**
-
-```shell
-python tools/examples/performance_test.py
-```
-
-3. **Adjust row count** (default: 100 000):
-
-```shell
-set NZ_ROWS=100000     # Windows
-export NZ_ROWS=100000  # Linux/macOS
-```
-
-### What the script does
-
-1. Connects using each driver: `official_nzpy` (always), `pyodbc` (via ANSI-ODBC ctypes fallback on Linux), `nzpy_extended` (async + sync, with and without native extension).
-2. Runs six query categories: `integer_types`, `numeric_types`, `string_types`, `datetime_types`, `boolean_types`, and `all_types` (mixed).
-3. Prints per-query timing, a compact DRIVER × TYPE comparison table (matching the README layout), and visual bar charts.
-
-### Saving results to a TXT file
-
-Use the `--output` / `-o` flag or the `NZ_OUTPUT` environment variable:
-
-```shell
-python tools/examples/performance_test.py -o benchmark_results.txt
-
-# or via env var:
-set NZ_OUTPUT=benchmark_results.txt
-python tools/examples/performance_test.py
-```
-
-### Force pure-Python mode
-
-```shell
-set NZPY_EXTENDED_NO_NATIVE=1
-python tools/examples/performance_test.py
-```
-
-### Pytest benchmark (alternative)
-
-A simpler pytest-based benchmark is also available (10 k rows, nzpy_extended only):
-
-```shell
-pytest tests/test_benchmark.py -v -m benchmark
-```
+Review the [changelog](CHANGELOG.md), especially the 0.9.0 entry, before
+upgrading from an earlier release. Version 0.9.1 changes packaging and release
+automation, not driver behavior.
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE).
+Apache License 2.0. See [LICENSE](LICENSE).

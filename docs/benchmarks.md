@@ -1,6 +1,6 @@
 # Benchmarks
 
-Measured on 2026-10-31 with nzpy_extended 0.8.0 at commit `bd9c406`, against the same Netezza appliance (192.168.0.144:5480, database `JUST_DATA`), from two machines:
+Measured on 2026-10-31 with nzpy_extended 0.8.0 at commit `bd9c406`, against the same Netezza appliance from two machines:
 
 - **Mac mini** (Apple M4), over the local network;
 - **WSL2** (Linux x86_64 on an AMD Ryzen 7 7840HS).
