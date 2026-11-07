@@ -155,7 +155,7 @@ jobs:
         run: mypy nzpy_extended
 
       - name: pyright
-        run: pyright nzpy_extended
+        run: pyright --pythonpath "$(python -c 'import sys; print(sys.executable)')" nzpy_extended
 
   import-smoke:
     name: Build and import smoke

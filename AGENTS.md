@@ -17,7 +17,7 @@ python -m pip install -e ".[test,lint]"
 pytest tests -m unit -v --strict-config --cov=nzpy_extended --cov-branch
 NZPY_EXTENDED_NO_NATIVE=1 pytest tests -m unit -v --strict-config
 mypy nzpy_extended
-pyright nzpy_extended
+pyright --pythonpath "$(python -c 'import sys; print(sys.executable)')" nzpy_extended
 python tools/verify_native_parity.py
 cd rust && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --lib
 cd rust && cargo +nightly fuzz run fuzz_layout -- -max_total_time=60

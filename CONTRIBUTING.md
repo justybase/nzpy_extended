@@ -86,7 +86,7 @@ Type checks:
 
 ```shell
 mypy nzpy_extended
-pyright nzpy_extended
+pyright --pythonpath "$(python -c 'import sys; print(sys.executable)')" nzpy_extended
 ```
 
 Native/Python parity shortcut:
