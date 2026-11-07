@@ -2,6 +2,31 @@
 
 All notable changes to `nzpy_extended` are documented in this file.
 
+## 0.9.1 - 2026-11-07
+
+This release changes packaging and the release process only. The driver code is
+unchanged.
+
+### Added
+
+- Linux aarch64 wheels (manylinux and musllinux), so `pip install` on ARM64 Linux
+  no longer needs a Rust toolchain.
+
+### Changed
+
+- Project URLs point to `justybase/nzpy_extended`, and the documentation link points
+  to `docs/` in the repository. The README no longer links to a wiki.
+- Publishing now runs only for `v*` tags. A manual run of the workflow builds and
+  verifies the distributions without publishing, unless `publish` is set on a tag.
+- Creating a GitHub Release no longer triggers publishing. The workflow creates the
+  release itself after publishing, with the notes from this file.
+- Every wheel must load its native decoder in a test install before it is published.
+
+### Tests
+
+- A regression test for a cargo-fuzz out-of-memory input: the varying-field count in
+  a row header must not drive an allocation.
+
 ## 0.9.0 - 2026-11-03
 
 This release fixes driver-semantics defects found in an audit and reproduced on a
