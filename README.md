@@ -475,8 +475,10 @@ asyncio.run(main())
 
 #### CI (GitHub Actions)
 
-CI now discovers all `unit` tests, measures branch coverage and runs native and
-pure-Python variants on Python 3.11–3.15 across Linux, macOS and Windows.
+CI discovers all `unit` tests and measures branch coverage. Each push and pull
+request tests Python 3.11–3.15 on Linux, Python 3.11 and 3.15 on macOS and Windows,
+and pure Python on Linux. A weekly run covers every combination of Python, system
+and decoder; start it by hand with the `full_matrix` input of the Test workflow.
 Publishing depends on this quality workflow. Published wheels are built once per
 platform with the stable ABI. Wheel/sdist import checks run outside the source tree.
 Use `NZ_DEV_DATABASE` (preferred) or `NZ_DEV_DB` for live tests; the preferred

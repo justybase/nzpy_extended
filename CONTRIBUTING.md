@@ -23,8 +23,9 @@ NZPY_EXTENDED_NO_NATIVE=1 pytest tests -m unit --strict-config
 
 Install `.[test]` first; this includes the timeout and coverage plugins. The unit
 job asserts that the native extension (`rust_ext`) is loaded unless
-`NZPY_EXTENDED_NO_NATIVE=1` is set. CI runs both implementations on Python
-3.11–3.15 and Linux, macOS and Windows.
+`NZPY_EXTENDED_NO_NATIVE=1` is set. Each push runs a reduced set of combinations;
+a weekly run covers both implementations on Python 3.11–3.15 and Linux, macOS and
+Windows.
 
 ### Rust crate
 

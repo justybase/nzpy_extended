@@ -8,21 +8,55 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "0 4 * * 1"
   workflow_dispatch:
+    inputs:
+      full_matrix:
+        description: "Run every Python, OS and decoder combination"
+        type: boolean
+        default: false
   workflow_call:
 
 jobs:
+  # The usual run covers each Python on Linux, the oldest and newest Python on the
+  # other systems, and pure Python once. The weekly run covers every combination.
+  unit-matrix:
+    name: Select unit test matrix
+    runs-on: ubuntu-latest
+    outputs:
+      include: ${{ steps.select.outputs.include }}
+    steps:
+      - id: select
+        env:
+          FULL: ${{ github.event_name == 'schedule' || inputs.full_matrix == true }}
+        shell: python
+        run: |
+          import json
+          import os
+
+          versions = ["3.11", "3.12", "3.13", "3.14", "3.15"]
+          systems = ["ubuntu-latest", "windows-latest", "macos-latest"]
+          if os.environ["FULL"] == "true":
+              combos = [(v, s, m) for v in versions for s in systems for m in ("0", "1")]
+          else:
+              combos = [(v, "ubuntu-latest", "0") for v in versions]
+              combos.append(("3.11", "ubuntu-latest", "1"))
+              combos += [(v, s, "0") for v in ("3.11", "3.15") for s in systems[1:]]
+          include = [{"python-version": v, "os": s, "no-native": m} for v, s, m in combos]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"include={json.dumps(include)}\n")
+
   unit:
-    name: Unit tests (Python ${{ matrix.python-version }})
+    name: Unit tests (Python ${{ matrix.python-version }}, ${{ matrix.os }}, ${{ matrix.no-native == '1' && 'pure Python' || 'native' }})
+    needs: unit-matrix
     runs-on: ${{ matrix.os }}
     env:
       NZPY_EXTENDED_NO_NATIVE: ${{ matrix.no-native }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        no-native: ["0", "1"]
+        include: ${{ fromJSON(needs.unit-matrix.outputs.include) }}
     steps:
       - uses: actions/checkout@v4
 
