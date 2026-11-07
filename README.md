@@ -6,9 +6,9 @@
 
 | Feature | nzpy (IBM) | nzpy_extended |
 |---|---|---|
-| Row parsing performance (mixed types, macOS; C decoder 0.7.x) | ~10 000 rows/s | ~63 000 rows/s (no native ext) → **~93 000 rows/s** (+ native ext) |
+| Row parsing performance (mixed types, Apple M4; Rust decoder 0.8.0) | ~11 000 rows/s | ~47 000 rows/s (no native ext) → **~90 000 rows/s** (+ native ext) |
 | Supported Python | 3.11+ | **3.11, 3.12, 3.13, 3.14, 3.15** |
-| Platform wheels | ❌ None | ✅ Linux x64, macOS ARM, Windows x64 (pre-built) |
+| Platform wheels | ❌ None | ✅ Linux x64/ARM64, macOS, Windows x64/ARM64 (pre-built) |
 | Async support | ❌ | ✅ Fully async API |
 | Streaming bulk loading | ❌ | ✅ `load_data()` accepts sync and async iterables; `load_csv()` streams local CSV files |
 | Sync API (DB-API 2.0) | ✅ | ✅ Full feature parity with async |
@@ -56,7 +56,7 @@ Measured with nzpy_extended 0.8.0 (Rust decoder) on 2026-10-31 using `tools/exam
 | BOOLEAN | ~54 k rows/s | ~282 k rows/s | **~874 k rows/s** |
 | Mixed | ~11 k rows/s | ~47 k rows/s | **~90 k rows/s** |
 
-If the compiled extension is not available (unsupported platform or Python version), the driver **gracefully falls back** to pure Python with identical semantics.
+If the compiled extension cannot be loaded, the driver **gracefully falls back** to pure Python with identical semantics. Installing on a platform without a wheel still needs Rust; see [Installation](#installation).
 
 ## Installation
 
@@ -71,8 +71,8 @@ platform installs on Python 3.11 and newer:
 
 | Platform | Architecture | Python |
 |---|---|---|
-| Linux | x86_64 (manylinux) | 3.11+ |
-| macOS | universal2 (arm64 + x86_64) | 3.11+ |
+| Linux | x86_64, aarch64 (manylinux, musllinux) | 3.11+ |
+| macOS | arm64, universal2 (arm64 + x86_64) | 3.11+ |
 | Windows | x86_64, ARM64 | 3.11+ |
 
 Free-threaded CPython builds (`3.13t`/`3.14t`) are not covered by these wheels.
@@ -462,8 +462,7 @@ asyncio.run(main())
   - [`pool.md`](docs/pool.md) — Connection pool documentation
   - [`load_data.md`](docs/load_data.md) — Bulk data loading
   - [`metadata_api.md`](docs/metadata_api.md) — Catalog introspection API
-- [GitHub Wiki](https://github.com/KrzysztofDusko/nzpy_extended/wiki)
-- [Issue tracker](https://github.com/KrzysztofDusko/nzpy_extended/issues)
+- [Issue tracker](https://github.com/justybase/nzpy_extended/issues)
 
 ## Requirements
 
@@ -481,7 +480,7 @@ pure-Python variants on Python 3.11–3.15 across Linux, macOS and Windows.
 Publishing depends on this quality workflow. Published wheels are built once per
 platform with the stable ABI. Wheel/sdist import checks run outside the source tree.
 Use `NZ_DEV_DATABASE` (preferred) or `NZ_DEV_DB` for live tests; the preferred
-name wins when both are set. See `CHANGELOG.md` for unreleased compatibility fixes.
+name wins when both are set.
 
 Pull requests run **without a live Netezza database**:
 
@@ -533,6 +532,21 @@ pytest tests/test_paramstyle.py tests/test_typeobjects.py tests/test_regressions
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for marker profiles (`smoke`, `full`, `unit`, `benchmark`).
+
+### Upgrading to 0.9
+
+0.9.0 changes behaviour that applications may rely on:
+
+- Server errors raise the matching DB-API class (`DataError`, `IntegrityError`, `OperationalError` or `ProgrammingError`), and `str(error)` is the message. Code that expected `ProgrammingError` for every server error, or parsed its text, must change.
+- VARBINARY and ST_GEOMETRY values are `bytes`.
+- A wrong number of parameters raises `ProgrammingError`. A NUL character raises `DataError` in a text parameter and `ProgrammingError` in the query text.
+- Fetching from a cursor whose rows were discarded raises `InterfaceError`.
+- Statements in an aborted transaction raise `InternalError`.
+- `logLevel` defaults to `None`, so connections no longer force DEBUG logging.
+- External-table file requests from the server are honoured only for paths named in the running statement.
+- `NZPY_EXTENDED_NO_CEXT` was removed. Use `NZPY_EXTENDED_NO_NATIVE`.
+
+See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ### Upgrading to 0.4.0
 

@@ -5,7 +5,7 @@ Thank you for contributing. This document covers local development, testing, and
 ## Setup
 
 ```shell
-git clone https://github.com/KrzysztofDusko/nzpy_extended.git
+git clone https://github.com/justybase/nzpy_extended.git
 cd nzpy_extended
 python -m pip install -e ".[test,lint]"
 ```
@@ -151,3 +151,7 @@ Releases are tagged `vX.Y.Z` and published via `.github/workflows/publish.yaml`
 (cibuildwheel driving the maturin build backend, with a Rust toolchain installed on
 each platform, then PyPI OIDC). The version is read from `rust/Cargo.toml`, so bump
 it there together with the tag. Source distributions need a Rust toolchain to install.
+
+The tag publishes to PyPI and then creates the GitHub Release from the matching
+`CHANGELOG.md` section (`## X.Y.Z - date`), so add that section before tagging. To
+test the builds without publishing, run the workflow manually with `publish` off.

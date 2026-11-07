@@ -34,9 +34,10 @@ dependencies = [
 keywords = ["Netezza", "nps", "db-api", "dbapi", "driver", "async", "ibm-netezza", "postgresql", "extended"]
 
 [project.urls]
-Documentation = "https://github.com/KrzysztofDusko/nzpy_extended/wiki"
-Source = "https://github.com/KrzysztofDusko/nzpy_extended"
-Tracker = "https://github.com/KrzysztofDusko/nzpy_extended/issues"
+Documentation = "https://github.com/justybase/nzpy_extended/tree/main/docs"
+Source = "https://github.com/justybase/nzpy_extended"
+Tracker = "https://github.com/justybase/nzpy_extended/issues"
+Changelog = "https://github.com/justybase/nzpy_extended/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 test = [
@@ -89,6 +90,3 @@ reportPossiblyUnboundVariable = false
 reportGeneralTypeIssues = "error"
 reportAttributeAccessIssue = "error"
 reportUndefinedVariable = "error"
-
-[tool.setuptools.package-data]
-nzpy_extended = ["py.typed"]
