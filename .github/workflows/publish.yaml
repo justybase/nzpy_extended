@@ -1,11 +1,18 @@
 name: Publish to PyPI
 
+# A pushed vX.Y.Z tag publishes to PyPI, then creates the GitHub Release.
+# A manual run only builds and verifies, unless `publish` is set on a tag.
+# Do not add a `release` trigger: creating a release would publish a second time.
+
 on:
   push:
-    tags: ["*"]
-  release:
-    types: [published]
+    tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish to PyPI (only takes effect when run on a vX.Y.Z tag)"
+        type: boolean
+        default: false
 
 jobs:
   quality:
@@ -20,6 +27,10 @@ jobs:
           - os: ubuntu-latest
             archs: x86_64
             rust_targets: x86_64-unknown-linux-gnu
+          # Built natively, so cibuildwheel can test the manylinux and musllinux wheels.
+          - os: ubuntu-24.04-arm
+            archs: aarch64
+            rust_targets: aarch64-unknown-linux-gnu
           - os: macos-latest
             archs: arm64 universal2
             rust_targets: aarch64-apple-darwin x86_64-apple-darwin
@@ -58,6 +69,8 @@ jobs:
           # Rust's x86_64 macOS target needs 10.12; delocate rejects a wheel
           # tagged lower than the binary it contains (arm64 is 11.0 anyway).
           CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=10.12
+          # A wheel that cannot load its native decoder must not be published.
+          CIBW_TEST_COMMAND: python -c "from nzpy_extended import _native; assert _native._native_ext is not None"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -86,24 +99,15 @@ jobs:
           name: wheels-sdist
           path: dist/*.tar.gz
 
-  publish:
-    name: Publish to PyPI
-    needs: [quality, build-wheels, build-sdist]
+  verify-sdist:
+    name: Verify source distribution
+    needs: build-sdist
     runs-on: ubuntu-latest
-    environment: release
-    permissions:
-      id-token: write
-      contents: read
-
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: wheels-*
-          merge-multiple: true
+          name: wheels-sdist
           path: dist/
-
-      - name: List distributions
-        run: ls -la dist/
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -122,4 +126,59 @@ jobs:
           assert _native._native_ext is not None and _native._native_ext.__name__ == 'nzpy_extended.rust_ext', _native._native_ext
           "
 
+  publish:
+    name: Publish to PyPI
+    needs: [quality, build-wheels, verify-sdist]
+    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || inputs.publish)
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist/
+
+      - name: List distributions
+        run: ls -la dist/
+
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    name: Create GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist/
+
+      - name: Create the release from the changelog section of this version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v heading="## $VERSION" '
+            /^## / {
+              if (found) exit
+              if ($0 == heading || index($0, heading " ") == 1) { found = 1; next }
+            }
+            found
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "CHANGELOG.md has no section for $VERSION" >&2
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag \
+            --title "$VERSION" --notes-file release-notes.md
