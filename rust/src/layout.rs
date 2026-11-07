@@ -222,6 +222,28 @@ mod tests {
     }
 
     #[test]
+    fn varying_count_from_the_header_does_not_drive_allocation() {
+        // Decoded from a cargo-fuzz OOM input: ~688M entries claimed by a 3-byte row.
+        let row = [0x91u8, 0x91, 0x5d];
+        let shape = RowShape {
+            num_fields: 0,
+            nulls_allowed: false,
+            fixed_fields_size: 0x60ff_00ff,
+            num_varying: 0x2902_280a,
+        };
+        let err = resolve_starts(&shape, &[], &row).unwrap_err();
+        assert_eq!(err.0, "varying field length is truncated");
+
+        // An unbounded capacity would panic here with "capacity overflow".
+        let shape = RowShape {
+            num_varying: i64::MAX,
+            ..shape
+        };
+        let err = resolve_starts(&shape, &[], &row).unwrap_err();
+        assert_eq!(err.0, "varying field length is truncated");
+    }
+
+    #[test]
     fn truncated_bitmap_is_a_layout_fault() {
         let shape = RowShape {
             num_fields: 9,
