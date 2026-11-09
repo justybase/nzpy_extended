@@ -225,7 +225,6 @@ class Cursor:
         await self.execute(sql)
         return None
 
-    @_guarded
     async def fetchone(self) -> Any:
         try:
             return await self.__anext__()
@@ -324,20 +323,32 @@ class Cursor:
     def setoutputsize(self, size: Any, column: Any = None) -> None:
         pass
 
-    @_guarded
     async def __anext__(self) -> Any:
+        # Rows already decoded into the cache never touch the wire, so the common
+        # path skips the connection guard and the per-row timeout wrapper. Taking
+        # the guard on every cached row dominated the fetch time for wide results.
+        cached = self.cached_rows
+        if cached:
+            self._ensure_open()
+            self._ensure_results()
+            row = cached.popleft()
+            self._rownumber += 1
+            return row
+
         self._ensure_open()
         self._ensure_results()
-        if getattr(self, '_timeout', None) is not None and self._timeout and self._timeout > 0:
-            try:
-                row = await asyncio.wait_for(self._anext_internal(), timeout=self._timeout)
-            except asyncio.TimeoutError:
-                if self._c is not None:
+        if self._c is None:
+            raise InterfaceError("Cursor is closed")
+        with self._c._operation():
+            if getattr(self, '_timeout', None) is not None and self._timeout and self._timeout > 0:
+                try:
+                    row = await asyncio.wait_for(self._anext_internal(), timeout=self._timeout)
+                except asyncio.TimeoutError:
                     await self._c.cancel(exec_gen=getattr(self, '_exec_gen', None))
                     await self._c._retire_if_desynced()
-                raise OperationalError("Command fetch timeout")
-        else:
-            row = await self._anext_internal()
+                    raise OperationalError("Command fetch timeout")
+            else:
+                row = await self._anext_internal()
         self._rownumber += 1
         return row
 
