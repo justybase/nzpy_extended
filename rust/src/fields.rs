@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::ffi::CStr;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use pyo3::exceptions::PyValueError;
@@ -92,6 +93,146 @@ impl Codecs {
             char_enc: to_c(char_enc)?,
             client_enc: to_c(client_enc)?,
         })
+    }
+}
+
+/// Decides whether a cell cache is paying off.
+///
+/// The first `probe_limit` lookups are counted. If fewer than 2% of them hit,
+/// the cache is disabled for the rest of the result set. High-cardinality
+/// columns otherwise pay lock/hash/insert cost on every cell for no reuse.
+/// The decision resets with every decoder, i.e. with every result set.
+struct CacheState {
+    enabled: AtomicBool,
+    lookups: AtomicUsize,
+    hits: AtomicUsize,
+    probe_limit: usize,
+}
+
+impl CacheState {
+    fn new(probe_limit: usize) -> Self {
+        Self {
+            enabled: AtomicBool::new(true),
+            lookups: AtomicUsize::new(0),
+            hits: AtomicUsize::new(0),
+            probe_limit,
+        }
+    }
+
+    fn use_cache(&self) -> bool {
+        self.enabled.load(Ordering::Relaxed)
+    }
+
+    fn record(&self, hit: bool) {
+        let lookups = self.lookups.fetch_add(1, Ordering::Relaxed) + 1;
+        if hit {
+            self.hits.fetch_add(1, Ordering::Relaxed);
+        }
+        if lookups == self.probe_limit {
+            let hits = self.hits.load(Ordering::Relaxed);
+            if hits * 50 < lookups {
+                self.enabled.store(false, Ordering::Relaxed);
+            }
+        }
+    }
+}
+
+/// Bounded memoization for immutable values that repeat across rows.
+///
+/// `NUMERIC` decoding formats text and calls `Decimal` per cell, which is the
+/// most expensive field type. Fact tables commonly repeat prices, and dates
+/// repeat even more, so returning the same immutable object for an identical
+/// value is safe and skips the constructor. The caps bound memory for results
+/// with high cardinality; the probe turns the cache off entirely when there is
+/// nothing to reuse.
+pub struct DecodeCache {
+    numerics: Mutex<HashMap<(i128, i64), Py<PyAny>>>,
+    timestamps: Mutex<HashMap<i64, Py<PyAny>>>,
+    numeric_state: CacheState,
+    timestamp_state: CacheState,
+}
+
+const NUMERIC_CACHE_LIMIT: usize = 131_072;
+const TIMESTAMP_CACHE_LIMIT: usize = 8_192;
+
+impl Default for DecodeCache {
+    fn default() -> Self {
+        Self {
+            numerics: Mutex::new(HashMap::new()),
+            timestamps: Mutex::new(HashMap::new()),
+            numeric_state: CacheState::new(32_768),
+            timestamp_state: CacheState::new(8_192),
+        }
+    }
+}
+
+impl DecodeCache {
+    fn decimal<'py>(
+        &self,
+        py: Python<'py>,
+        coefficient: i128,
+        scale: i64,
+        text: &str,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let use_cache = self.numeric_state.use_cache();
+        if use_cache {
+            if let Ok(cache) = self.numerics.lock() {
+                if let Some(value) = cache.get(&(coefficient, scale)) {
+                    let result = value.bind(py).clone();
+                    drop(cache);
+                    self.numeric_state.record(true);
+                    return Ok(result);
+                }
+            }
+        }
+        let value = pycache::decimal(py)?.call1((text,))?;
+        if use_cache {
+            if let Ok(mut cache) = self.numerics.lock() {
+                if cache.len() < NUMERIC_CACHE_LIMIT {
+                    cache.insert((coefficient, scale), value.clone().unbind());
+                }
+            }
+            self.numeric_state.record(false);
+        }
+        Ok(value)
+    }
+
+    fn timestamp<'py>(&self, py: Python<'py>, micros: i64) -> PyResult<Bound<'py, PyAny>> {
+        let use_cache = self.timestamp_state.use_cache();
+        if use_cache {
+            if let Ok(cache) = self.timestamps.lock() {
+                if let Some(value) = cache.get(&micros) {
+                    let result = value.bind(py).clone();
+                    drop(cache);
+                    self.timestamp_state.record(true);
+                    return Ok(result);
+                }
+            }
+        }
+        let value = match temporal::timestamp_parts(micros) {
+            None => py.None().into_bound(py),
+            Some((y, m, d, h, mi, s, us)) => datetime_capi::datetime(
+                py,
+                to_i32(y)?,
+                to_u8(m, "month")?,
+                to_u8(d, "day")?,
+                to_u8(h as i128, "hour")?,
+                to_u8(mi as i128, "minute")?,
+                to_u8(s as i128, "second")?,
+                us as u32,
+            )?,
+        };
+        if use_cache {
+            if !value.is_none() {
+                if let Ok(mut cache) = self.timestamps.lock() {
+                    if cache.len() < TIMESTAMP_CACHE_LIMIT {
+                        cache.insert(micros, value.clone().unbind());
+                    }
+                }
+            }
+            self.timestamp_state.record(false);
+        }
+        Ok(value)
     }
 }
 
@@ -199,6 +340,7 @@ pub fn decode_field<'py>(
     row: &[u8],
     off: usize,
     codecs: &Codecs,
+    cache: Option<&DecodeCache>,
 ) -> PyResult<Bound<'py, PyAny>> {
     let ftype = if f.ftype == t::UNKNOWN {
         t::VARCHAR
@@ -283,26 +425,37 @@ pub fn decode_field<'py>(
                 )));
             }
             let micros = i64::from_le_bytes(p[..8].try_into().unwrap());
-            match temporal::timestamp_parts(micros) {
-                None => Ok(py.None().into_bound(py)),
-                Some((y, m, d, h, mi, s, us)) => datetime_capi::datetime(
-                    py,
-                    to_i32(y)?,
-                    to_u8(m, "month")?,
-                    to_u8(d, "day")?,
-                    to_u8(h as i128, "hour")?,
-                    to_u8(mi as i128, "minute")?,
-                    to_u8(s as i128, "second")?,
-                    us as u32,
-                ),
+            match cache {
+                Some(cache) => cache.timestamp(py, micros),
+                None => match temporal::timestamp_parts(micros) {
+                    None => Ok(py.None().into_bound(py)),
+                    Some((y, m, d, h, mi, s, us)) => datetime_capi::datetime(
+                        py,
+                        to_i32(y)?,
+                        to_u8(m, "month")?,
+                        to_u8(d, "day")?,
+                        to_u8(h as i128, "hour")?,
+                        to_u8(mi as i128, "minute")?,
+                        to_u8(s as i128, "second")?,
+                        us as u32,
+                    ),
+                },
             }
         }
         t::NUMERIC => {
             let count = (f.true_size / 4) as usize;
             let scale = f.size & 0xFF;
             let coeff = numeric::coefficient(&p[..count * 4], count);
-            let text = numeric::decimal_text(coeff, scale);
-            pycache::decimal(py)?.call1((text,))
+            // Format into a stack buffer: an owned String per cell was a
+            // measurable part of the NUMERIC cost.
+            let mut buf = [0u8; numeric::DECIMAL_TEXT_CAPACITY];
+            let len = numeric::decimal_text_into(coeff, scale, &mut buf);
+            // SAFETY: decimal_text_into writes only ASCII digits, '-', 'E'.
+            let text = unsafe { std::str::from_utf8_unchecked(&buf[..len]) };
+            match cache {
+                Some(cache) => cache.decimal(py, coeff, scale, text),
+                None => pycache::decimal(py)?.call1((text,)),
+            }
         }
         t::BOOL => Ok(PyBool::new(py, p[0] == 1).to_owned().into_any()),
         t::INTERVAL => {
@@ -346,5 +499,24 @@ mod tests {
         assert_eq!(classify("utf-16"), TextKind::Other);
         assert_eq!(classify("cp037"), TextKind::Other);
         assert_eq!(classify("shift_jis"), TextKind::Other);
+    }
+
+    #[test]
+    fn cache_disables_after_a_probe_with_no_hits() {
+        let state = CacheState::new(4);
+        for _ in 0..4 {
+            state.record(false);
+        }
+        assert!(!state.use_cache());
+    }
+
+    #[test]
+    fn cache_stays_enabled_when_values_repeat() {
+        let state = CacheState::new(4);
+        state.record(false);
+        state.record(true);
+        state.record(true);
+        state.record(true);
+        assert!(state.use_cache());
     }
 }

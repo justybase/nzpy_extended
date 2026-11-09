@@ -25,7 +25,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList, PyTuple};
 use std::borrow::Cow;
 
-use fields::Codecs;
+use fields::{Codecs, DecodeCache};
 use layout::{FieldMeta, LayoutError, RowShape};
 
 fn layout_error(e: LayoutError) -> PyErr {
@@ -127,13 +127,18 @@ fn with_column(py: Python<'_>, err: PyErr, index: usize) -> PyErr {
 }
 
 /// Decode one row payload into a Python list.
-fn decode_row<'py>(py: Python<'py>, meta: &Metadata, row: &[u8]) -> PyResult<Bound<'py, PyList>> {
+fn decode_row<'py>(
+    py: Python<'py>,
+    meta: &Metadata,
+    row: &[u8],
+    cache: Option<&DecodeCache>,
+) -> PyResult<Bound<'py, PyList>> {
     let starts = layout::resolve_starts(&meta.shape, &meta.fields, row).map_err(layout_error)?;
     let out = PyList::empty(py);
     for (index, (field, start)) in meta.fields.iter().zip(starts).enumerate() {
         let value = match start {
             None => py.None().into_bound(py),
-            Some(off) => fields::decode_field(py, field, row, off, &meta.codecs)
+            Some(off) => fields::decode_field(py, field, row, off, &meta.codecs, cache)
                 .map_err(|e| with_column(py, e, index))?,
         };
         out.append(value)?;
@@ -176,16 +181,21 @@ fn process_dbos_row<'py>(
         client_enc,
     )?;
     let data = payload_bytes(buf)?;
-    decode_row(py, &meta, &data)
+    decode_row(py, &meta, &data, None)
 }
 
 /// Decode consecutive `Y` frames. Returns `(rows, consumed_bytes)`. A partial
 /// trailing frame, or a non-`Y` message, stops the scan and stays unconsumed.
-fn batch_rows<'py>(py: Python<'py>, meta: &Metadata, data: &[u8]) -> PyResult<Bound<'py, PyTuple>> {
+fn batch_rows<'py>(
+    py: Python<'py>,
+    meta: &Metadata,
+    data: &[u8],
+    cache: Option<&DecodeCache>,
+) -> PyResult<Bound<'py, PyTuple>> {
     let rows = PyList::empty(py);
     let mut pos = 0usize;
     while let Some((start, len)) = frames::next_row_frame(data, pos) {
-        match decode_row(py, meta, &data[start..start + len]) {
+        match decode_row(py, meta, &data[start..start + len], cache) {
             Ok(row) => rows.append(row)?,
             // A layout fault retires the connection. Any other failure is a value
             // that does not decode: stop in front of this row and leave it
@@ -206,6 +216,7 @@ fn batch_rows<'py>(py: Python<'py>, meta: &Metadata, data: &[u8]) -> PyResult<Bo
 #[pyclass(module = "nzpy_extended.rust_ext")]
 struct DbosDecoder {
     meta: Metadata,
+    cache: DecodeCache,
 }
 
 #[pymethods]
@@ -243,13 +254,14 @@ impl DbosDecoder {
                 char_enc,
                 client_enc,
             )?,
+            cache: DecodeCache::default(),
         })
     }
 
     /// Decode one row payload into a Python list.
     fn row<'py>(&self, py: Python<'py>, buf: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyList>> {
         let data = payload_bytes(buf)?;
-        decode_row(py, &self.meta, &data)
+        decode_row(py, &self.meta, &data, Some(&self.cache))
     }
 
     /// Decode consecutive `Y` frames into `(rows, consumed_bytes)`.
@@ -259,7 +271,7 @@ impl DbosDecoder {
         buf: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyTuple>> {
         let data = payload_bytes(buf)?;
-        batch_rows(py, &self.meta, &data)
+        batch_rows(py, &self.meta, &data, Some(&self.cache))
     }
 }
 
@@ -299,7 +311,7 @@ fn process_dbos_batch<'py>(
         client_enc,
     )?;
     let data = payload_bytes(buf)?;
-    batch_rows(py, &meta, &data)
+    batch_rows(py, &meta, &data, None)
 }
 
 #[pymodule]
