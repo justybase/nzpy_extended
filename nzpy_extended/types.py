@@ -362,6 +362,29 @@ def bytea_recv(data: bytes, offset: int, length: int) -> bytes:
     return data[offset:offset + length]
 
 
+def varbinary_recv(data: bytes, offset: int, length: int) -> bytes:
+    """Decode a Netezza VARBINARY text cell.
+
+    The appliance renders VARBINARY as ``X'<hex>'`` in the text protocol.
+    ``\\x<hex>`` is accepted as well for compatibility with PostgreSQL
+    bytea text; anything else is returned as raw bytes so no data is lost.
+    """
+    raw = bytes(data[offset:offset + length])
+    text = raw.strip()
+    body: bytes | None = None
+    if len(text) >= 3 and text[0:1] in (b"X", b"x") and text[1:2] == b"'":
+        if text[-1:] == b"'":
+            body = text[2:-1]
+    elif text[:2].lower() == b"\\x":
+        body = text[2:]
+    if body is not None:
+        try:
+            return bytes.fromhex(body.decode("ascii"))
+        except (UnicodeDecodeError, ValueError):
+            return raw
+    return raw
+
+
 def uuid_send(v: object) -> bytes:
     from uuid import UUID
     if isinstance(v, UUID):

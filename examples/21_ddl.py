@@ -66,7 +66,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import nzpy_extended as nzpy
 
-NZ_HOST = os.environ.get("NZ_DEV_HOST", "192.168.0.144")
+NZ_HOST = os.environ.get("NZ_DEV_HOST", "127.0.0.1")
 NZ_PORT = int(os.environ.get("NZ_DEV_PORT", "5480"))
 # Preferred NZ_DEV_DATABASE wins; legacy NZ_DEV_DB stays as a fallback.
 NZ_DB = os.environ.get("NZ_DEV_DATABASE") or os.environ.get("NZ_DEV_DB", "JUST_DATA")

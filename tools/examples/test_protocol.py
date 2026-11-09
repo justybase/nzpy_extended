@@ -10,7 +10,7 @@ if root_dir not in sys.path:
 import nzpy_extended
 
 # Connection configuration
-HOST = os.getenv("NZ_HOST", "192.168.0.144")
+HOST = os.getenv("NZ_HOST", "127.0.0.1")
 PORT = int(os.getenv("NZ_PORT", "5480"))
 USER = os.getenv("NZ_USER", "admin")
 PASSWORD = os.getenv("NZ_PASSWORD", "password")

@@ -34,7 +34,7 @@ import nzpy_extended as nzpy
 
 pytestmark = pytest.mark.full
 
-NZ_HOST     = os.environ.get("NZ_DEV_HOST",     "192.168.0.144")
+NZ_HOST     = os.environ.get("NZ_DEV_HOST",     "127.0.0.1")
 NZ_PORT     = int(os.environ.get("NZ_DEV_PORT",  "5480"))
 NZ_DB       = os.environ.get("NZ_DEV_DB",        "JUST_DATA")
 NZ_USER     = os.environ.get("NZ_DEV_USER",      "admin")

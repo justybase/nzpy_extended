@@ -11,7 +11,7 @@ async def main():
         max_size=5,
         user="admin",
         password="password",
-        host="192.168.0.144",
+        host="127.0.0.1",
         port=5480,
         database="JUST_DATA",
     )

@@ -315,7 +315,7 @@ Tunables (environment variables):
 Connection uses the standard `NZ_DEV_*` variables (same as the driver tests):
 
 ```bash
-export NZ_DEV_HOST=192.168.0.144
+export NZ_DEV_HOST=127.0.0.1
 export NZ_DEV_PORT=5480
 export NZ_DEV_DATABASE=JUST_DATA
 export NZ_DEV_USER=admin

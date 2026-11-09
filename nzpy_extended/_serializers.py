@@ -52,6 +52,7 @@ from .types import (
     timestamptz_send_integer,
     uuid_recv,
     uuid_send,
+    varbinary_recv,
 )
 from .utils import (
     d_pack,
@@ -250,6 +251,8 @@ def build_pg_types(encoding: str) -> defaultdict[Any, Any]:
         1700: (FC_TEXT, _num_r),
         2275: (FC_BINARY, _text_r),
         2500: (FC_TEXT, int_in),
+        2568: (FC_TEXT, varbinary_recv),
+        2569: (FC_TEXT, varbinary_recv),
         2950: (FC_BINARY, uuid_recv),
         3802: (FC_TEXT, _json_r),
     }

@@ -13,7 +13,7 @@ def main():
     # Establish connection to the Netezza database
     conn = nzpy.connect(
         user="admin", password="password",
-        host="192.168.0.144", port=5480, database="JUST_DATA",
+        host="127.0.0.1", port=5480, database="JUST_DATA",
         securityLevel=0, logLevel=0
     )
 

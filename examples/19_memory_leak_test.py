@@ -50,7 +50,7 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 # ---------------------------------------------------------------------------
 # Connection defaults – mirrors conftest.py / existing examples
 # ---------------------------------------------------------------------------
-_NZ_HOST = os.environ.get("NZ_DEV_HOST", "192.168.0.144")
+_NZ_HOST = os.environ.get("NZ_DEV_HOST", "127.0.0.1")
 _NZ_PORT = int(os.environ.get("NZ_DEV_PORT", "5480"))
 _NZ_DB = os.environ.get("NZ_DEV_DB", "JUST_DATA")
 _NZ_USER = os.environ.get("NZ_DEV_USER", "admin")

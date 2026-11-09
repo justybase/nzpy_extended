@@ -14,7 +14,7 @@ pytestmark = pytest.mark.full
 CONN_KWARGS = dict(
     user=os.environ.get("NZ_DEV_USER", "admin"),
     password=os.environ.get("NZ_DEV_PASSWORD", "password"),
-    host=os.environ.get("NZ_DEV_HOST", "192.168.0.144"),
+    host=os.environ.get("NZ_DEV_HOST", "127.0.0.1"),
     port=int(os.environ.get("NZ_DEV_PORT", "5480")),
     database=os.environ.get("NZ_DEV_DB", "JUST_DATA"),
 )

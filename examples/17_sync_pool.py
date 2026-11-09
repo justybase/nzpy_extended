@@ -8,7 +8,7 @@ def main():
     pool = SyncPool(
         min_size=1, max_size=5,
         user="admin", password="password",
-        host="192.168.0.144", port=5480,
+        host="127.0.0.1", port=5480,
         database="JUST_DATA",
     )
 

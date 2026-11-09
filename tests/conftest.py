@@ -12,9 +12,19 @@ if os.environ.get("NZ_DEV_DATABASE"):
     os.environ["NZ_DEV_DB"] = os.environ["NZ_DEV_DATABASE"]
 
 
+_ALLOW_LAB_DEFAULTS = os.environ.get("NZ_DEV_ALLOW_LAB_DEFAULTS") == "1"
+
+
+def _setting(name: str, fallback: str) -> str | None:
+    value = os.environ.get(name)
+    if value:
+        return value
+    return fallback if _ALLOW_LAB_DEFAULTS else None
+
+
 def pytest_collection_modifyitems(items):
     configured = all(os.environ.get(key) for key in
-                     ("NZ_DEV_HOST", "NZ_DEV_USER", "NZ_DEV_PASSWORD", "NZ_DEV_DB"))
+                     ("NZ_DEV_HOST", "NZ_DEV_USER", "NZ_DEV_PASSWORD", "NZ_DEV_DB")) or _ALLOW_LAB_DEFAULTS
     if not configured:
         for item in items:
             if item.get_closest_marker("unit") is None:
@@ -24,11 +34,11 @@ def pytest_collection_modifyitems(items):
 # ---------------------------------------------------------------------------
 # Connection parameters — mirrors C# Config.cs exactly
 # ---------------------------------------------------------------------------
-NZ_HOST     = os.environ.get("NZ_DEV_HOST",     "192.168.0.144")
+NZ_HOST     = _setting("NZ_DEV_HOST",     "127.0.0.1") or "127.0.0.1"
 NZ_PORT     = int(os.environ.get("NZ_DEV_PORT",  "5480"))
-NZ_DB       = os.environ.get("NZ_DEV_DATABASE") or os.environ.get("NZ_DEV_DB", "JUST_DATA")
-NZ_USER     = os.environ.get("NZ_DEV_USER",      "admin")
-NZ_PASSWORD = os.environ.get("NZ_DEV_PASSWORD",  "password")
+NZ_DB       = _setting("NZ_DEV_DATABASE", None) or _setting("NZ_DEV_DB", "JUST_DATA")
+NZ_USER     = _setting("NZ_DEV_USER",      "admin")
+NZ_PASSWORD = _setting("NZ_DEV_PASSWORD",  "password")
 
 
 @pytest.fixture(scope="class")

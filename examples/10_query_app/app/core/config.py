@@ -16,7 +16,7 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class Settings:
-    nz_host: str = "192.168.0.144"
+    nz_host: str = "127.0.0.1"
     nz_port: int = 5480
     nz_database: str = "JUST_DATA"
     nz_user: str = "admin"
@@ -45,7 +45,7 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
-            nz_host=os.environ.get("NZ_DEV_HOST", "192.168.0.144"),
+            nz_host=os.environ.get("NZ_DEV_HOST", "127.0.0.1"),
             nz_port=int(os.environ.get("NZ_DEV_PORT", "5480")),
             nz_database=os.environ.get("NZ_DEV_DATABASE")
             or os.environ.get("NZ_DEV_DB", "JUST_DATA"),

@@ -194,6 +194,22 @@ and falls back to pure Python. Setting `NZPY_EXTENDED_NO_NATIVE=1` explicitly
 selects that fallback without the warning. The former
 `NZPY_EXTENDED_NO_CEXT` setting was removed in version 0.9.
 
+## Cross-driver conformance tests
+
+The shared corpus lives in `conformance/` at the workspace root and will move
+to `tests/conformance` as a submodule. It provisions its own `CONFORMANCE`
+schema on a live appliance and runs the same case corpus against Python, Node,
+C# and Rust.
+
+```powershell
+..\conformance\run-all.ps1 -Profile smoke -Bootstrap
+```
+
+The Python runner is `tools/conformance_runner.py`. It uses the async API and
+emits the canonical JSONL from `conformance/runner-contract.md`. Host and
+credentials come only from `NZ_DEV_HOST` and the other `NZ_DEV_*` variables;
+`tests/conftest.py` no longer contains a code password default.
+
 ## Testing and development
 
 Install the test and lint dependencies, then run the database-free unit tests:
