@@ -24,7 +24,9 @@ from nzpy_extended.types import DbosTupleDesc
 
 pytestmark = pytest.mark.unit
 
-ROWS = 20_000
+# Large enough to span several 5 ms loop-yield intervals even when the
+# repeated text column is served from the value cache.
+ROWS = 100_000
 
 
 def _descriptor() -> DbosTupleDesc:

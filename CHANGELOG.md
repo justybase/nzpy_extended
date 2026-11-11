@@ -2,6 +2,28 @@
 
 All notable changes to `nzpy_extended` are documented in this file.
 
+## 0.9.3 - 2026-11-11
+
+### Added
+
+- Per-column deduplication of immutable decoded values (`TEXT`/`CHAR`/`NCHAR`/
+  `VARCHAR`, `DATE`, `TIME`, `TIMETZ`, and the existing `NUMERIC`/`TIMESTAMP`
+  caches): repeated values return the same Python object in both the native
+  and pure-Python decoders. The cache is bounded per column and disables
+  itself on high-cardinality columns.
+
+### Changed
+
+- The native decoder stops updating probe counters after the 8192-lookup
+  decision, removing per-cell atomic work from the steady state.
+- The pure-Python decoder now also shares `DATE`, `TIME`, `TIMETZ` and
+  `NUMERIC` objects instead of allocating them per row.
+
+### Tests
+
+- Object-identity tests for both decoder modes and live checks on
+  `PERF.EVENTS_400K` and `ADMIN.FACTPRODUCTINVENTORY`.
+
 ## 0.9.2 - 2026-11-07
 
 ### Tests

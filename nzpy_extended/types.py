@@ -471,6 +471,7 @@ class DbosTupleDesc:
         self.EnableTime24: str | None = None
         # Built lazily by DbosParser; reset whenever the descriptor is refilled.
         self._native_decoder: Any = None
+        self._value_caches: list[Any] = []
 
 
 OID_BOOL: int = 16

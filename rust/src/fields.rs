@@ -124,6 +124,11 @@ impl CacheState {
     }
 
     fn record(&self, hit: bool) {
+        // After the probe the decision is fixed; stop paying atomic RMW per
+        // cell. `lookups`/`hits` are diagnostics only and are not exposed.
+        if self.lookups.load(Ordering::Relaxed) >= self.probe_limit {
+            return;
+        }
         let lookups = self.lookups.fetch_add(1, Ordering::Relaxed) + 1;
         if hit {
             self.hits.fetch_add(1, Ordering::Relaxed);
@@ -145,28 +150,44 @@ impl CacheState {
 /// value is safe and skips the constructor. The caps bound memory for results
 /// with high cardinality; the probe turns the cache off entirely when there is
 /// nothing to reuse.
+struct ColumnCache {
+    entries: HashMap<Vec<u8>, Py<PyAny>>,
+}
+
 pub struct DecodeCache {
     numerics: Mutex<HashMap<(i128, i64), Py<PyAny>>>,
     timestamps: Mutex<HashMap<i64, Py<PyAny>>>,
+    columns: Vec<Mutex<ColumnCache>>,
+    column_states: Vec<CacheState>,
     numeric_state: CacheState,
     timestamp_state: CacheState,
 }
 
 const NUMERIC_CACHE_LIMIT: usize = 131_072;
 const TIMESTAMP_CACHE_LIMIT: usize = 8_192;
+const COLUMN_CACHE_LIMIT: usize = 4_096;
+const COLUMN_MAX_KEY_BYTES: usize = 64;
+const COLUMN_PROBE_LOOKUPS: usize = 8_192;
 
-impl Default for DecodeCache {
-    fn default() -> Self {
+impl DecodeCache {
+    pub(crate) fn new(columns: usize) -> Self {
         Self {
             numerics: Mutex::new(HashMap::new()),
             timestamps: Mutex::new(HashMap::new()),
+            columns: (0..columns)
+                .map(|_| {
+                    Mutex::new(ColumnCache {
+                        entries: HashMap::new(),
+                    })
+                })
+                .collect(),
+            column_states: (0..columns)
+                .map(|_| CacheState::new(COLUMN_PROBE_LOOKUPS))
+                .collect(),
             numeric_state: CacheState::new(32_768),
             timestamp_state: CacheState::new(8_192),
         }
     }
-}
-
-impl DecodeCache {
     fn decimal<'py>(
         &self,
         py: Python<'py>,
@@ -193,6 +214,51 @@ impl DecodeCache {
                 }
             }
             self.numeric_state.record(false);
+        }
+        Ok(value)
+    }
+
+    /// Memoize one immutable cell by its exact wire bytes.
+    ///
+    /// Used for text, DATE, TIME and TIMETZ, where the decoded Python object
+    /// is immutable and repeated values are common (dimensions, status flags,
+    /// dates). The per-column map is bounded and disables itself when the
+    /// probe finds almost no repetition.
+    fn cached_bytes<'py, F>(
+        &self,
+        py: Python<'py>,
+        column: usize,
+        key: &[u8],
+        create: F,
+    ) -> PyResult<Bound<'py, PyAny>>
+    where
+        F: FnOnce() -> PyResult<Bound<'py, PyAny>>,
+    {
+        let state = &self.column_states[column];
+        if !state.use_cache() {
+            return create();
+        }
+        let cache = &self.columns[column];
+        let cacheable = key.len() <= COLUMN_MAX_KEY_BYTES;
+        if cacheable {
+            if let Ok(guard) = cache.lock() {
+                if let Some(value) = guard.entries.get(key) {
+                    let result = value.bind(py).clone();
+                    drop(guard);
+                    state.record(true);
+                    return Ok(result);
+                }
+            }
+        }
+        state.record(false);
+
+        let value = create()?;
+        if cacheable && !value.is_none() {
+            if let Ok(mut guard) = cache.lock() {
+                if state.use_cache() && guard.entries.len() < COLUMN_CACHE_LIMIT {
+                    guard.entries.insert(key.to_vec(), value.clone().unbind());
+                }
+            }
         }
         Ok(value)
     }
@@ -339,6 +405,7 @@ pub fn decode_field<'py>(
     f: &FieldMeta,
     row: &[u8],
     off: usize,
+    column: usize,
     codecs: &Codecs,
     cache: Option<&DecodeCache>,
 ) -> PyResult<Bound<'py, PyAny>> {
@@ -351,26 +418,30 @@ pub fn decode_field<'py>(
     match ftype {
         t::CHAR => {
             let width = f.size.max(0) as usize;
-            let text = decode(
-                py,
-                &row[off..off + width],
-                &codecs.char_enc,
-                codecs.char_kind,
-            )?;
-            pad_text(py, text, width)
+            let raw = &row[off..off + width];
+            let create = || {
+                let text = decode(py, raw, &codecs.char_enc, codecs.char_kind)?;
+                pad_text(py, text, width)
+            };
+            match cache {
+                Some(cache) => cache.cached_bytes(py, column, raw, create),
+                None => create(),
+            }
         }
         t::NCHAR | t::NVARCHAR => {
             let cursize = (u16::from_le_bytes([p[0], p[1]]) as usize).saturating_sub(2);
-            let text = decode(
-                py,
-                &row[off + 2..off + 2 + cursize],
-                &codecs.client_enc,
-                codecs.client_kind,
-            )?;
-            if ftype == t::NCHAR {
-                pad_text(py, text, f.size.max(0) as usize)
-            } else {
-                Ok(text.into_any())
+            let raw = &row[off + 2..off + 2 + cursize];
+            let create = || {
+                let text = decode(py, raw, &codecs.client_enc, codecs.client_kind)?;
+                if ftype == t::NCHAR {
+                    pad_text(py, text, f.size.max(0) as usize)
+                } else {
+                    Ok(text.into_any())
+                }
+            };
+            match cache {
+                Some(cache) => cache.cached_bytes(py, column, raw, create),
+                None => create(),
             }
         }
         t::VARBINARY | t::GEOMETRY => {
@@ -380,13 +451,15 @@ pub fn decode_field<'py>(
         }
         t::VARCHAR | t::VARFIXEDCHAR | t::JSON | t::JSONB | t::JSONPATH | t::VECTOR => {
             let cursize = (u16::from_le_bytes([p[0], p[1]]) as usize).saturating_sub(2);
-            let text = decode(
-                py,
-                &row[off + 2..off + 2 + cursize],
-                &codecs.char_enc,
-                codecs.char_kind,
-            )?;
-            Ok(text.into_any())
+            let raw = &row[off + 2..off + 2 + cursize];
+            let create = || {
+                let text = decode(py, raw, &codecs.char_enc, codecs.char_kind)?;
+                Ok(text.into_any())
+            };
+            match cache {
+                Some(cache) => cache.cached_bytes(py, column, raw, create),
+                None => create(),
+            }
         }
         t::INT8 => Ok(i64::from_le_bytes(p[..8].try_into().unwrap())
             .into_pyobject(py)?
@@ -404,18 +477,32 @@ pub fn decode_field<'py>(
         }
         t::DATE => {
             let width = f.size.clamp(0, 8) as usize;
-            let (y, m, d) = temporal::date_from_workspace(read_signed(&p[..width]));
-            datetime_capi::date(py, to_i32(y)?, to_u8(m, "month")?, to_u8(d, "day")?)
+            let raw = &p[..width];
+            let create = || {
+                let (y, m, d) = temporal::date_from_workspace(read_signed(raw));
+                datetime_capi::date(py, to_i32(y)?, to_u8(m, "month")?, to_u8(d, "day")?)
+            };
+            match cache {
+                Some(cache) => cache.cached_bytes(py, column, raw, create),
+                None => create(),
+            }
         }
         t::TIME => {
             let width = f.size.clamp(0, 8) as usize;
-            let (h, mi, s, us) = temporal::time_parts(read_signed(&p[..width]));
-            let (h, mi, s) = (
-                to_u8(h as i128, "hour")?,
-                to_u8(mi as i128, "minute")?,
-                to_u8(s as i128, "second")?,
-            );
-            datetime_capi::time(py, h, mi, s, us as u32)
+            let raw = &p[..width];
+            let create = || {
+                let (h, mi, s, us) = temporal::time_parts(read_signed(raw));
+                let (h, mi, s) = (
+                    to_u8(h as i128, "hour")?,
+                    to_u8(mi as i128, "minute")?,
+                    to_u8(s as i128, "second")?,
+                );
+                datetime_capi::time(py, h, mi, s, us as u32)
+            };
+            match cache {
+                Some(cache) => cache.cached_bytes(py, column, raw, create),
+                None => create(),
+            }
         }
         t::TIMESTAMP => {
             if f.size != 8 {
@@ -470,15 +557,22 @@ pub fn decode_field<'py>(
             pycache::interval(py)?.call1((time, 0i64, month))
         }
         t::TIMETZ => {
-            let time = read_signed(
-                &p[..(if f.size >= 12 {
-                    8
-                } else {
-                    (f.size - 4).max(0) as usize
-                })],
-            );
-            let zone = i32_at(row, off + (f.size - 4) as usize);
-            pycache::timetz_out(py)?.call1((time, zone))
+            let raw = &row[off..off + f.size.max(0) as usize];
+            let create = || {
+                let time = read_signed(
+                    &p[..(if f.size >= 12 {
+                        8
+                    } else {
+                        (f.size - 4).max(0) as usize
+                    })],
+                );
+                let zone = i32_at(row, off + (f.size - 4) as usize);
+                pycache::timetz_out(py)?.call1((time, zone))
+            };
+            match cache {
+                Some(cache) => cache.cached_bytes(py, column, raw, create),
+                None => create(),
+            }
         }
         _ => Ok(py.None().into_bound(py)),
     }

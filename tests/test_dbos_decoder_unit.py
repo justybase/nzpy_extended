@@ -66,6 +66,34 @@ def test_dbos_python_fallback_decodes_memoryview_payload(monkeypatch: pytest.Mon
     assert cursor.cached_rows == [[42, "café"]]
 
 
+def test_dbos_python_fallback_reuses_repeated_immutable_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(_native, "_HAVE_NATIVE", False)
+    desc = _descriptor()
+    cursor = SimpleNamespace(cached_rows=[])
+    parser = _parser()
+
+    parser._process_dbos_payload(cursor, desc, memoryview(_row_payload(1, "repeat")))  # type: ignore[arg-type]
+    parser._process_dbos_payload(cursor, desc, memoryview(_row_payload(2, "repeat")))  # type: ignore[arg-type]
+
+    assert cursor.cached_rows[0][1] == cursor.cached_rows[1][1]
+    assert cursor.cached_rows[0][1] is cursor.cached_rows[1][1]
+
+
+@pytest.mark.skipif(not _native._HAVE_NATIVE, reason="native extension is not built")
+def test_dbos_native_reuses_repeated_immutable_values() -> None:
+    desc = _descriptor()
+    cursor = SimpleNamespace(cached_rows=[])
+    parser = _parser()
+
+    parser._process_dbos_payload(cursor, desc, memoryview(_row_payload(1, "repeat")))  # type: ignore[arg-type]
+    parser._process_dbos_payload(cursor, desc, memoryview(_row_payload(2, "repeat")))  # type: ignore[arg-type]
+
+    assert cursor.cached_rows[0][1] == cursor.cached_rows[1][1]
+    assert cursor.cached_rows[0][1] is cursor.cached_rows[1][1]
+
+
 @pytest.mark.skipif(not _native._HAVE_NATIVE, reason="native extension is not built")
 def test_dbos_c_row_decoder_accepts_memoryview_payload() -> None:
     cursor = SimpleNamespace(cached_rows=[])

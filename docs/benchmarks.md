@@ -69,6 +69,33 @@ The string and numeric columns gain less from the native decoder because the ser
 
 In these runs the generator was a little faster than the list, and its three rounds were more even. On the Mac the first list round was the slowest of the three (2.6 s against 1.9 s). We did not investigate the cause. Both paths include rendering the rows, which happens inside `load_data`.
 
+## Value deduplication
+
+Each result set keeps one bounded cache per column for immutable decoded
+values: text and `CHAR`/`NCHAR` values, `DATE`, `TIME`, `TIMETZ` and
+`TIMESTAMP`. `NUMERIC` and timestamps keep their existing value-keyed caches,
+which now also share the decoded object. The key is the exact wire bytes, so a
+repeated value returns the same Python object instead of decoding and
+allocating again. A column that still shows under 2% repetition after 8192
+lookups disables its cache for the rest of that result set; the key length and
+per-column entry count are bounded.
+
+On a synthetic 100000-row mixed row (INT, TIMESTAMP, NUMERIC(11,6), two
+`VARCHAR`s, DATE) the pure-Python decoder took 55.2 ms with the cache and
+55.3 ms with the cache bypassed: decode time is neutral, while repeated rows
+share strings, `Decimal`s and date/time objects instead of allocating new ones.
+
+The native decoder is fast enough that the cache overhead matters, so it was
+measured as an interleaved A/B in one process: 200000 rows of a nine-column
+row whose values all repeat. All caches took 35.3-36.6 ms, the pre-existing
+NUMERIC/TIMESTAMP caches alone 36.7-39.8 ms, and no caches 67.5-72.1 ms. The
+added per-column cache is 4-9% faster than the old caches alone and all caches
+are about 48% faster than no caching; the probe counters stop after the 8192
+lookup decision, so the decision itself costs nothing per cell.
+`tests/test_value_cache_live.py` checks object identity on the live
+`PERF.EVENTS_400K` and `ADMIN.FACTPRODUCTINVENTORY` tables in both decoder
+modes.
+
 ## Reproducing
 
 Set the connection variables (`NZ_DEV_HOST`, `NZ_DEV_PORT`, `NZ_DEV_DATABASE`, `NZ_DEV_USER`, `NZ_DEV_PASSWORD`). Use a disposable database: every script creates uniquely named `ZZ_` tables and drops them afterwards.

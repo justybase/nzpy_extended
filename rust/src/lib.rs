@@ -138,7 +138,7 @@ fn decode_row<'py>(
     for (index, (field, start)) in meta.fields.iter().zip(starts).enumerate() {
         let value = match start {
             None => py.None().into_bound(py),
-            Some(off) => fields::decode_field(py, field, row, off, &meta.codecs, cache)
+            Some(off) => fields::decode_field(py, field, row, off, index, &meta.codecs, cache)
                 .map_err(|e| with_column(py, e, index))?,
         };
         out.append(value)?;
@@ -238,23 +238,24 @@ impl DbosDecoder {
         char_enc: &str,
         client_enc: &str,
     ) -> PyResult<Self> {
+        let meta = load_metadata(
+            py,
+            field_type,
+            field_size,
+            field_true_size,
+            field_offset,
+            field_fixed_size,
+            field_phys_field,
+            num_fields,
+            nulls_allowed,
+            fixed_fields_size,
+            num_varying,
+            char_enc,
+            client_enc,
+        )?;
         Ok(Self {
-            meta: load_metadata(
-                py,
-                field_type,
-                field_size,
-                field_true_size,
-                field_offset,
-                field_fixed_size,
-                field_phys_field,
-                num_fields,
-                nulls_allowed,
-                fixed_fields_size,
-                num_varying,
-                char_enc,
-                client_enc,
-            )?,
-            cache: DecodeCache::default(),
+            cache: DecodeCache::new(meta.fields.len()),
+            meta,
         })
     }
 

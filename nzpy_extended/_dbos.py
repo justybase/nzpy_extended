@@ -86,6 +86,80 @@ def _layout_error(message: str) -> InterfaceError:
         f"Invalid RowStandard payload: {message}; reconnect is required.")
 
 
+class _ValueCache:
+    """Bounded per-column cache for immutable decoded values.
+
+    The key is the exact wire bytes. A hit returns the same Python object, so
+    repeated strings, dates and Decimals do not allocate or parse again. The
+    cache disables itself when the probe finds less than 2% repetition.
+    """
+
+    __slots__ = (
+        "_entries",
+        "_last_key",
+        "_last_value",
+        "_lookups",
+        "_hits",
+        "_enabled",
+        "_max_entries",
+        "_max_key",
+        "_probe",
+    )
+
+    def __init__(self, max_entries: int = 4096, max_key: int = 64,
+                 probe: int = 8192) -> None:
+        self._entries: dict[bytes, Any] = {}
+        self._last_key: bytes | None = None
+        self._last_value: Any = None
+        self._lookups = 0
+        self._hits = 0
+        self._enabled = True
+        self._max_entries = max_entries
+        self._max_key = max_key
+        self._probe = probe
+
+    def get_or_create(self, key: bytes, factory: Any) -> Any:
+        if not self._enabled:
+            return factory()
+        if len(key) > self._max_key:
+            self._record(False)
+            return factory()
+        if self._last_key == key:
+            self._record(True)
+            return self._last_value
+        cached = self._entries.get(key)
+        if cached is not None:
+            self._last_key = key
+            self._last_value = cached
+            self._record(True)
+            return cached
+        value = factory()
+        self._last_key = key
+        self._last_value = value
+        if len(self._entries) < self._max_entries:
+            self._entries[key] = value
+        self._record(False)
+        return value
+
+    def _record(self, hit: bool) -> None:
+        self._lookups += 1
+        if hit:
+            self._hits += 1
+        if self._lookups == self._probe and self._hits * 50 < self._lookups:
+            self._enabled = False
+            self._entries.clear()
+
+
+def _column_value(tupdesc: Any, index: int, key: bytes, factory: Any) -> Any:
+    caches = tupdesc._value_caches
+    if index >= len(caches):
+        caches.extend([None] * (index + 1 - len(caches)))
+    cache = caches[index]
+    if cache is None:
+        cache = caches[index] = _ValueCache()
+    return cache.get_or_create(key, factory)
+
+
 @functools.lru_cache(maxsize=16)
 def _text_codec(name: str) -> str:
     """Codec name for ``str(data, name)``.
@@ -118,6 +192,7 @@ class DbosParser:
         from .utils import i_unpack
 
         tupdesc._native_decoder = None
+        tupdesc._value_caches = []
 
         if len(data) < 36:
             raise InterfaceError(
@@ -389,17 +464,20 @@ class DbosParser:
 
                 if fldtype == NzTypeChar:
                     fldlen = tupdesc.field_size[cur_field]
-                    value = str(mv[offset: offset + fldlen], _text_codec(conn._char_varchar_encoding))
-                    value = value.rstrip("\x00").ljust(fldlen)
-                    row.append(value)
+                    key = bytes(mv[offset: offset + fldlen])
+                    def char_value() -> str:
+                        value = str(key, _text_codec(conn._char_varchar_encoding))
+                        return value.rstrip("\x00").ljust(fldlen)
+                    row.append(_column_value(tupdesc, cur_field, key, char_value))
                 elif fldtype in (NzTypeNChar, NzTypeNVarChar):
                     cursize = h_le_unpack(data, offset)[0] - 2
-                    value = str(
-                        mv[offset + 2: offset + cursize + 2], _text_codec(conn._client_encoding)
-                    )
-                    if fldtype == NzTypeNChar:
-                        value = value.rstrip("\x00").ljust(tupdesc.field_size[cur_field])
-                    row.append(value)
+                    key = bytes(mv[offset + 2: offset + cursize + 2])
+                    def nchar_value() -> str:
+                        value = str(key, _text_codec(conn._client_encoding))
+                        if fldtype == NzTypeNChar:
+                            value = value.rstrip("\x00").ljust(tupdesc.field_size[cur_field])
+                        return value
+                    row.append(_column_value(tupdesc, cur_field, key, nchar_value))
                 elif fldtype in (NzTypeVarBinary, NzTypeGeometry):
                     # Binary storage: the bytes as stored, no text decoding.
                     cursize = h_le_unpack(data, offset)[0] - 2
@@ -413,10 +491,13 @@ class DbosParser:
                     NzTypeVector,
                 ):
                     cursize = h_le_unpack(data, offset)[0] - 2
-                    value = str(
-                        mv[offset + 2: offset + cursize + 2], _text_codec(conn._char_varchar_encoding)
-                    )
-                    row.append(value)
+                    key = bytes(mv[offset + 2: offset + cursize + 2])
+                    row.append(_column_value(
+                        tupdesc,
+                        cur_field,
+                        key,
+                        lambda key=key: str(key, _text_codec(conn._char_varchar_encoding)),
+                    ))
                 elif fldtype == NzTypeInt8:
                     row.append(q_le_unpack(data, offset)[0])
                 elif fldtype == NzTypeInt:
@@ -433,27 +514,37 @@ class DbosParser:
                     row.append(struct.unpack_from("<f", data, offset)[0])
                 elif fldtype == NzTypeDate:
                     fldlen = tupdesc.field_size[cur_field]
+                    key = bytes(mv[offset: offset + fldlen])
                     workspace = (
                         q_le_unpack(data, offset)[0]
                         if fldlen >= 8
-                        else int.from_bytes(mv[offset: offset + fldlen], "little", signed=True)
+                        else int.from_bytes(key, "little", signed=True)
                     )
                     date_value = j2date(workspace + J2000_OFFSET)
-                    row.append(date(date_value[0], date_value[1], date_value[2]))
+                    row.append(_column_value(
+                        tupdesc,
+                        cur_field,
+                        key,
+                        lambda d=date_value: date(d[0], d[1], d[2]),
+                    ))
                 elif fldtype == NzTypeTime:
                     fldlen = tupdesc.field_size[cur_field]
+                    key = bytes(mv[offset: offset + fldlen])
                     workspace = (
                         q_le_unpack(data, offset)[0]
                         if fldlen >= 8
-                        else int.from_bytes(mv[offset: offset + fldlen], "little", signed=True)
+                        else int.from_bytes(key, "little", signed=True)
                     )
                     time_value = time2struct(workspace)
-                    if time_value[3]:
-                        row.append(
-                            time(time_value[0], time_value[1], time_value[2], time_value[3])
-                        )
-                    else:
-                        row.append(time(time_value[0], time_value[1], time_value[2]))
+                    def time_value_object() -> Any:
+                        if time_value[3]:
+                            return time(
+                                time_value[0], time_value[1], time_value[2], time_value[3]
+                            )
+                        return time(time_value[0], time_value[1], time_value[2])
+                    row.append(_column_value(
+                        tupdesc, cur_field, key, time_value_object
+                    ))
                 elif fldtype == NzTypeInterval:
                     fldlen = tupdesc.field_size[cur_field]
                     interval_time = (
@@ -467,36 +558,45 @@ class DbosParser:
                     )
                 elif fldtype == NzTypeTimeTz:
                     fldlen = tupdesc.field_size[cur_field]
+                    key = bytes(mv[offset: offset + fldlen])
                     timetz_time = (
                         q_le_unpack(data, offset)[0]
                         if fldlen >= 12
                         else int.from_bytes(mv[offset: offset + fldlen - 4], "little", signed=True)
                     )
                     timetz_zone = i_le_unpack(data, offset + fldlen - 4)[0]
-                    row.append(timetz_out_timetzadt(timetz_time, timetz_zone))
+                    row.append(_column_value(
+                        tupdesc,
+                        cur_field,
+                        key,
+                        lambda t=timetz_time, z=timetz_zone: timetz_out_timetzadt(t, z),
+                    ))
                 elif fldtype == NzTypeTimestamp:
                     fldlen = tupdesc.field_size[cur_field]
+                    key = bytes(mv[offset: offset + fldlen])
                     workspace = (
                         q_le_unpack(data, offset)[0]
                         if fldlen >= 8
-                        else int.from_bytes(mv[offset: offset + fldlen], "little", signed=True)
+                        else int.from_bytes(key, "little", signed=True)
                     )
                     if fldlen != 8:
                         raise ValueError(
                             f"TIMESTAMP storage is {fldlen} bytes, expected 8")
                     result = timestamp2struct(workspace)
-                    if result is not False:
+                    def timestamp_value() -> Any:
+                        if result is False:
+                            return None
                         ts: tuple[int, int, int, int, int, int, int] = result  # type: ignore[assignment]
-                        row.append(
-                            Datetime(ts[0], ts[1], ts[2], ts[3], ts[4], ts[5], ts[6])
-                        )
-                    else:
-                        row.append(None)
+                        return Datetime(ts[0], ts[1], ts[2], ts[3], ts[4], ts[5], ts[6])
+                    row.append(_column_value(
+                        tupdesc, cur_field, key, timestamp_value
+                    ))
                 elif fldtype == NzTypeNumeric:
                     fsize = tupdesc.field_size[cur_field]
                     scale = fsize & 0x00FF
                     chunk_len = tupdesc.field_trueSize[cur_field]
                     count = chunk_len // 4
+                    key = bytes(mv[offset: offset + count * 4])
                     words = [
                         int.from_bytes(
                             data[offset + i * 4: offset + (i + 1) * 4],
@@ -512,7 +612,12 @@ class DbosParser:
                     if words[0] >> 31:
                         val -= 1 << total_bits
                     # Built from text: Decimal arithmetic would round to 28 digits.
-                    row.append(Decimal(f"{val}E-{scale}"))
+                    row.append(_column_value(
+                        tupdesc,
+                        cur_field,
+                        key,
+                        lambda v=val, s=scale: Decimal(f"{v}E-{s}"),
+                    ))
                 elif fldtype == NzTypeBool:
                     row.append(data[offset] == 1)
                 else:
