@@ -520,13 +520,14 @@ class DbosParser:
                         if fldlen >= 8
                         else int.from_bytes(key, "little", signed=True)
                     )
-                    date_value = j2date(workspace + J2000_OFFSET)
-                    row.append(_column_value(
-                        tupdesc,
-                        cur_field,
-                        key,
-                        lambda d=date_value: date(d[0], d[1], d[2]),
-                    ))
+                    year, month, day = j2date(workspace + J2000_OFFSET)
+
+                    def date_object(
+                        y: int = year, m: int = month, d: int = day
+                    ) -> date:
+                        return date(y, m, d)
+
+                    row.append(_column_value(tupdesc, cur_field, key, date_object))
                 elif fldtype == NzTypeTime:
                     fldlen = tupdesc.field_size[cur_field]
                     key = bytes(mv[offset: offset + fldlen])
